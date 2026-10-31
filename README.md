@@ -2,7 +2,7 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and capture the normal game window in OBS.
 
-**0.1.0 is a development prototype.** The director's 14 automated cases pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera behavior, multiplayer streaming, and OBS capture still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
+**0.2.0 is a development prototype.** The director's 16 automated cases pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera behavior, multiplayer streaming, and OBS capture still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
 
 The broadcaster remains an ordinary connected player. This mod does not provide invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
 
@@ -65,13 +65,27 @@ Hotkeys are ignored while typing in chat/console or using the recognized menu, i
 
 To remove the prototype, close the client and remove its two DLLs. Keep any existing configuration and test records. Do not remove dependencies used by other mods.
 
+## Solo camera test
+
+No second player or server mod is needed. This works in a local single-player world or while you are alone on your server.
+
+1. Install the two DLLs from the latest test build into your active mod profile. With Thunderstore, open that profile folder and copy both into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
+2. Enter a test world with a living character and press **F10**. Alternatively, with the console enabled, run `broadcast self` and close the console.
+3. Walk, run, jump, and move near walls or trees. The same broadcast camera used for other players now follows you, exercising framing, smoothing, obstruction checks, main/sky FOV, HUD hiding, and OBS capture.
+4. Press **F8** or run `broadcast off` to stop and restore the normal view. Run `broadcast on` to switch directly back to ordinary player targeting; alone, that mode should show the waiting slate.
+
+Self-follow is session-only and always shows a `SELF-FOLLOW TEST` status label, even when `ShowStatus=false`. Its roster contains only you, so next/previous and timed cycling stay on you. Other players joining will not become test targets. Distant-streaming overrides are bypassed even if `RemoteTargets=true`; entering self-follow restores any previous override. Death, world exit, and plugin disable stop the test. Starting again with F8 uses normal mode; press F10 or run `broadcast self` to re-enter the test.
+
+Your normal movement controls remain active. This mode tests actual camera rendering with your own character; it does not validate remote-player replication, multi-target shots, or distant world loading.
+
 ## Controls and console
 
 Use Valheim's `-console` launch option to make the F5 console available. Commands are also useful when hotkeys conflict with another mod.
 
 | Command | Effect |
 | --- | --- |
-| `broadcast on` / `broadcast off` | Start / stop the camera mode |
+| `broadcast self` | Start solo testing with your own character as the only target |
+| `broadcast on` / `broadcast off` | Start normal other-player mode / stop either mode |
 | `broadcast next` / `broadcast previous` | Select the next / previous eligible target |
 | `broadcast hold` / `broadcast resume` | Pause / resume automatic cycling and load-timeout skipping |
 | `broadcast list` | Refresh and print eligible target IDs and names |
@@ -97,6 +111,7 @@ After the first launch, close the game and edit `BepInEx/config/com.dillflix.val
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Display / ShowStatus` | `true` | Show the director overlay |
 | `Experimental / RemoteTargets` | `false` | Include public distant positions and change the network reference position |
+| `Controls / SelfTest` | `F10` | Start self-follow test mode |
 | `Controls / Toggle`, `Next`, `Previous`, `Hold` | `F8`, `PageDown`, `PageUp`, `F9` | BepInEx keyboard shortcuts |
 
 Holding an unavailable target deliberately keeps the waiting slate; resume or select another target to recover. A lone unavailable target is retained rather than repeatedly reselected.

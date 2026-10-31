@@ -7,7 +7,7 @@ internal sealed class BroadcastSettings
 {
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus;
-    internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold;
+    internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest;
 
     internal BroadcastSettings(ConfigFile config)
     {
@@ -24,6 +24,7 @@ internal sealed class BroadcastSettings
         HideHud = config.Bind("Display", "HideHud", true, "Hide the normal HUD while broadcasting; restore its prior state on stop.");
         ShowStatus = config.Bind("Display", "ShowStatus", true, "Show target and director status in the upper-left corner.");
         Toggle = config.Bind("Controls", "Toggle", new KeyboardShortcut(KeyCode.F8), "Start/stop broadcasting.");
+        SelfTest = config.Bind("Controls", "SelfTest", new KeyboardShortcut(KeyCode.F10), "Start self-follow camera testing with your own character; F8 stops.");
         Next = config.Bind("Controls", "Next", new KeyboardShortcut(KeyCode.PageDown), "Select next target.");
         Previous = config.Bind("Controls", "Previous", new KeyboardShortcut(KeyCode.PageUp), "Select previous target.");
         Hold = config.Bind("Controls", "Hold", new KeyboardShortcut(KeyCode.F9), "Hold current target / resume automatic cycling.");

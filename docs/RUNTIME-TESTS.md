@@ -2,7 +2,7 @@
 
 ## Evidence available
 
-- The director's **14 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, and invalid time inputs.
+- The director's **16 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, and return to normal observer exclusion.
 - The core compiled against actual .NET Standard 2.0 reference assemblies with warnings treated as errors. Its executable test harness ran on .NET 8 against that compiled core.
 - The development container's ordinary `dotnet`/MSBuild path fails during process introspection (`Process.StartTime` / `ProcessName`). Direct invocation of the SDK's Roslyn compiler was used for the observed core checks. This is an environment limitation, not a replacement for checking the normal project build in CI or on a development machine.
 - The plugin compiled with warnings treated as errors using Roslyn 4.11 from .NET SDK **8.0.427**, actual Microsoft .NET Framework 4.8 reference assemblies (**1.0.3**), Jötunn **2.30.2**, BepInEx **5.4.23.2**, and real Valheim references. This checked the source against those assemblies; it did not establish that the normal MSBuild graph executes successfully in this container.
@@ -34,6 +34,23 @@ Use a disposable world and character, a separate mod profile, and an unchanged c
 | Test world/character and log location | Pending |
 
 Install only the two owned plugin/core DLLs in the observer's profile. Other players should initially use unmodified clients and the server should initially have no broadcaster mod. Test the default loaded-target mode before enabling distant targeting.
+
+## Solo self-follow checks
+
+These cases are **pending in-game validation**. Start alone in a local test world, then press F10 (or run `broadcast self` in the F5 console and close it).
+
+| Case | Required result |
+| --- | --- |
+| Solo activation | Own character follows the configured shot; list contains one target; SELF-FOLLOW TEST label is visible |
+| Movement and obstacles | Walking, running, jumping, walls, and trees exercise framing, smoothing, and obstruction handling |
+| Cycling and hold | Next/previous, automatic dwell, and hold/resume retain the single self target without errors |
+| Another player joins | Test roster remains self-only |
+| Remote setting enabled | Self mode uses normal local reference updates; entering from a distant shot restores the previous override |
+| Mode switch | `broadcast on` excludes self again and shows the waiting slate when alone; `broadcast self` re-enters test mode |
+| Cleanup | F8/off, death, world exit, and component disable restore view/HUD; re-entry via F8 is normal mode |
+| Capture | OBS captures the actual self-follow shot and test label, including main/sky FOV alignment |
+
+Passing these tests does not establish multiplayer replication or distant streaming behavior.
 
 ## Default-mode checks
 

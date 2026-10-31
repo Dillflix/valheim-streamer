@@ -55,6 +55,16 @@ namespace ValheimBroadcaster.Core
         public long SelectionRevision { get; private set; }
 
         /// <summary>
+        /// Explicit solo camera test: replace the entire roster with the observer.
+        /// Normal SetRoster calls still exclude the observer when its ID is supplied.
+        /// </summary>
+        public void SetSelfTarget(PlayerTarget observer)
+        {
+            if (observer == null) throw new ArgumentNullException(nameof(observer));
+            SetRoster(new[] { observer });
+        }
+
+        /// <summary>
         /// Replaces the snapshot, excludes the observer, and sorts by stable ID (ordinal).
         /// Duplicate IDs are collapsed using the ordinal-first name for order independence.
         /// A disappearing target advances to the next surviving ID, wrapping if necessary.

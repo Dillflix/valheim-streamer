@@ -12,7 +12,7 @@ The first milestone is a single broadcasting client following and cycling eligib
 | `CameraRig` | Smooth a wide shot, check obstructions, hide/restore the HUD, restore camera state |
 | External OBS instance | Capture, encode, and transmit the rendered output |
 
-No server plugin, RPC protocol, persistent player database, video transport, web controller, or automatic game launcher is implemented in 0.1.0.
+No server plugin, RPC protocol, persistent player database, video transport, web controller, or automatic game launcher is implemented in 0.2.0.
 
 ## Director contract
 
@@ -29,6 +29,12 @@ The plugin checks Jötunn's headless predicate before graphical initialization a
 The normal HUD root is hidden while requested and its previous state is retained for restoration. Both main and sky camera FOVs are updated and restored. Stop, observer death, world exit, component disable, and destruction restore owned state; destruction also removes this plugin's Harmony patches. Runtime adapter errors stop broadcasting and log the exception. These are implemented cleanup paths, not evidence that every game transition has passed a runtime test.
 
 The observer remains an ordinary character with normal gameplay controls. It can be hurt, affect gameplay, or move if given input. This implementation does not claim the observer is passive or exempt from player-count and simulation rules.
+
+## Self-follow test
+
+`broadcast self` activates a session-only adapter flag. The roster then contains only the live local player, and `BroadcastDirector.SetSelfTarget` explicitly selects that singleton without normal observer exclusion. The same readiness check and `CameraRig` render the shot. The flag bypasses remote roster acquisition and reference-position overrides, and the overlay identifies test footage even if the ordinary status overlay is disabled.
+
+Every activation first stops/restores the previous mode. `broadcast on` starts normal targeting, and stop/death/world exit/disable clears the self-test flag. Normal roster updates continue excluding the observer. No synthetic network player, spawned object, persistent config, or server protocol is introduced.
 
 ## Distant targets
 

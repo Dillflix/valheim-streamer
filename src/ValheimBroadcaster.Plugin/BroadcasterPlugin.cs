@@ -18,7 +18,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.1.0";
+    public const string PluginVersion = "0.2.0";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private BroadcastSettings settings = null!;
@@ -28,6 +28,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private float nextRosterRefresh;
     private bool remotePatchAvailable;
     private bool cameraReady;
+    private bool selfTest;
     private Vector3? remoteReference;
     private Vector3? normalReference;
     private ZNet? referenceOwner;
@@ -58,7 +59,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 remotePatchAvailable = true;
             }
             CommandManager.Instance.AddConsoleCommand(new BroadcastCommand());
-            Logger.LogInfo($"{PluginName} {PluginVersion} ready. F8 toggles; broadcast help lists commands. Starts disabled.");
+            Logger.LogInfo($"{PluginName} {PluginVersion} ready. F8 toggles; F10 starts self-follow; broadcast help lists commands. Starts disabled.");
         }
         catch (Exception error)
         {
@@ -81,6 +82,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (!IsTextOrMenuOpen())
         {
             if (settings.Toggle.Value.IsDown()) { if (director.IsEnabled) Stop(); else StartBroadcast(); }
+            else if (settings.SelfTest.Value.IsDown()) StartBroadcast(true);
             if (director.IsEnabled)
             {
                 if (settings.Next.Value.IsDown()) director.Next();
@@ -121,8 +123,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void RefreshRoster()
     {
-        roster.Refresh(settings.RemoteTargets.Value && remotePatchAvailable);
-        director.SetRoster(roster.Identities(), Player.m_localPlayer ? Player.m_localPlayer.GetZDOID().ToString() : null);
+        roster.Refresh(settings.RemoteTargets.Value && remotePatchAvailable, selfTest);
+        if (selfTest && roster.Targets.Count == 1)
+            director.SetSelfTarget(roster.Identities().Single());
+        else
+            director.SetRoster(roster.Identities(), Player.m_localPlayer ? Player.m_localPlayer.GetZDOID().ToString() : null);
     }
 
     private static bool IsReady(TargetRoster.Target? target)
@@ -132,15 +137,19 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                ZNetScene.instance.IsAreaReady(target.LoadedPlayer.transform.position);
     }
 
-    private bool StartBroadcast()
+    private bool StartBroadcast(bool testSelf = false)
     {
         if (!enabled || !Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || !ZNetScene.instance) return false;
+        Stop(); // Restore any previous camera/HUD/reference before switching modes.
+        selfTest = testSelf;
         RefreshRoster();
         director.SetEnabled(true);
         director.SetHolding(false);
         cameraReady = false;
         Logger.LogWarning("Broadcast camera enabled. Observer remains an ordinary player: park safely. No god mode, teleport, or gameplay isolation is applied.");
-        if (settings.RemoteTargets.Value)
+        if (selfTest)
+            Logger.LogInfo("Self-follow test: only your character is targeted; remote reference overrides are disabled.");
+        else if (settings.RemoteTargets.Value)
             Logger.LogWarning(remotePatchAvailable ? "Experimental distant streaming enabled; multiplayer side effects are unverified." : "Remote streaming unavailable in this game build; using loaded targets only.");
         return true;
     }
@@ -148,6 +157,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void Stop()
     {
         director.SetEnabled(false);
+        selfTest = false;
         cameraReady = false;
         RestoreReference();
         rig.Restore();
@@ -155,7 +165,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void UpdateReference(TargetRoster.Target? target)
     {
-        if (!settings.RemoteTargets.Value || !remotePatchAvailable || target == null || !ZNet.instance)
+        if (selfTest || !settings.RemoteTargets.Value || !remotePatchAvailable || target == null || !ZNet.instance)
         {
             RestoreReference();
             return;
@@ -217,7 +227,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             GUI.color = Color.white;
             GUI.Label(new Rect(24, 24, Screen.width - 48, 60), "Valheim Broadcaster — waiting for a loaded target\nF8: stop · PageUp/PageDown: cycle · F9: hold/resume");
         }
-        else if (settings.ShowStatus.Value)
+        else if (settings.ShowStatus.Value || selfTest)
         {
             GUI.color = Color.white;
             GUI.Box(new Rect(12, 12, 560, 34), Status());
@@ -225,7 +235,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         GUI.color = old;
     }
 
-    private string Status() => $"{director.State} | {director.CurrentTarget?.Name ?? "No targets"} | {(director.IsHolding ? "Hold" : "Auto")} | {director.Roster.Count} target(s)";
+    private string Status() => $"{(selfTest ? "SELF-FOLLOW TEST | " : "")}{director.State} | {director.CurrentTarget?.Name ?? "No targets"} | {(director.IsHolding ? "Hold" : "Auto")} | {director.Roster.Count} target(s)";
 
     private void FailClosed(Exception error)
     {
@@ -244,7 +254,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast on|off|next|previous|hold|resume|list|status|follow <id>";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|follow <id>";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -255,7 +265,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 switch (action)
                 {
                     case "on":
-                        if (!plugin.StartBroadcast()) { context?.AddString("Join a world with a spawned observer first."); return; }
+                    case "self":
+                        if (!plugin.StartBroadcast(action == "self")) { context?.AddString("Join a world with a living, spawned observer first."); return; }
                         break;
                     case "off": plugin.Stop(); break;
                     case "next": plugin.director.Next(); break;

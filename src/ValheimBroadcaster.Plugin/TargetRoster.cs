@@ -17,12 +17,17 @@ internal sealed class TargetRoster
 
     internal readonly Dictionary<string, Target> Targets = new Dictionary<string, Target>(StringComparer.Ordinal);
 
-    internal void Refresh(bool remote)
+    internal void Refresh(bool remote, bool selfTest = false)
     {
         Targets.Clear();
         Player observer = Player.m_localPlayer;
         if (!observer || !ZNet.instance) return;
         string observerId = observer.GetZDOID().ToString();
+        if (selfTest)
+        {
+            Targets[observerId] = new Target(observerId, observer.GetPlayerName()) { LoadedPlayer = observer };
+            return; // No remote roster or public position is used in this mode.
+        }
         // The network roster and loaded scene objects are different inventories.
         // Only public positions are eligible to bootstrap a distant target.
         if (remote)

@@ -22,7 +22,9 @@ internal static class Program
             ("Single target stays selected through dwell and timeout", SingleTarget),
             ("Large frame advances once and discards excess time", LargeDelta),
             ("Invalid inputs fail explicitly without corrupting roster", InvalidInputs),
-            ("Observer changes remove an accidentally selected observer", ObserverChange)
+            ("Observer changes remove an accidentally selected observer", ObserverChange),
+            ("Self test isolates the observer and normal mode excludes it again", SelfTestTransition),
+            ("Solo target remains stable through cycling, readiness, and refresh", SelfTestLifetime)
         };
 
         int failed = 0;
@@ -194,6 +196,51 @@ internal static class Program
         var d = Director("a", "b");
         d.SetRoster(new[] { new PlayerTarget("a", "Observer"), new PlayerTarget("b", "Target") }, "a");
         Equal("b", d.CurrentTarget!.Id); Equal(1, d.Roster.Count);
+    }
+
+    private static void SelfTestTransition()
+    {
+        var observer = new PlayerTarget("self", "Observer");
+        var other = new PlayerTarget("other", "Other player");
+        var d = Director("other");
+        d.Tick(5, true);
+        d.SetSelfTarget(observer);
+        Equal(1, d.Roster.Count);
+        Equal("self", d.CurrentTarget!.Id);
+        Equal(BroadcastState.WaitingForTarget, d.State);
+        False(d.Select("other"));
+        d.Tick(1, true);
+        Equal(BroadcastState.Following, d.State);
+        d.SetRoster(new[] { observer, other }, observer.Id);
+        Equal("other", d.CurrentTarget!.Id);
+        False(d.Select("self"));
+        d.SetSelfTarget(observer);
+        d.SetRoster(new[] { observer }, observer.Id);
+        Equal(BroadcastState.WaitingForPlayers, d.State);
+        Equal(null, d.CurrentTarget);
+    }
+
+    private static void SelfTestLifetime()
+    {
+        var d = new BroadcastDirector(10, 3);
+        var observer = new PlayerTarget("self", "Observer");
+        d.SetSelfTarget(observer);
+        Equal(BroadcastState.Disabled, d.State);
+        d.SetEnabled(true);
+        d.Tick(100, false);
+        Equal(BroadcastState.WaitingForTarget, d.State);
+        d.Next(); d.Previous(); d.Tick(100, true);
+        Equal("self", d.CurrentTarget!.Id);
+        long revision = d.SelectionRevision;
+        d.SetSelfTarget(new PlayerTarget("self", "Renamed"));
+        Equal(revision, d.SelectionRevision);
+        Equal(BroadcastState.Following, d.State);
+        d.SetHolding(true); d.Tick(100, false);
+        Equal("self", d.CurrentTarget!.Id);
+        d.SetEnabled(false);
+        Throws<ArgumentNullException>(() => d.SetSelfTarget(null!));
+        Equal("self", d.CurrentTarget!.Id);
+        Equal(BroadcastState.Disabled, d.State);
     }
 
     private static void Equal<T>(T expected, T actual)
