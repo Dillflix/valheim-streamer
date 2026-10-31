@@ -45,10 +45,11 @@ jobs:
       - name: Fetch pinned real compilation references
         run: python3 scripts/fetch-build-references.py --output "$RUNNER_TEMP/valheim-build-references"
       - name: Audit observer assumptions against real game metadata
-        run: >-
-          dotnet run --project tests/ValheimBroadcaster.Hooks.Tests --configuration Release -warnaserror
-          -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
-          -- "$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed/assembly_valheim.dll"
+        run: |
+          dotnet build tests/ValheimBroadcaster.Hooks.Tests --configuration Release -warnaserror \
+            -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+          dotnet tests/ValheimBroadcaster.Hooks.Tests/bin/Release/net8.0/ValheimBroadcaster.Hooks.Tests.dll \
+            "$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed/assembly_valheim.dll"
       - name: Build plugin against Valheim 1.0.21 and BepInEx 5.4.23.2
         run: >-
           dotnet build src/ValheimBroadcaster.Plugin/ValheimBroadcaster.Plugin.csproj
