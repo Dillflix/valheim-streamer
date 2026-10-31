@@ -21,7 +21,11 @@ jobs:
         run: dotnet run --project tests/ValheimBroadcaster.Core.Tests/ValheimBroadcaster.Core.Tests.csproj --configuration Release
 
   streaming:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -29,7 +33,11 @@ jobs:
         with:
           dotnet-version: '8.0.427'
       - name: Install test encoder and receiver
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install Windows test encoder and receiver
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
       - name: Test buffers and real RTMP audio/video loopback
         run: dotnet run --project tests/ValheimBroadcaster.Streaming.Tests --configuration Release -warnaserror
 

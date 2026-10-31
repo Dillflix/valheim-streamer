@@ -18,11 +18,14 @@ internal sealed class StreamCapture : MonoBehaviour
     private bool listenerMoved;
     private float nextFrame;
     private int fps;
+    private Action<string>? reportFailure;
+    private bool failureReported;
     internal bool Active => active;
     internal bool CanStart => !active && !pending && (session == null || session.IsClosed);
     internal string Status => session?.Status ?? "Stopped";
+    internal string Diagnostics => session?.FailureDetails ?? "No encoder session.";
 
-    internal void Begin(StreamOptions options, AudioListener gameListener)
+    internal void Begin(StreamOptions options, AudioListener gameListener, Action<string> onFailure)
     {
         if (!CanStart) throw new InvalidOperationException("Wait for the previous encoder to stop.");
         options.Validate();
@@ -32,7 +35,10 @@ internal sealed class StreamCapture : MonoBehaviour
             throw new InvalidOperationException("Select stereo audio output before starting the stream.");
         try
         {
+            ReportFailure();
             session = new EncoderSession(options);
+            reportFailure = onFailure;
+            failureReported = false;
             listener = gameListener;
             normalRotation = listener.transform.localRotation;
             AudioSettings.OnAudioConfigurationChanged += AudioConfigurationChanged;
@@ -63,12 +69,20 @@ internal sealed class StreamCapture : MonoBehaviour
 
     private void Update()
     {
+        ReportFailure();
         if (!active || session == null) return;
         if (!listener || !listener.isActiveAndEnabled || !tap)
             session.Fail("Game audio listener changed; restart streaming.");
         else if (AudioSettings.outputSampleRate != session.SampleRate)
             session.Fail("Audio sample rate changed; restart streaming.");
         if (session.IsStopping) StopOutput();
+    }
+
+    private void ReportFailure()
+    {
+        if (session == null || !session.IsClosed || failureReported) return;
+        failureReported = true;
+        if (session.FailureDetails.Length != 0) reportFailure?.Invoke(session.FailureDetails);
     }
 
     private IEnumerator CaptureFrames()

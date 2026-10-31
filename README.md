@@ -2,9 +2,13 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.7.0 is an observer-development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players need no mod. The server companion is required only for the opt-in read-only multiplayer observer role.
+**0.7.1 is an observer-development prototype with NVIDIA streaming support.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players need no mod. The server companion is required only for the opt-in read-only multiplayer observer role.
 
 In normal F8/F10 modes the broadcaster remains an ordinary connected player. Those modes do not provide network invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
+
+## RTMP diagnostics and NVIDIA encoding (0.7.1)
+
+Set `Streaming.VideoEncoder = h264_nvenc` to encode H.264 on an NVIDIA GPU in the broadcaster client. `NvencGpu = -1` selects an available device. Software `libx264` remains the default; stereo AAC is preserved. Failed publishing now logs a bounded, redacted FFmpeg error tail and exit code, also available via `broadcast stream diagnostics`. See [STREAMING.md](docs/STREAMING.md). The reported 0.6.0 pipe failure cannot be diagnosed from the old log because that build discarded stderr; a successful game retest is still required.
 
 ## Flicker handling and multiplayer observer (0.7.0)
 
@@ -108,7 +112,7 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast list` | Refresh and print eligible target IDs and names |
 | `broadcast follow <id>` | Select an exact listed ID and hold it; start with `broadcast on` first |
 | `broadcast status` | Show director state, target, hold/auto mode, and roster count |
-| `broadcast stream on` / `off` / `status` | Start/stop RTMP audio + video / inspect encoder state; camera must be active |
+| `broadcast stream on` / `off` / `status` / `diagnostics` | Start/stop RTMP audio + video / inspect encoder state; camera must be active |
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
@@ -147,9 +151,9 @@ For `RemoteTargets=true`, test first with two players sharing their map position
 
 ## Direct RTMP video and audio
 
-See [STREAMING.md](docs/STREAMING.md) for Thunderstore setup, receiver testing, configuration, and troubleshooting. The short version: install an FFmpeg executable with `libx264` and `aac`, set `Streaming.FFmpegPath` and `Streaming.RtmpUrl` in your active profile's config, launch modded, press **F10** for solo follow, then **F11** to publish. F11 stops the stream; F8 stops both the camera and stream in ordinary modes. In offline observer mode F8 first returns the character and then stops the session. Streaming never starts automatically.
+See [STREAMING.md](docs/STREAMING.md) for Thunderstore setup, receiver testing, configuration, and troubleshooting. The short version: install an FFmpeg executable with `libx264` or `h264_nvenc` plus `aac`, set `Streaming.FFmpegPath` and `Streaming.RtmpUrl` in your active profile's config, launch modded, press **F10** for solo follow, then **F11** to publish. F11 stops the stream; F8 stops both the camera and stream in ordinary modes. In offline observer mode F8 first returns the character and then stops the session. Streaming never starts automatically.
 
-A VM needs accelerated 3D rendering and a working audio device, even if no physical speakers are attached. This first encoder uses software H.264, so budget CPU as well as GPU/capture overhead. Streaming uses a normal authenticated game client; this project does not change platform authentication or game licensing.
+A VM needs accelerated 3D rendering and a working audio device, even if no physical speakers are attached. Choose software H.264 or NVIDIA NVENC; both retain capture/readback overhead and AAC audio encoding. Streaming uses a normal authenticated game client; this project does not change platform authentication or game licensing.
 
 See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUNTIME-TESTS.md), and [implementation sources](docs/SOURCES.md).
 

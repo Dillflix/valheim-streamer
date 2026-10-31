@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.7.0";
+    public const string PluginVersion = "0.7.1";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -465,9 +465,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 Executable = settings.FFmpegPath.Value, Url = settings.RtmpUrl.Value,
                 Width = settings.StreamWidth.Value, Height = settings.StreamHeight.Value,
                 Fps = settings.StreamFps.Value, BitrateKbps = settings.StreamBitrate.Value,
+                VideoEncoder = settings.StreamEncoder.Value, NvencGpu = settings.NvencGpu.Value,
                 SampleRate = AudioSettings.outputSampleRate, FlipVertical = settings.FlipVertical.Value
-            }, listener);
-            Logger.LogInfo("Starting RTMP with H.264 video and stereo AAC game audio. F11 stops output.");
+            }, listener, message => Logger.LogError("RTMP failure (redacted):\n" + message));
+            Logger.LogInfo("Starting RTMP with " + settings.StreamEncoder.Value + " video and stereo AAC game audio. F11 stops output.");
         }
         catch (ArgumentException error) { Logger.LogWarning(error.Message); }
         catch (InvalidOperationException error) { Logger.LogWarning(error.Message); }
@@ -697,7 +698,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|survey|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|survey|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -715,13 +716,17 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         plugin.ProbeCommand(args, context);
                         return;
                     case "stream":
-                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status"); return; }
+                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status|diagnostics"); return; }
                         switch (args[1].ToLowerInvariant())
                         {
                             case "on": plugin.StartStream(); break;
                             case "off": plugin.stream?.StopOutput(); break;
+                            case "diagnostics":
+                                string details = plugin.stream?.Diagnostics ?? "No encoder session.";
+                                if (details.Length == 0) details = "No encoder failure recorded. " + plugin.stream?.Status;
+                                context?.AddString(details); plugin.Logger.LogInfo(details); return;
                             case "status": break;
-                            default: context?.AddString("broadcast stream on|off|status"); return;
+                            default: context?.AddString("broadcast stream on|off|status|diagnostics"); return;
                         }
                         context?.AddString("RTMP: " + (plugin.stream?.Status ?? "Stopped"));
                         return;

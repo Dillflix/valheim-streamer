@@ -16,20 +16,24 @@ internal sealed class EncoderSession
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly TcpListener listener;
     private readonly Process process;
+    private readonly EncoderDiagnostics diagnostics;
     private readonly Thread videoThread, audioThread;
     private volatile bool stopping, closed;
     private string failure = "";
     private long lastVideo, lastAudio, lastProgress;
     private volatile bool publishing;
+    private volatile bool errorsComplete;
     internal bool IsClosed => closed;
     internal bool IsStopping => stopping;
-    internal string Status => failure.Length != 0 ? failure : closed ? "Stopped" : stopping ? "Stopping" : publishing ? "Publishing H.264 + AAC" : "Starting encoder";
+    internal string Status => failure.Length != 0 ? failure + diagnostics.Summary : closed ? "Stopped" : stopping ? "Stopping" : publishing ? "Publishing H.264 + AAC (" + options.VideoEncoder + ")" : "Starting encoder (" + options.VideoEncoder + ")";
+    internal string FailureDetails => failure.Length == 0 ? "" : failure + "\nEncoder: " + options.VideoEncoder + "\n" + diagnostics.Details;
     internal int SampleRate => options.SampleRate;
 
     internal EncoderSession(StreamOptions options)
     {
         options.Validate();
         this.options = options;
+        diagnostics = new EncoderDiagnostics(options.Url);
         audio = new AudioRing(options.SampleRate); // 0.5 seconds of stereo samples.
         video = new VideoMailbox(options.Width * options.Height * 4);
         listener = new TcpListener(IPAddress.Loopback, 0);
@@ -44,8 +48,7 @@ internal sealed class EncoderSession
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardInput = true, RedirectStandardError = true, RedirectStandardOutput = true
             };
-            // Never log raw FFmpeg output: it can contain the RTMP stream key.
-            process.ErrorDataReceived += (_, __) => { };
+            process.ErrorDataReceived += (_, e) => { if (e.Data == null) errorsComplete = true; else diagnostics.AddLine(e.Data); };
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data != null && e.Data.StartsWith("out_time_us=", StringComparison.Ordinal) &&
@@ -125,7 +128,7 @@ internal sealed class EncoderSession
                 pipe.Write(frame, 0, frame.Length);
             }
         }
-        catch { if (!stopping) Fail("Video encoder pipe closed; check receiver and FFmpeg support for libx264/AAC."); }
+        catch { if (!stopping) Fail("Video encoder pipe closed. See RTMP diagnostics in LogOutput.log."); }
     }
 
     private void WriteAudio()
@@ -158,7 +161,7 @@ internal sealed class EncoderSession
             while (!stopping)
             {
                 long now = clock.ElapsedMilliseconds;
-                if (process.HasExited) { Fail("FFmpeg exited; check receiver URL, credentials, and libx264/AAC availability."); break; }
+                if (process.HasExited) { Fail("FFmpeg exited. See RTMP diagnostics in LogOutput.log."); break; }
                 if (now - Interlocked.Read(ref lastVideo) > 5000) Fail("No video frames for five seconds; restore the game window and restart.");
                 if (now - Interlocked.Read(ref lastAudio) > 5000) Fail("No game audio callbacks for five seconds; check the audio device and restart.");
                 if (now > 15000 && now - Interlocked.Read(ref lastProgress) > 10000) Fail("Encoder output stalled; check the receiver and restart.");
@@ -170,11 +173,15 @@ internal sealed class EncoderSession
         {
             stopping = true;
             listener.Stop();
+            // A pipe failure often races the process exit and stderr callbacks.
+            // Allow a short drain on this background thread before forced cleanup.
+            try { if (failure.Length != 0 && process.WaitForExit(500)) diagnostics.SetExitCode(process.ExitCode); } catch { }
             // Kill closes blocked pipes without blocking the Unity or audio threads.
             try { if (!process.HasExited) process.Kill(); } catch { }
             videoThread.Join(2000);
             audioThread.Join(6000);
-            try { process.WaitForExit(1000); } catch { }
+            try { if (process.WaitForExit(1000)) diagnostics.SetExitCode(process.ExitCode); } catch { }
+            SpinWait.SpinUntil(() => errorsComplete, 1000);
             process.Dispose();
             closed = true;
         }

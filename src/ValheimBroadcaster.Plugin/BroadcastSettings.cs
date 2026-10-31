@@ -11,12 +11,16 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
+    internal readonly ConfigEntry<Streaming.VideoEncoderKind> StreamEncoder;
+    internal readonly ConfigEntry<int> NvencGpu;
     internal readonly ConfigEntry<bool> FlipVertical;
 
     internal BroadcastSettings(ConfigFile config)
     {
         ObserverConnection = config.Bind("Multiplayer", "ObserverConnection", false, "Select before joining: require the server companion and remain a read-only observer until disconnect. Dedicated Steam servers only; ordinary gameplay is disabled for this connection.");
-        FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
+        FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to FFmpeg with the selected H.264 encoder, AAC and RTMP support. Not bundled.");
+        StreamEncoder = config.Bind("Streaming", "VideoEncoder", Streaming.VideoEncoderKind.libx264, "libx264: software CPU encoding. h264_nvenc: NVIDIA GPU encoding, requiring a compatible driver and NVENC-enabled FFmpeg on this client. No automatic fallback.");
+        NvencGpu = config.Bind("Streaming", "NvencGpu", -1, "NVENC device index: -1 selects automatically; 0 selects the first NVIDIA GPU. Used only with h264_nvenc.");
         RtmpUrl = config.Bind("Streaming", "RtmpUrl", "", "Full rtmp:// or rtmps:// receiver URL including stream key. Keep this config private.");
         StreamWidth = config.Bind("Streaming", "Width", 1280, "Output width: even, 320–1920.");
         StreamHeight = config.Bind("Streaming", "Height", 720, "Output height: even, 180–1080. Match the game aspect ratio.");

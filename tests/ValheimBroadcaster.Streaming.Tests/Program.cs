@@ -23,7 +23,7 @@ internal static class Program
         try { action(); } catch (ArgumentException) { rejected = true; }
         Check(rejected, name);
     }
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
@@ -32,6 +32,7 @@ internal static class Program
             new StreamOptions { Url = "rtmps://localhost/live/key?token=abc" }.Validate();
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", Width = 321 }.Validate(), "reject odd width");
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", SampleRate = 96000 }.Validate(), "reject unsupported audio rate");
+            EncoderSettingsAndDiagnostics();
             var ring = new AudioRing(8);
             Check(ring.Push(new float[] { 1, 2, 3 }, 1), "mono is accepted");
             Check(!ring.Push(new float[] { 4, 5 }, 1), "overflow is rejected without overwriting unread audio");
@@ -48,7 +49,9 @@ internal static class Program
             try { new EncoderSession(new StreamOptions { Url = "rtmp://127.0.0.1/live/test", Executable = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()) }); }
             catch (InvalidOperationException e) { missing = !e.Message.Contains("rtmp"); }
             Check(missing, "missing encoder gives a redacted error");
-            Loopback();
+            Loopback(VideoEncoderKind.libx264);
+            if (Array.IndexOf(args, "--nvenc") >= 0) Loopback(VideoEncoderKind.h264_nvenc);
+            else Console.WriteLine("NOT RUN: NVENC hardware loopback (use --nvenc on an NVIDIA-equipped host).");
             Console.WriteLine($"{checks} streaming checks passed.");
             return 0;
         }
@@ -62,7 +65,41 @@ internal static class Program
         return p;
     }
 
-    private static void Loopback()
+    private static void EncoderSettingsAndDiagnostics()
+    {
+        var options = new StreamOptions { Url = "rtmp://localhost/live/test" };
+        string software = options.Arguments(12345);
+        Check(software.Contains("-c:v libx264 -preset veryfast -tune zerolatency") && !software.Contains("-gpu"), "existing software encoding remains the default");
+        options.VideoEncoder = VideoEncoderKind.h264_nvenc;
+        options.NvencGpu = 1;
+        options.FlipVertical = true;
+        string hardware = options.Arguments(12345);
+        Check(hardware.Contains("-c:v h264_nvenc -preset p4 -tune ll -rc cbr -gpu 1") && !hardware.Contains("libx264") && !hardware.Contains("zerolatency"), "NVENC uses its own low-latency settings and explicit device");
+        Check(hardware.Contains("-c:a aac") && hardware.Contains("-vf vflip") && hardware.Contains("-pix_fmt yuv420p -bf 0 -g 60"), "hardware mode preserves audio, flip and compatible H.264 output");
+        options.VideoEncoder = (VideoEncoderKind)100;
+        Reject(options.Validate, "unknown encoder is rejected");
+        options.VideoEncoder = VideoEncoderKind.h264_nvenc;
+        options.NvencGpu = -2;
+        Reject(options.Validate, "device-list sentinel cannot be used as a publishing device");
+
+        const string url = "rtmps://username:password@example.invalid/private-app/secret%2Bkey?token=auth%2Fvalue&other=long+value";
+        var diagnostics = new EncoderDiagnostics(url);
+        string safe = diagnostics.Sanitize("Error opening output " + url + " : Connection refused");
+        Check(safe.Contains("Connection refused") && !safe.Contains("secret") && !safe.Contains("example.invalid"), "full ingest URL is removed while error survives");
+        safe = diagnostics.Sanitize("Server rejected app private-app playpath secret+key token auth/value username password long value");
+        Check(!safe.Contains("private-app") && !safe.Contains("secret+key") && !safe.Contains("auth/value") && !safe.Contains("password") && !safe.Contains("long value"), "separately printed decoded credentials, app, playpath and query values are removed");
+        safe = diagnostics.Sanitize("Rejected secret%2bkey auth%2fvalue");
+        Check(!safe.Contains("secret") && !safe.Contains("auth%"), "encoded credentials are redacted case-insensitively");
+        safe = diagnostics.Sanitize("Error tcp://10.20.30.40:1935?timeout=5000000: Connection refused");
+        Check(!safe.Contains("10.20.30.40") && safe.Contains("Connection refused"), "alternate protocol diagnostics redact network destinations");
+        Check(diagnostics.Sanitize(new string('x', 17000)).Contains("omitted"), "oversized diagnostics are discarded without retaining fragments");
+        for (int n = 0; n < 20; n++) diagnostics.AddLine("failure-" + n + new string('x', 600));
+        diagnostics.SetExitCode(7);
+        Check(diagnostics.Details.Length < 4300 && !diagnostics.Details.Contains("failure-0") && diagnostics.Details.Contains("failure-19"), "diagnostic history is bounded and retains recent errors");
+        Check(diagnostics.Summary.Contains("Exit 7") && diagnostics.Summary.Length < 210, "status preserves exit code with bounded error detail");
+    }
+
+    private static void Loopback(VideoEncoderKind videoEncoder)
     {
         var reserve = new TcpListener(IPAddress.Loopback, 0);
         reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
@@ -77,7 +114,7 @@ internal static class Program
         try
         {
             Thread.Sleep(500); // FFmpeg must bind before the publisher connects.
-            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500 };
+            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder };
             encoder = new EncoderSession(options);
             byte[] frame = new byte[320 * 180 * 4];
             float[] audio = new float[1920];
@@ -101,7 +138,7 @@ internal static class Program
                 encoder.SubmitAudio(audio, 2);
                 if (encoder.IsStopping) throw new Exception("Publisher stopped early: " + encoder.Status);
             }
-            Check(encoder.Status == "Publishing H.264 + AAC", "encoder reports actual mux progress");
+            Check(encoder.Status == "Publishing H.264 + AAC (" + videoEncoder + ")", "encoder reports actual mux progress and selected encoder");
             encoder.Stop(); encoder.Stop();
             Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "idempotent stop closes encoder and workers");
             Check(receiver.WaitForExit(10000), "RTMP receiver observes stream close");
@@ -146,6 +183,8 @@ internal static class Program
             encoder = new EncoderSession(options);
             Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "unavailable receiver terminates encoder without blocking caller");
             Check(!encoder.Status.Contains(url), "failure status does not disclose destination/key");
+            Check(encoder.FailureDetails.Contains("FFmpeg exit:") && !encoder.FailureDetails.Contains("No FFmpeg error output"), "early pipe/process failure retains real FFmpeg stderr and exit code");
+            Check(!encoder.FailureDetails.Contains(url) && !encoder.FailureDetails.Contains("127.0.0.1"), "persisted failure diagnostics redact destination and key");
         }
         finally
         {

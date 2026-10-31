@@ -1,14 +1,14 @@
 # Direct RTMP with game audio
 
-Version 0.3.0 adds H.264 video and stereo AAC game audio from the broadcaster client. The plugin manages capture and an FFmpeg child process. OBS is not used. Other players and the Valheim server do not need this mod.
+Version 0.7.1 adds selectable NVIDIA NVENC encoding and redacted FFmpeg failure diagnostics. It retains H.264 video and stereo AAC game audio from the broadcaster client. The plugin manages capture and an FFmpeg child process. OBS is not used. Other players and the Valheim server do not need this mod.
 
 The audio source is the game's existing AudioListener mix: game sounds/music and any other mod audio routed through that listener. The listener follows the broadcast camera while publishing. No microphone, Discord, or desktop audio capture is opened. Local playback is not muted by our filter. Actual volume/mixer behavior and spatial alignment must be checked in Valheim.
 
 ## Thunderstore setup
 
 1. Close Valheim. In Thunderstore, select the profile you launch and use **Settings → Browse profile folder** (wording may vary by manager version).
-2. Install both DLLs from the same 0.3.0 test build into `BepInEx/plugins/ValheimBroadcaster/`. Remove duplicate older copies of this plugin elsewhere in that profile. Keep BepInEx and Jötunn installed.
-3. Install a trusted FFmpeg build with `libx264`, `aac`, TCP, RTMP, and optionally RTMPS support. The [FFmpeg download page](https://ffmpeg.org/download.html) links Windows builds. The mod does not download or bundle FFmpeg. Run `ffmpeg -encoders` to check those encoders.
+2. Install both DLLs from the same 0.7.1 test build into `BepInEx/plugins/ValheimBroadcaster/`. Remove duplicate older copies of this plugin elsewhere in that profile. Keep BepInEx and Jötunn installed.
+3. Install a trusted FFmpeg build with your selected video encoder (`libx264` or `h264_nvenc`), `aac`, TCP, RTMP, and optionally RTMPS support. The [FFmpeg download page](https://ffmpeg.org/download.html) links Windows builds. The mod does not download or bundle FFmpeg. Run `ffmpeg -encoders` to check those encoders.
 4. Launch modded once to generate the new config entries, then close Valheim. Edit `BepInEx/config/com.dillflix.valheimbroadcaster.cfg` in this same profile:
 
 ```ini
@@ -19,17 +19,33 @@ Width = 1280
 Height = 720
 FPS = 30
 VideoBitrateKbps = 4000
+VideoEncoder = h264_nvenc
+NvencGpu = -1
 FlipVertical = false
 ```
+
+The example selects NVIDIA encoding. The default remains `VideoEncoder = libx264` to preserve existing configurations. Use `NvencGpu = -1` to select an available NVIDIA GPU, or `0`, `1`, etc. to select a particular device. NVENC runs on the **broadcaster client**, not the RTMP receiver. It requires an NVENC-capable NVIDIA GPU exposed to that client, a compatible installed driver, and an FFmpeg build containing `h264_nvenc`. Unsupported hardware, driver/API mismatches, or unavailable encoder sessions fail explicitly; the mod does not silently fall back to software.
 
 Use the complete ingest URL supplied by your receiver. RTMPS is accepted if your FFmpeg build supports it. The mod is the publisher, not the remote RTMP server. The URL stays empty by default and streaming is always manually started. Do not share this config with a real stream key; FFmpeg's local process arguments also contain that key.
 
 5. Select stereo output on a working 44.1 or 48 kHz audio device. A VM needs a functioning virtual audio device and GPU acceleration. The output feed is always 48 kHz stereo AAC at 128 kbps. Mono input is duplicated to both channels; surround output is rejected.
-6. Start your RTMP receiver, then use Thunderstore's **Start modded**. Join a disposable world alone. Press **F10** to follow your own character, then **F11** to start video **and audio**. The overlay should progress from `Starting encoder` to `Publishing H.264 + AAC`.
+6. Start your RTMP receiver, then use Thunderstore's **Start modded**. Join a disposable world alone. Press **F10** to follow your own character, then **F11** to start video **and audio**. The overlay should progress from `Starting encoder` to `Publishing H.264 + AAC (h264_nvenc)` (or `libx264`).
 7. View/record the feed on the receiver. Walk, jump, swing a tool, and stand near a fire/water source. Verify audible sound, left/right positioning, motion/sound alignment, image orientation, and local playback. If upside down, stop, set `FlipVertical = true`, and restart the game. Match output/game aspect ratios to avoid stretching.
 8. **F11** stops publishing while preserving the follow camera. **F8** stops both. Switching camera modes with F10 or `broadcast on/self`, dying, leaving the world, or disabling the plugin also stops output. After switching modes, press F11 again. Wait for cleanup if status says `Stopping`.
 
-Console equivalents (requires Valheim `-console`): `broadcast self`, `broadcast stream on`, `broadcast stream status`, `broadcast stream off`. No console flag is needed for hotkeys.
+Console equivalents (requires Valheim `-console`): `broadcast self`, `broadcast stream on`, `broadcast stream status`, `broadcast stream diagnostics`, `broadcast stream off`. No console flag is needed for hotkeys.
+
+## Test NVIDIA encoding independently
+
+On the **broadcaster Windows machine**, use the same executable specified in `FFmpegPath`. This one-second synthetic test does not contact your RTMP server or include a key:
+
+```powershell
+& 'C:\Tools\ffmpeg\bin\ffmpeg.exe' -hide_banner -f lavfi -i color=c=black:s=1280x720:r=30 -frames:v 30 -c:v h264_nvenc -preset p4 -tune ll -rc cbr -b:v 4M -pix_fmt yuv420p -gpu 0 -f null -
+```
+
+A successful encode verifies usable NVENC on that device; `ffmpeg -encoders` alone only verifies that the encoder was compiled in. If it fails, use its exact error to distinguish missing support, a driver mismatch, device selection or capacity. Keep audio enabled for the subsequent in-game RTMP test.
+
+Implementation references: [NVIDIA FFmpeg guide](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/ffmpeg-with-nvidia-gpu/index.html), and the installed executable's `ffmpeg -h encoder=h264_nvenc` options.
 
 ## A small receiver test
 
@@ -50,10 +66,10 @@ Expect H.264 video and AAC audio, two channels, 48000 Hz. Stopping the mod termi
 
 ## Performance and troubleshooting
 
-- Defaults are 720p30, 4 Mbps H.264 + 128 kbps AAC. Software `libx264` uses CPU. This version has no hardware encoder selector. Lower resolution/FPS if the encoder falls behind; capture/readback also costs GPU and memory bandwidth.
+- Defaults are 720p30, 4 Mbps H.264 + 128 kbps AAC. `libx264` uses the CPU; `h264_nvenc` uses NVIDIA hardware for H.264 encoding (p4 preset, low-latency tuning, CBR, no B frames, two-second keyframe interval). Capture/readback, pixel conversion, copying and AAC still have CPU/GPU costs. This is not a zero-copy GPU capture path. Lower resolution/FPS if capture or encoding cannot keep up.
 - Capture includes the actual game framebuffer: chat, menus, console, overlays, and the waiting slate can be visible. It is not a desktop capture. Self-follow always displays its test label.
 - Keep the game rendering and its audio device active. Minimizing, suspending, or loss of focus can stop rendering/audio depending on game/OS settings. Five seconds without capture callbacks stops output rather than broadcasting a frozen frame indefinitely. Return to the game and restart explicitly.
-- `Could not start FFmpeg`: check the absolute executable path and permissions. `FFmpeg exited`/pipe errors: check the ingest URL, receiver availability, and encoder support. The plugin deliberately hides raw FFmpeg stderr to keep keys out of logs. Test FFmpeg separately with a disposable key if deeper diagnostics are needed.
+- `Could not start FFmpeg`: check the absolute executable path and permissions. `FFmpeg exited`/pipe errors are symptoms; inspect `broadcast stream diagnostics` or the automatic **RTMP failure (redacted)** block in `BepInEx/LogOutput.log`. The block records the selected encoder, exit code and up to eight bounded stderr lines. URLs and configured destination/credential components are removed before retention; the config and local process arguments still contain the stream key. Unknown encoder, missing NVENC driver/library, unsupported driver API, connection refusal and receiver rejection now retain their underlying error. A pipe failure gets a short background drain period so its follow-on error does not replace the useful FFmpeg message. Review logs before sharing; do not post your config or a full publishing command.
 - `Audio buffer overflow`: check stereo layout and encoder CPU capacity. Audio device changes stop the stream; restart after the device stabilizes. Audio callbacks are required even during silence; a valid silent mix is allowed.
 - Short input gaps insert silence/repeat video. Prolonged gaps, overflow, or encoder lag stop the session. Automatic reconnection is not implemented.
 - RTMP progress confirms the local encoder is producing output; it does not prove viewers can play the remote feed. Check the receiver separately.
@@ -66,4 +82,4 @@ With .NET 8, FFmpeg and ffprobe on PATH:
 dotnet run --project tests/ValheimBroadcaster.Streaming.Tests -c Release
 ```
 
-This runs the production encoder/session code against an actual local RTMP listener. It validates input rejection, bounded buffers, mono/stereo transfer, process cleanup, codec metadata, decoded non-silent stereo audio, a synchronized flash/tone, and an unavailable receiver. It does not instantiate Unity, prove game audio capture, or measure a Windows VM's performance. Follow the game-specific matrix in [RUNTIME-TESTS.md](RUNTIME-TESTS.md).
+CI runs this harness on Linux and Windows. It runs the production encoder/session code against an actual local RTMP listener using software encoding. On an NVIDIA-equipped host, append `-- --nvenc` to also run the same received-media and synchronization checks using NVENC. Hardware encoding is explicitly reported as not run unless requested. It validates encoder selection, bounded/redacted diagnostics, early-exit error preservation, input rejection, bounded buffers, mono/stereo transfer, process cleanup, codec metadata, decoded non-silent stereo audio, a synchronized flash/tone, and an unavailable receiver. It does not instantiate Unity, prove game audio capture, or measure a Windows VM's performance. Follow the game-specific matrix in [RUNTIME-TESTS.md](RUNTIME-TESTS.md).
