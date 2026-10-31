@@ -2,7 +2,7 @@
 
 ## Evidence available
 
-- The director's **29 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
+- The director's **33 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
 - The core compiled against actual .NET Standard 2.0 reference assemblies with warnings treated as errors. Its executable test harness ran on .NET 8 against that compiled core.
 - The development container's ordinary `dotnet`/MSBuild path fails during process introspection (`Process.StartTime` / `ProcessName`). Direct invocation of the SDK's Roslyn compiler was used for the observed core checks. This is an environment limitation, not a replacement for checking the normal project build in CI or on a development machine.
 - The plugin compiled with warnings treated as errors using Roslyn 4.11 from .NET SDK **8.0.427**, actual Microsoft .NET Framework 4.8 reference assemblies (**1.0.3**), Jötunn **2.30.2**, BepInEx **5.4.23.2**, and real Valheim references. This checked the source against those assemblies; it did not establish that the normal MSBuild graph executes successfully in this container.
@@ -84,7 +84,7 @@ Every case below is **pending in-game validation**.
 | --- | --- |
 | Startup/menu | Plugin logs its version and starts disabled; normal menus and camera work |
 | Headless load | No camera/UI initialization or graphical errors; plugin does not require clients to install it |
-| No other players | Enabling starts a slow orbit around the activation position, then creature/scenic alternation; stop restores ordinary view |
+| No other players | Enabling starts new scenic terrain paths around the loaded region, then creature/scenic alternation; stop restores ordinary view |
 | Two nearby players | Both appear in `broadcast list`; the observer does not; duplicate names remain independently selectable |
 | Follow shot | Target stays framed; FOV, height, azimuth, smoothing, and obstruction response match configuration |
 | Manual cycle | Next/previous wrap predictably and reset the camera pose without displaying a stale target |
@@ -121,11 +121,18 @@ Do not promote distant mode to the default until the actual client/server combin
 
 ## Continuous coverage (0.4.0) runtime checks — pending
 
-- Alone, F8 starts a local orbit; at default dwell values it alternates 45 seconds of scenery with 25 seconds following a loaded living non-player actor within 50 metres. No actor means continuous scenery.
+- Alone, F8 starts a changing local scenic paths; at default dwell values it alternates 45-second moving scenic shots with 25 seconds following a loaded living non-player actor within 50 metres. No fresh actor means another scenic path; exhaustion is reported explicitly.
 - Killing/despawning/moving the subject beyond the radius returns to scenery. Test wildlife, tamed animals, and enemies. No actor is spawned or controlled.
 - Joining ready players preempt idle and rotate; a lone ready player remains selected. Connected players outside the loaded area show awaiting-scene status while valid idle shots continue.
 - Run F11 throughout those automatic transitions and verify one uninterrupted RTMP connection with matching spatial audio. Explicit camera mode restarts (F10 / on / self) still stop output as documented.
-- Move the observer and run `broadcast anchor`; the new local anchor takes effect without stopping output. World exit/re-entry never reuses an old anchor or creature binding.
-- Test empty/unready scenes and orbit positions near the edge of loaded terrain: a recovery slate must hide invalid footage, and valid coverage must resume when ready.
-- With experimental remote mode enabled, verify attempt/cooldown bounds, reference restoration, eventual ready-player selection, and the documented recovery slate if remote loading unloads the local anchor.
+- Move the observer and run `broadcast survey`; the new survey region takes effect without stopping output. World exit/re-entry never reuses an old survey origin or creature binding.
+- Test empty/unready scenes and camera positions near the edge of loaded terrain: a recovery slate must hide invalid footage, and valid coverage must resume when ready.
+- With experimental remote mode enabled, verify attempt/cooldown bounds, reference restoration, eventual ready-player selection, and the documented recovery slate if remote loading unloads the local survey region.
 - Run actual eight-hour and 24-hour sessions before claiming unattended reliability. Record memory/texture/process counts, observer survival, A/V skew, target changes, and failures. These runs have not been performed here.
+
+## 0.5.0 additional checks — pending in Valheim
+
+- Record at least twenty idle transitions: new paths, no immediate repeated locations, no repeated creature within five minutes, stationary-subject abandonment, and honest exhaustion status when no path is viable.
+- Verify normal footage excludes the broadcaster and newly equipped items; stopping restores rendering. F10 remains visible. Use another client to confirm local masking does not falsely imply network invisibility.
+- Exercise probe mark/start/stop/status with a distant unloaded destination, timeout, readiness loss, total-duration expiry, F8, death and world exit. Confirm return to ordinary interest and no stale cross-world marker.
+- A real game soak test remains necessary. The automated timing simulations do not establish dynamic shot quality, terrain fidelity, passive observer behavior, or long-running stream health.

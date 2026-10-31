@@ -19,7 +19,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.4.0";
+    public const string PluginVersion = "0.5.0";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -27,12 +27,17 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private static readonly FieldInfo? ListenerField = AccessTools.Field(typeof(GameCamera), "m_listner");
     private BroadcastSettings settings = null!;
     private readonly BroadcastDirector director = new BroadcastDirector();
+    private readonly ObserverVisualMask observerVisuals = new ObserverVisualMask();
+    private readonly SceneProbe probe = new SceneProbe();
+    private Vector3? probeMarker;
+    private ZNet? probeWorld;
+    private Vector3 probeOrigin;
     private readonly CoverageDirector coverage = new CoverageDirector();
     private readonly BroadcastDirector acquisition = new BroadcastDirector();
     private readonly AcquisitionWindow acquisitionWindow = new AcquisitionWindow();
     private readonly IdleShots idle = new IdleShots();
     private float nextCreatureRefresh;
-    private float orbitAngle;
+    private float nextScenicSearch;
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
     private float nextRosterRefresh;
@@ -91,6 +96,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void Update()
     {
         if (settings == null) return;
+        if (!ZNet.instance || probeWorld != ZNet.instance) { probeMarker = null; probeWorld = null; }
         if (!Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || (director.IsEnabled && activeWorld != ZNet.instance))
         {
             if (director.IsEnabled) Stop();
@@ -138,17 +144,25 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 lastRevision = coverage.Revision;
                 rig.ResetPose();
-                orbitAngle = 0;
+                if (coverage.Mode == CoverageMode.Scenic) idle.BeginScenicPath();
                 cameraReady = false;
             }
-            if (coverage.Mode == CoverageMode.Scenic && !director.IsHolding)
-                orbitAngle = (orbitAngle + settings.OrbitSpeed.Value * Time.unscaledDeltaTime) % 360f;
+            if (coverage.Mode == CoverageMode.Scenic && !idle.HasScenicPath && Time.unscaledTime >= nextScenicSearch)
+            { idle.BeginScenicPath(); nextScenicSearch = Time.unscaledTime + 5f; }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
                 !selfTest && !readyPlayer && settings.RemoteTargets.Value && remotePatchAvailable && acquisition.Roster.Count > 0,
                 settings.Timeout.Value, settings.AcquisitionCooldown.Value);
             if (wasAcquiring && !acquiring) acquisition.Next();
-            UpdateReference(readyPlayer ? current : acquiring ? roster.Find(acquisition.CurrentTarget?.Id) : null);
+            bool probing = probe.Active;
+            if (probing)
+            {
+                bool sceneReady = probeMarker.HasValue && IdleShots.Ready(probeMarker.Value) && ProbeCameraAreaReady(probeMarker.Value);
+                probe.Tick(Time.unscaledDeltaTime, sceneReady);
+                if (probe.Active) SetReference(probeMarker!.Value);
+                else { RestoreReference(); rig.ResetPose(); }
+            }
+            else UpdateReference(readyPlayer ? current : acquiring ? roster.Find(acquisition.CurrentTarget?.Id) : null);
             string status = Status();
             if (status != lastStatus) { Logger.LogInfo(status); lastStatus = status; }
         }
@@ -184,7 +198,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         Stop(); // Restore any previous camera/HUD/reference before switching modes.
         selfTest = testSelf;
         activeWorld = ZNet.instance;
-        idle.SetAnchor(Player.m_localPlayer.transform.position);
+        idle.SetRegion(Player.m_localPlayer.transform.position);
         nextRosterRefresh = nextCreatureRefresh = 0;
         RefreshRoster();
         director.SetEnabled(true);
@@ -201,6 +215,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void Stop()
     {
         stream?.StopOutput();
+        probe.Stop();
+        observerVisuals.Restore();
         director.SetEnabled(false);
         director.SetRoster(Array.Empty<PlayerTarget>());
         roster.Clear();
@@ -224,6 +240,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         }
         Vector3? position = target.LoadedPlayer ? target.LoadedPlayer.transform.position : target.PublicPosition;
         if (!position.HasValue || !TargetRoster.Finite(position.Value)) { RestoreReference(); return; }
+        SetReference(position.Value);
+    }
+
+    private void SetReference(Vector3 position)
+    {
         if (referenceOwner != ZNet.instance)
         {
             RestoreReference();
@@ -232,7 +253,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         }
         remoteReference = position;
         // The setter patch also covers subsequent normal game updates. Do not change send timers.
-        referenceOwner.SetReferencePosition(position.Value);
+        referenceOwner.SetReferencePosition(position);
     }
 
     private void RestoreReference()
@@ -261,7 +282,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         {
             Vector3? focus = null;
             float azimuth = plugin.settings.Azimuth.Value;
-            if (plugin.coverage.Mode == CoverageMode.Player)
+            plugin.observerVisuals.Apply(Player.m_localPlayer, !plugin.selfTest);
+            if (plugin.probe.Active)
+            {
+                if (plugin.probe.State == ProbeState.Viewing && plugin.probeMarker.HasValue)
+                    focus = plugin.probeMarker.Value + Vector3.up * 1.5f;
+            }
+            else if (plugin.coverage.Mode == CoverageMode.Player)
             {
                 TargetRoster.Target? target = plugin.roster.Find(plugin.coverage.SubjectId);
                 if (IsReady(target)) focus = target!.LoadedPlayer!.transform.position + Vector3.up * 1.5f;
@@ -271,10 +298,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 Character? actor = plugin.idle.Find(plugin.coverage.SubjectId);
                 if (actor) focus = actor.transform.position + Vector3.up;
             }
-            else if (plugin.coverage.Mode == CoverageMode.Scenic && plugin.idle.SceneReady)
+            else if (plugin.coverage.Mode == CoverageMode.Scenic && plugin.idle.SceneReady && plugin.idle.HasScenicPath)
             {
-                focus = plugin.idle.Anchor + Vector3.up * 1.5f;
-                azimuth += plugin.orbitAngle;
+                focus = plugin.idle.ScenicFocus((float)(plugin.coverage.ShotElapsed / plugin.coverage.ScenicSeconds));
             }
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
                 plugin.settings, plugin.coverage.Revision, __0);
@@ -328,7 +354,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             GUI.color = Color.white;
             GUI.Label(new Rect(24, 24, Screen.width - 48, 60), "Valheim Broadcaster — recovery: waiting for a ready scene\n" + Status());
         }
-        else if (settings.ShowStatus.Value || selfTest)
+        else if (settings.ShowStatus.Value || selfTest || probe.Active)
         {
             GUI.color = Color.white;
             GUI.Box(new Rect(12, 12, Mathf.Max(200, Screen.width - 24), 48), Status());
@@ -338,10 +364,62 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private string Status()
     {
+        if (probe.Active) return $"SOLO DISTANT SCENE TEST | {probe.State} | {probe.Elapsed:F0}s | RTMP: {stream?.Status ?? "Stopped"}";
         string subject = coverage.Mode == CoverageMode.Player ? roster.Find(coverage.SubjectId)?.Identity.Name ?? "Player" :
-            coverage.Mode == CoverageMode.Creature ? idle.Find(coverage.SubjectId)?.GetHoverName() ?? "Creature" : "Local anchor";
+            coverage.Mode == CoverageMode.Creature ? idle.Find(coverage.SubjectId)?.GetHoverName() ?? "Creature" : "Scenery";
+        string exhausted = coverage.Mode == CoverageMode.Scenic && !idle.HasScenicPath ? " | No fresh scenic path in loaded region" : "";
         string pending = coverage.AwaitingPlayers ? acquisitionWindow.Active ? " | Acquiring distant player" : " | Awaiting player scene" : "";
-        return $"{(selfTest ? "SELF-FOLLOW TEST | " : "")}{coverage.Mode} | {subject} | {(director.IsHolding ? "Hold" : "Auto")} | {roster.ConnectedOthers} other connected, {director.Roster.Count} ready{pending} | RTMP: {stream?.Status ?? "Stopped"}";
+        return $"{(selfTest ? "SELF-FOLLOW TEST | " : "")}{coverage.Mode} | {subject} | {(director.IsHolding ? "Hold" : "Auto")} | {roster.ConnectedOthers} other connected, {director.Roster.Count} ready{pending}{exhausted} | RTMP: {stream?.Status ?? "Stopped"}";
+    }
+
+    private bool ProbeCameraAreaReady(Vector3 point)
+    {
+        float angle = settings.Azimuth.Value * Mathf.Deg2Rad;
+        return IdleShots.Ready(point + Vector3.up * (1.5f + settings.Height.Value) +
+            new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle)) * settings.Distance.Value);
+    }
+
+    private void ProbeCommand(string[] args, Terminal context)
+    {
+        if (args.Length != 2) { context?.AddString("broadcast probe mark|start|stop|status"); return; }
+        switch (args[1].ToLowerInvariant())
+        {
+            case "mark":
+                if (probe.Active || !Player.m_localPlayer || !ZNet.instance || !IdleShots.Ready(Player.m_localPlayer.transform.position))
+                { context?.AddString("Stop the probe and stand in a loaded world to mark its destination."); return; }
+                probeMarker = Player.m_localPlayer.transform.position;
+                probeWorld = ZNet.instance;
+                context?.AddString("Destination saved for this world session. Travel away until it unloads, then run broadcast probe start.");
+                return;
+            case "start":
+                if (probe.Active) { context?.AddString("Probe already active."); return; }
+                if (!probeMarker.HasValue || probeWorld != ZNet.instance || !Player.m_localPlayer || Player.m_localPlayer.IsDead())
+                { context?.AddString("Mark a destination in this world first, with a living character."); return; }
+                if (!remotePatchAvailable) { context?.AddString("Network reference hook unavailable in this build."); return; }
+                float distance = Vector3.Distance(Player.m_localPlayer.transform.position, probeMarker.Value);
+                if (distance < 200f || !ZoneSystem.instance || ZoneSystem.instance.IsZoneLoaded(ZoneSystem.GetZone(probeMarker.Value)))
+                { context?.AddString("Destination is too close or still loaded. Move farther away (at least 200m) and try again."); return; }
+                if (selfTest) { context?.AddString("Exit F10 self-follow before starting this scene test."); return; }
+                if (!director.IsEnabled && !StartBroadcast()) { context?.AddString("Join a ready world first."); return; }
+                RestoreReference();
+                acquisitionWindow.Reset();
+                probeOrigin = Player.m_localPlayer.transform.position;
+                probe.Start(); rig.ResetPose(); cameraReady = false;
+                SetReference(probeMarker.Value);
+                Logger.LogWarning("Solo scene probe started: changing network interest only, no teleport. 30s acquisition timeout, 120s total limit. Scene readiness is not proof of full scene delivery.");
+                context?.AddString("Probe started; close the console. Use broadcast probe status for results.");
+                return;
+            case "stop":
+                probe.Stop(); RestoreReference(); acquisitionWindow.Reset(); rig.ResetPose(); cameraReady = false;
+                context?.AddString("Probe stopped; normal coverage resumes without restarting RTMP.");
+                return;
+            case "status":
+                string distanceText = probeMarker.HasValue && Player.m_localPlayer ? Vector3.Distance(Player.m_localPlayer.transform.position, probeMarker.Value).ToString("F0") + "m" : "unavailable";
+                string moved = Player.m_localPlayer && probe.State != ProbeState.Idle ? Vector3.Distance(Player.m_localPlayer.transform.position, probeOrigin).ToString("F1") + "m" : "unavailable";
+                context?.AddString($"Probe: {probe.State}; elapsed {probe.Elapsed:F1}s; first-ready {probe.FirstReadySeconds?.ToString("F1") ?? "never"}s; destination distance {distanceText}; observer displacement {moved}. Readiness is not a complete-scene verdict.");
+                return;
+            default: context?.AddString("broadcast probe mark|start|stop|status"); return;
+        }
     }
 
     private void FailClosed(Exception error)
@@ -361,7 +439,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|anchor|follow <id>|stream on|off|status";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|survey|probe mark|start|stop|status|follow <id>|stream on|off|status";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -371,6 +449,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
+                    case "probe":
+                        plugin.ProbeCommand(args, context);
+                        return;
                     case "stream":
                         if (args.Length != 2) { context?.AddString("broadcast stream on|off|status"); return; }
                         switch (args[1].ToLowerInvariant())
@@ -386,13 +467,14 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     case "self":
                         if (!plugin.StartBroadcast(action == "self")) { context?.AddString("Join a world with a living, spawned observer first."); return; }
                         break;
+                    case "survey":
                     case "anchor":
                         if (!plugin.director.IsEnabled || plugin.selfTest || !Player.m_localPlayer)
-                        { context?.AddString("Start normal broadcasting first; anchor is not available in self-test."); return; }
-                        plugin.idle.SetAnchor(Player.m_localPlayer.transform.position);
+                        { context?.AddString("Start normal broadcasting first; survey reset is not available in self-test."); return; }
+                        plugin.idle.SetRegion(Player.m_localPlayer.transform.position);
                         plugin.coverage.Reset();
                         plugin.nextCreatureRefresh = 0;
-                        context?.AddString("Scenic anchor set to your character's current position for this session.");
+                        context?.AddString("Idle survey region reset. New scenic paths will be selected around this loaded region.");
                         break;
                     case "off": plugin.Stop(); break;
                     case "next": plugin.director.Next(); break;

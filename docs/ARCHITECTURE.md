@@ -9,14 +9,14 @@ The first milestone is a single broadcasting client following and cycling eligib
 | `ValheimBroadcaster.Core` | Pure .NET Standard 2.0 director: identities, roster ordering, selection, dwell, hold, timeout, and states |
 | `BroadcasterPlugin` | BepInEx/Jötunn lifecycle, configuration, controls, console command, camera patch, and experimental network-reference override |
 | `TargetRoster` | Track connected-player presence separately from ready candidates and public acquisition positions; exclude the observer |
-| `CoverageDirector` / `IdleShots` | Player priority, scenic/creature timing, bounded creature bindings and session anchor |
+| `CoverageDirector` / `IdleShots` | Player priority, scenic/creature timing, recent-use exclusions, bounded creature bindings and terrain paths |
 | `AcquisitionWindow` | Bounded opt-in remote interest attempts with local cooldown |
 | `CameraRig` | Smooth a wide shot, check obstructions, hide/restore the HUD, restore camera state |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback, listener placement, and non-mutating game audio capture |
 | `EncoderSession` / media buffers | Bounded transfer, paced video/audio workers, FFmpeg lifetime, watchdogs, and redacted status |
 | External FFmpeg executable | H.264/AAC encoding and RTMP/RTMPS publishing; launched and stopped by the mod |
 
-No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.4.0. RTMP is client-only.
+No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.5.0. RTMP is client-only.
 
 ## Director contract
 
@@ -24,11 +24,11 @@ The adapter supplies roster snapshots and elapsed time. Targets have a string ID
 
 `Disabled` enters a waiting state when enabled. A nonempty roster selects a target; readiness transitions it to `Following`. Dwell time advances only with ready footage. An unavailable target resets dwell and accumulates a separate timeout; the timeout advances to an alternative target. Holding pauses both automatic behaviors. A disappearing target advances to the next surviving ID. One tick makes at most one selection change, so a stalled frame cannot skip the entire roster.
 
-The adapter must re-read the selection after `Tick`, because that call can change the target. `SelectionRevision` lets the camera reset smoothing on a cut. In 0.4.0 the adapter supplies only ready players to the rotation director. `CoverageDirector` independently selects player, scenic, creature, or recovery coverage. Idle does not restart the encoder. Player availability preempts idle; target invalidation falls back immediately (or within the next roster sample). The camera still rechecks readiness in its rendering hook.
+The adapter must re-read the selection after `Tick`, because that call can change the target. `SelectionRevision` lets the camera reset smoothing on a cut. In 0.5.0 the adapter supplies only ready players to the rotation director. `CoverageDirector` independently selects player, scenic, creature, or recovery coverage. Idle does not restart the encoder. Player availability preempts idle; target invalidation falls back immediately (or within the next roster sample). The camera still rechecks readiness in its rendering hook.
 
-Network presence is sampled every half second even when distant targeting is disabled. A connected player without a loaded character is reported as awaiting a scene, not an empty server. The idle anchor captures the observer position at activation; `broadcast anchor` resets it. `IdleShots` scans the existing character registry once per second and stores at most 32 eligible non-player actors within the configured radius. Its reusable ready-ID list checks current liveness/range/readiness each update. Timed creature selection is ordinal round-robin without a growing history. Scenery uses a bounded angle accumulator and the existing camera obstruction checks. Both target/focus and desired/final camera positions require area readiness; failed validation shows a recovery slate.
+Network presence is sampled every half second even when distant targeting is disabled. A connected player without a loaded character is reported as awaiting a scene, not an empty server. The survey origin bounds local discovery around the observer; `broadcast survey` resets it. It is never the camera focus. `IdleShots` scans the existing character registry once per second and stores at most 32 eligible non-player actors within the configured radius. Its reusable ready-ID list checks current liveness/range/readiness each update. Creature selection excludes recently shown IDs using a bounded cooldown history and rejects stationary subjects. Scenic intervals select changing terrain paths with a bounded recent-location exclusion queue; no fixed orbit remains. Both target/focus and desired/final camera positions require area readiness; failed validation shows a recovery slate.
 
-Scene unavailability does not itself stop RTMP. Observer death, loss/change of the world connection, explicit stop, or component failure still stop and clean up the session. Player/creature bindings and the anchor are cleared on stop.
+Scene unavailability does not itself stop RTMP. Observer death, loss/change of the world connection, explicit stop, or component failure still stop and clean up the session. Player/creature bindings, history and paths are cleared on stop.
 
 ## Game lifecycle
 
@@ -73,3 +73,9 @@ Two background workers send RGBA video to FFmpeg stdin and float32 stereo audio 
 A supervisor watches FFmpeg exit/progress and input callbacks. Missing input for five seconds, prolonged output stalls, unsupported audio data, or pipe errors stop publishing. The main/audio threads never wait on encoder pipe writes or process exit. Stop signals the supervisor, which kills the owned process and bounds worker joins; a replacement session cannot start until cleanup finishes. Stop can truncate the final codec packet/GOP. There is no automatic retry or automatic publishing after a game/world transition.
 
 Arguments are constructed from validated numbers and a quoted RTMP/RTMPS URL, with no shell invocation or arbitrary encoder flags. Raw FFmpeg diagnostics are consumed but never logged because they can contain credentials. Stream keys remain visible in the private config and local process arguments. The child executable is user supplied; only this project's two DLLs are distributed.
+
+## Observer presentation and solo testing
+
+`ObserverVisualMask` masks child renderers using local `forceRenderingOff` values, preserving originals for restoration. It discovers equipment renderers each camera update with a reusable list. It does not disable the player, colliders, network view, or input, and makes no claim about what other clients see.
+
+`SceneProbe` has bounded Acquiring/Viewing/TimedOut/Completed/Stopped states. The plugin stores a marker only for the current world connection, requires an initially unloaded destination at least 200 metres away, and exercises the actual SetReferencePosition hook. It never fabricates a player or teleports the observer. Target and intended camera area readiness gate the test shot. A 30-second uninterrupted acquisition failure or 120-second total limit restores normal interest. Existing RTMP remains running when starting/stopping the probe in normal coverage. A visible test label distinguishes probe footage. First-readiness time and observer displacement are diagnostic evidence, not a complete-scene verdict.

@@ -2,7 +2,7 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.4.0 is a development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
+**0.5.0 is a development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
 
 The broadcaster remains an ordinary connected player. This mod does not provide invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
 
@@ -11,7 +11,7 @@ The broadcaster remains an ordinary connected player. This mod does not provide 
 - Configurable camera distance, height, FOV, world-space azimuth, and follow smoothing.
 - Obstruction checks between the target and camera.
 - Stable-ID target selection, next/previous, timed rotation, hold, and disconnect fallback.
-- Continuous coverage: ready players take priority; otherwise alternate a local scenic orbit and nearby loaded creatures. A recovery slate appears only when no ready shot can be rendered.
+- Continuous coverage: ready players take priority; otherwise alternate a changing local scenic paths and nearby loaded creatures. A recovery slate appears only when no ready shot can be rendered.
 - Separate connected-player presence and scene readiness, with bounded experimental remote acquisition attempts.
 - HUD hiding and restoration; matching main/sky camera FOV; restoration of camera state when broadcasting stops or the observer dies.
 - An optional **experimental** distant-target mode using public map positions and the client's network reference position. It starts disabled and has no server-side position relay.
@@ -73,7 +73,7 @@ No second player or server mod is needed. This works in a local single-player wo
 1. Install the two DLLs from the latest test build into your active mod profile. With Thunderstore, open that profile folder and copy both into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
 2. Enter a test world with a living character and press **F10**. Alternatively, with the console enabled, run `broadcast self` and close the console.
 3. Walk, run, jump, and move near walls or trees. The same broadcast camera used for other players now follows you, exercising framing, smoothing, obstruction checks, main/sky FOV, HUD hiding, and direct stream capture.
-4. Press **F8** or run `broadcast off` to stop and restore the normal view. Run `broadcast on` to switch directly back to ordinary player targeting; alone, that mode starts scenic/creature coverage.
+4. Press **F8** or run `broadcast off` to stop and restore the normal view. Run `broadcast on` to switch directly back to ordinary player targeting; alone, that mode starts varied scenic/creature coverage.
 
 Self-follow is session-only and always shows a `SELF-FOLLOW TEST` status label, even when `ShowStatus=false`. Its roster contains only you, so next/previous and timed cycling stay on you. Other players joining will not become test targets. Distant-streaming overrides are bypassed even if `RemoteTargets=true`; entering self-follow restores any previous override. Death, world exit, and plugin disable stop the test. Starting again with F8 uses normal mode; press F10 or run `broadcast self` to re-enter the test.
 
@@ -93,7 +93,8 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast follow <id>` | Select an exact listed ID and hold it; start with `broadcast on` first |
 | `broadcast status` | Show director state, target, hold/auto mode, and roster count |
 | `broadcast stream on` / `off` / `status` | Start/stop RTMP audio + video / inspect encoder state; camera must be active |
-| `broadcast anchor` | Reset the session scenic anchor to your character’s current position in normal mode |
+| `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
+| `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a solo distant-scene acquisition test |
 | `broadcast help` | Print command usage |
 
 Names are labels; selection uses character ZDO IDs. IDs are session-specific and should not be saved as permanent player identities.
@@ -114,8 +115,7 @@ After the first launch, close the game and edit `BepInEx/config/com.dillflix.val
 | `Director / AcquisitionCooldownSeconds` | `30` | Local-interest interval between remote attempts |
 | `Idle / ScenicSeconds` | `45` | Scenic dwell before trying a creature |
 | `Idle / CreatureSeconds` | `25` | Creature dwell before returning to scenery |
-| `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the anchor (metres) |
-| `Idle / OrbitDegreesPerSecond` | `2` | Scenic orbit speed; zero holds the angle |
+| `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Display / ShowStatus` | `true` | Show the director overlay |
 | `Experimental / RemoteTargets` | `false` | Include public distant positions and change the network reference position |
@@ -123,7 +123,7 @@ After the first launch, close the game and edit `BepInEx/config/com.dillflix.val
 | `Controls / SelfTest` | `F10` | Start self-follow test mode |
 | `Controls / Toggle`, `Next`, `Previous`, `Hold` | `F8`, `PageDown`, `PageUp`, `F9` | BepInEx keyboard shortcuts |
 
-Only ready players enter the rotation. Hold pauses player cycling or idle timing/orbit; a lost subject still falls back, and a newly ready player takes priority over idle. Connected but unavailable players remain visible in the status count while the mod rechecks their scenes.
+Only ready players enter the rotation. Hold pauses player cycling or idle shot timing; a lost subject still falls back, and a newly ready player takes priority over idle. Connected but unavailable players remain visible in the status count while the mod rechecks their scenes.
 
 For `RemoteTargets=true`, test first with two players sharing their map positions in widely separated areas. The client waits for both a target scene object and local area readiness. These signals do **not** prove complete server delivery or harmless observer behavior. Follow the remote test matrix before relying on this mode.
 
@@ -137,8 +137,14 @@ See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUN
 
 ## Continuous coverage and solo idle test
 
-Press **F8** while alone to test normal idle coverage (F10 is still the explicit self-follow test). Your character's position at activation becomes the session scenic anchor. The camera orbits it slowly for 45 seconds, follows a suitable nearby loaded creature for 25 seconds, then returns to scenery. With no creature, the orbit continues. Wildlife, tamed animals, and enemies are eligible; the mod does not spawn or move them.
+Press **F8** while alone to test normal idle coverage (F10 is still the explicit self-follow test). The loaded region around the observer is a search boundary, never a fixed camera focus. Each scenic shot moves along a newly selected terrain path; recent locations are excluded. Scenic shots last up to 45 seconds and creature shots up to 25 seconds. A shown creature has a five-minute repeat cooldown, and subjects stationary for ten seconds become ineligible. With no fresh creature, the next scenic path is selected. If no fresh valid path can be found, status reports region exhaustion rather than endlessly orbiting one point. Autonomous traversal into a new region is still required for sustained world-wide coverage.
 
-When other players become ready, coverage switches to them and rotates if several are available. When none remain ready, idle resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast anchor` to move the scenic anchor to your character's current location without restarting the stream. The anchor is cleared on stop/world exit and is not persisted across worlds.
+Normal coverage locally masks the broadcaster's child renderers, restoring their previous settings on stop. F10 deliberately shows the character for self-follow testing. This is local presentation only: other clients can still see the character, and player input, collision, damage, AI interactions, and simulation effects are not removed. See [OBSERVER.md](docs/OBSERVER.md).
+
+When other players become ready, coverage switches to them and rotates if several are available. When none remain ready, idle resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
 
 [IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the implemented policy, acquisition limits, and remaining unattended-operation work. Default coverage stays within loaded scenes; arbitrary world roaming, observer protection, and automatic reconnection are not implemented.
+
+## Solo distant-scene test
+
+No second player is needed to test scene acquisition. See [SOLO-ACQUISITION.md](docs/SOLO-ACQUISITION.md) for the mark → travel away → acquire workflow. This exercises network interest and rendering, not remote-player replication or teleport travel.

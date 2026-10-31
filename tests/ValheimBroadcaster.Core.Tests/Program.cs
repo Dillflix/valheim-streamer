@@ -37,7 +37,11 @@ internal static class Program
             ("Coverage rejects invalid timing", CoverageValidation),
             ("Acquisition is bounded for one target with cooldown", BoundedAcquisition),
             ("Available player rotation integrates with idle fallback", CoverageIntegration),
-            ("24-hour simulated idle schedule stays valid", IdleSoak)
+            ("24-hour simulated idle schedule stays valid", IdleSoak),
+            ("Solo probe acquires and preserves readiness timing", ProbeReady),
+            ("Solo probe timeout and stop restore inactive policy", ProbeTimeout),
+            ("Solo probe bounds total duration and readiness loss", ProbeLifetime),
+            ("Recent creatures are excluded until cooldown", CreatureCooldown)
         };
 
         int failed = 0;
@@ -272,8 +276,8 @@ internal static class Program
     {
         var c = Coverage(); c.Tick(0, null, 0, true, None);
         long revision = c.Revision;
-        c.Tick(86400, null, 0, true, None); Equal(CoverageMode.Scenic, c.Mode); Equal(revision, c.Revision);
-        c.Tick(0, null, 0, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
+        c.Tick(86400, null, 0, true, None); Equal(CoverageMode.Scenic, c.Mode); Equal(revision + 1, c.Revision);
+        c.Tick(10, null, 0, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
     }
     private static void CreatureLoss()
     {
@@ -308,7 +312,7 @@ internal static class Program
         var c = Coverage(); c.Tick(0, null, 0, true, Creatures); c.Tick(10, null, 0, true, new[] { "deer", "boar" });
         Equal("boar", c.SubjectId);
         c.Tick(5, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures); Equal("deer", c.SubjectId);
-        c.Tick(5, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures); Equal("boar", c.SubjectId);
+        c.Tick(5, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures); Equal(CoverageMode.Scenic, c.Mode);
     }
     private static void IdleHold()
     {
@@ -366,8 +370,41 @@ internal static class Program
             else if (c.Mode == CoverageMode.Creature) { creature++; True(Creatures.Contains(c.SubjectId)); }
             else throw new Exception("Idle schedule entered unexpected state.");
         }
-        True(scenic > creature && creature > 20000);
+        True(scenic > creature && creature > 1000);
         True(c.Revision < 20000);
+    }
+
+    private static void ProbeReady()
+    {
+        var p = new SceneProbe(); p.Start(); p.Tick(5, false);
+        Equal(ProbeState.Acquiring, p.State); p.Tick(3, true);
+        Equal(ProbeState.Viewing, p.State); Equal(8.0, p.FirstReadySeconds!.Value);
+        p.Tick(10, true); Equal(8.0, p.FirstReadySeconds!.Value); True(p.Active);
+    }
+    private static void ProbeTimeout()
+    {
+        var p = new SceneProbe(); p.Start(); p.Tick(30, false);
+        Equal(ProbeState.TimedOut, p.State); False(p.Active);
+        p.Tick(1, true); Equal(ProbeState.TimedOut, p.State);
+        p.Start(); Equal(null, p.FirstReadySeconds); p.Stop(); False(p.Active);
+        Equal(ProbeState.Stopped, p.State);
+        Throws<ArgumentOutOfRangeException>(() => p.Tick(double.NaN, false));
+    }
+    private static void ProbeLifetime()
+    {
+        var p = new SceneProbe(); p.Start(); p.Tick(10, true); p.Tick(20, false);
+        Equal(ProbeState.Acquiring, p.State); p.Tick(10, false); False(p.Active);
+        p.Start(); p.Tick(10, true); p.Tick(110, true);
+        Equal(ProbeState.Completed, p.State); False(p.Active);
+    }
+    private static void CreatureCooldown()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, new[] { "boar" }); c.Tick(10, null, 0, true, new[] { "boar" });
+        Equal("boar", c.SubjectId); c.Tick(5, null, 0, true, new[] { "boar" });
+        long revision = c.Revision;
+        c.Tick(10, null, 0, true, new[] { "boar" });
+        Equal(CoverageMode.Scenic, c.Mode); True(c.Revision > revision);
+        c.Tick(300, null, 0, true, new[] { "boar" }); Equal("boar", c.SubjectId);
     }
 
     private static void Equal<T>(T expected, T actual)

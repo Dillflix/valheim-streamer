@@ -16,6 +16,10 @@ namespace ValheimBroadcaster.Core
         private double elapsed;
         private double scenicSeconds = 45, creatureSeconds = 25;
         private string? lastCreature;
+        private double clock;
+        private readonly Dictionary<string, double> recentCreatures = new Dictionary<string, double>(StringComparer.Ordinal);
+        public double ShotElapsed => elapsed;
+        public double CreatureCooldownSeconds { get; set; } = 300;
         public double ScenicSeconds { get => scenicSeconds; set => scenicSeconds = Duration(value); }
         public double CreatureSeconds { get => creatureSeconds; set => creatureSeconds = Duration(value); }
 
@@ -24,6 +28,7 @@ namespace ValheimBroadcaster.Core
             Change(CoverageMode.Disabled, null);
             elapsed = 0;
             lastCreature = null;
+            clock = 0; recentCreatures.Clear();
             AwaitingPlayers = false;
         }
 
@@ -33,6 +38,8 @@ namespace ValheimBroadcaster.Core
             if (double.IsNaN(dt) || double.IsInfinity(dt) || dt < 0) throw new ArgumentOutOfRangeException(nameof(dt));
             if (connectedOthers < 0) throw new ArgumentOutOfRangeException(nameof(connectedOthers));
             if (readyCreatures == null) throw new ArgumentNullException(nameof(readyCreatures));
+            Duration(CreatureCooldownSeconds);
+            clock += Math.Min(dt, 86400);
             AwaitingPlayers = connectedOthers > 0 && readyPlayerId == null;
             if (readyPlayerId != null) { Change(CoverageMode.Player, readyPlayerId); return; }
             if (!idleSceneReady) { Change(CoverageMode.Recovery, null); return; }
@@ -47,18 +54,28 @@ namespace ValheimBroadcaster.Core
                 if (elapsed >= CreatureSeconds) Change(CoverageMode.Scenic, null);
                 return;
             }
-            if (elapsed < ScenicSeconds || readyCreatures.Count == 0) return;
+            if (elapsed < ScenicSeconds) return;
             // Ordinal round-robin, independent of provider enumeration order. Retain only
             // the last ID, not an ever-growing history of actors from a long-lived world.
             string? first = null, next = null;
             foreach (string id in readyCreatures)
             {
+                if (recentCreatures.TryGetValue(id, out double shown) && clock - shown < CreatureCooldownSeconds) continue;
                 if (first == null || StringComparer.Ordinal.Compare(id, first) < 0) first = id;
                 if ((lastCreature == null || StringComparer.Ordinal.Compare(id, lastCreature) > 0) &&
                     (next == null || StringComparer.Ordinal.Compare(id, next) < 0)) next = id;
             }
-            lastCreature = next ?? first;
-            Change(CoverageMode.Creature, lastCreature);
+            string? selected = next ?? first;
+            if (selected == null) { elapsed = 0; Revision++; return; } // New scenic path, not a repeated orbit.
+            lastCreature = selected;
+            if (recentCreatures.Count >= 64 && !recentCreatures.ContainsKey(selected))
+            {
+                string? oldest = null; double oldestTime = double.MaxValue;
+                foreach (var item in recentCreatures) if (item.Value < oldestTime) { oldest = item.Key; oldestTime = item.Value; }
+                if (oldest != null) recentCreatures.Remove(oldest);
+            }
+            recentCreatures[selected] = clock;
+            Change(CoverageMode.Creature, selected);
         }
 
         private void Change(CoverageMode mode, string? id)
