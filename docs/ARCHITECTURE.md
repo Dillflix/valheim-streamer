@@ -11,12 +11,13 @@ The first milestone is a single broadcasting client following and cycling eligib
 | `TargetRoster` | Track connected-player presence separately from ready candidates and public acquisition positions; exclude the observer |
 | `CoverageDirector` / `IdleShots` | Player priority, scenic/creature timing, recent-use exclusions, bounded creature bindings and terrain paths |
 | `AcquisitionWindow` | Bounded opt-in remote interest attempts with local cooldown |
+| `ObserverTravel` / `ObserverController` | Offline-only observer lifecycle, camera-relative body/interest, native teleport, bounded return and restoration |
 | `CameraRig` | Smooth a wide shot, check obstructions, hide/restore the HUD, restore camera state |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback, listener placement, and non-mutating game audio capture |
 | `EncoderSession` / media buffers | Bounded transfer, paced video/audio workers, FFmpeg lifetime, watchdogs, and redacted status |
 | External FFmpeg executable | H.264/AAC encoding and RTMP/RTMPS publishing; launched and stopped by the mod |
 
-No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.5.0. RTMP is client-only.
+No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.6.0. RTMP is client-only.
 
 ## Director contract
 
@@ -34,9 +35,9 @@ Scene unavailability does not itself stop RTMP. Observer death, loss/change of t
 
 The plugin checks Jötunn's headless predicate before graphical initialization and starts disabled. It verifies the expected camera patch target at startup and disables itself if that method is absent. A Harmony postfix on `GameCamera.UpdateCamera(float)` applies the shot after the normal camera update. Camera rendering stays in the game's normal pipeline.
 
-The normal HUD root is hidden while requested and its previous state is retained for restoration. Both main and sky camera FOVs are updated and restored. Stop, observer death, world exit, component disable, and destruction restore owned state; destruction also removes this plugin's Harmony patches. Runtime adapter errors stop broadcasting and log the exception. These are implemented cleanup paths, not evidence that every game transition has passed a runtime test.
+The normal HUD root is hidden while requested and its previous state is retained for restoration. Both main and sky camera FOVs are updated and restored. Stop, observer death, world exit, component disable, and destruction restore owned state; destruction also removes this plugin's Harmony patches. In ordinary modes, runtime adapter errors stop broadcasting and log the exception. The offline observer experiment instead suspends movement and offers return, as described below. These are implemented cleanup paths, not evidence that every game transition has passed a runtime test.
 
-The observer remains an ordinary character with normal gameplay controls. It can be hurt, affect gameplay, or move if given input. This implementation does not claim the observer is passive or exempt from player-count and simulation rules.
+In ordinary F8/F10 modes the observer remains an ordinary character with normal gameplay controls. It can be hurt, affect gameplay, or move if given input. This implementation does not claim the observer is passive or exempt from player-count and simulation rules.
 
 ## Self-follow test
 
@@ -83,3 +84,15 @@ Arguments are constructed from validated numbers and a quoted RTMP/RTMPS URL, wi
 ## Reference-override safety guard (0.5.1)
 
 Reference overrides now require the exact scene-removal hook as well as the reference setter. Capture the observer ZDO before overriding. Before `ZNetScene.RemoveObjects`, require that identity in the near or distant retained lists. Otherwise fail the probe explicitly, stop and restore the override, and skip the stale removal pass. Merely restoring reference within the pass would be insufficient because its lists were computed earlier for the remote position. The next game cycle recomputes lists from local interest. This does not pin terrain or retain two regions; attempts needing that support abort.
+
+## Offline observer adapter (0.6.0)
+
+This opt-in experiment is separate from normal F8/F10 mode and the old reference-only probe. See [OBSERVER.md](OBSERVER.md) for the boundary between implemented local protections and planned multiplayer isolation, and [OBSERVER-TESTS.md](OBSERVER-TESTS.md) for the solo procedure.
+
+Activation requires a closed local server with zero peers, a living grounded player, ownership of its ZDO, a ready origin, and every required game hook. It snapshots god/ghost and Rigidbody gravity/collision/constraint flags. Only that player's `Player.Update`, `SetControls`, and `Character.CustomFixedUpdate` calls are suppressed. Its `Player.FixedUpdate` is replaced by the private native `UpdateTeleport(float)` routine plus observer enforcement and body/ZDO/reference synchronization. Other characters continue their ordinary updates. The console and plugin update loop remain usable. This deliberately broad suppression is experimental and has not been validated in-game.
+
+On each valid camera shot the body moves to two metres below the camera; it is not the scene's visual focus. Immediate movements are restricted to ready positions within 100 metres of the body. Larger/unready moves suspend rather than silently bypassing travel. Native teleport moves the actual player for distant travel; normal interest remains with the body, and ZDO position is synchronized before moving reference. The scene-removal prefix also protects the observer from stale/excluding retention lists. An unsafe pass is skipped, travel suspends, and the next fixed tick resynchronizes interest. Reference-only probes cannot run concurrently.
+
+Travel/return uses a 45-second unpaused-time budget. Native teleport completion, local readiness and position within five metres of the requested destination are all required before proceeding. The world can still be incomplete despite these checks. Return cancels only the observer-owned teleport using verified private fields and starts a new native teleport to the activation point. Repeated return/off commands do not reset its timer. Only successful return releases physics/input, restores saved flags and camera/HUD/renderers, and stops RTMP. Errors enter a protected suspended state with a return command and an explanatory slate; they do not release a character beside an airborne camera. Forced world exit/component disable releases references and saved flags immediately and cannot promise to finish the return trip.
+
+The native `ZNet.OpenServer` call is blocked for the observer's world while the experiment is active. The offline predicate is also rechecked before movement and on update. This is a test restriction, not a multiplayer observer implementation. There is no server binary or role protocol in this branch.

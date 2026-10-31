@@ -44,7 +44,16 @@ internal static class Program
             ("Recent creatures are excluded until cooldown", CreatureCooldown),
             ("Distant removal excludes observer and must abort", RetentionAbort),
             ("Normal removal and retained observer remain untouched", RetentionAllowed),
-            ("Probe failure survives cleanup and resets on restart", ProbeFailure)
+            ("Probe failure survives cleanup and resets on restart", ProbeFailure),
+            ("Observer activation excludes every multiplayer case", ObserverOfflineGate),
+            ("Observer travel requires teleport completion, position and readiness", ObserverArrival),
+            ("Observer timeout holds protections until explicit return", ObserverTimeout),
+            ("Return cancels outbound travel without allowing another destination", ObserverCancel),
+            ("Return releases observer only after verified arrival", ObserverReturn),
+            ("Repeated return commands cannot postpone timeout", ObserverReturnRepeated),
+            ("Failed return can be retried and preserves first failure", ObserverReturnRetry),
+            ("World cleanup permits fresh observer activation", ObserverReset),
+            ("Observer travel rejects invalid time without changing state", ObserverTiming)
         };
 
         int failed = 0;
@@ -433,6 +442,89 @@ internal static class Program
         p.Fail("observer excluded"); p.Stop(); p.Tick(100, true);
         Equal(ProbeState.Failed, p.State); Equal("observer excluded", p.FailureReason); False(p.Active);
         p.Start(); Equal(null, p.FailureReason); Equal(ProbeState.Acquiring, p.State);
+    }
+
+    private static void ObserverOfflineGate()
+    {
+        foreach (bool server in new[] { false, true })
+        foreach (bool open in new[] { false, true })
+        foreach (int peers in new[] { -1, 0, 1, 10 })
+            Equal(server && !open && peers == 0, ObserverTravel.CanActivate(server, open, peers));
+    }
+
+    private static void ObserverArrival()
+    {
+        // Every premature combination must keep the observer protected in transit.
+        foreach (bool teleporting in new[] { false, true })
+        foreach (bool ready in new[] { false, true })
+        foreach (bool atDestination in new[] { false, true })
+        {
+            var o = new ObserverTravel(); o.Start(); o.Travel();
+            o.Tick(10, teleporting, ready, atDestination);
+            Equal(!teleporting && ready && atDestination ? ObserverPhase.Watching : ObserverPhase.Travelling, o.Phase);
+            True(o.Active);
+        }
+    }
+
+    private static void ObserverTimeout()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel();
+        o.Tick(44, false, false, true); Equal(ObserverPhase.Travelling, o.Phase);
+        o.Tick(1, false, false, true); Equal(ObserverPhase.Suspended, o.Phase);
+        True(o.Active); True(o.Failure != null);
+        o.Tick(1000, false, true, true); Equal(ObserverPhase.Suspended, o.Phase);
+        Throws<InvalidOperationException>(() => o.Travel());
+    }
+
+    private static void ObserverCancel()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel(); o.Tick(30, true, false, false);
+        o.Return(); Equal(ObserverPhase.Returning, o.Phase); Equal(0d, o.ElapsedSeconds);
+        Throws<InvalidOperationException>(() => o.Travel());
+        Throws<InvalidOperationException>(() => o.Start());
+        o.Tick(10, true, true, true); Equal(ObserverPhase.Returning, o.Phase);
+    }
+
+    private static void ObserverReturn()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return();
+        o.Tick(8, false, false, true); True(o.Active);
+        o.Tick(1, false, true, false); True(o.Active);
+        o.Tick(1, false, true, true); False(o.Active); Equal(ObserverPhase.Off, o.Phase);
+        o.Return(); o.Suspend("late failure"); Equal(ObserverPhase.Off, o.Phase);
+        Equal(null, o.Failure);
+    }
+
+    private static void ObserverReturnRepeated()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return();
+        for (int i = 0; i < 45; i++) { o.Return(); o.Tick(1, true, false, false); }
+        Equal(ObserverPhase.Suspended, o.Phase); Equal(45d, o.ElapsedSeconds);
+    }
+
+    private static void ObserverReturnRetry()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return(); o.Suspend("first error");
+        o.Suspend("secondary error"); Equal("first error", o.Failure);
+        o.Return(); Equal(null, o.Failure); Equal(ObserverPhase.Returning, o.Phase);
+        o.Tick(8, false, true, true); False(o.Active);
+    }
+
+    private static void ObserverReset()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel(); o.Suspend("world unloaded");
+        o.Reset(); o.Reset(); False(o.Active); Equal(null, o.Failure); Equal(0d, o.ElapsedSeconds);
+        o.Start(); Equal(ObserverPhase.Watching, o.Phase);
+        o.Tick(10000, false, false, false); Equal(ObserverPhase.Watching, o.Phase);
+    }
+
+    private static void ObserverTiming()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel();
+        foreach (double invalid in new[] { -1d, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+            Throws<ArgumentOutOfRangeException>(() => o.Tick(invalid, false, true, true));
+        o.Tick(0, true, false, false); Equal(0d, o.ElapsedSeconds); Equal(ObserverPhase.Travelling, o.Phase);
+        o.Tick(10000, true, false, false); Equal(ObserverPhase.Suspended, o.Phase);
     }
 
     private static void Equal<T>(T expected, T actual)

@@ -2,13 +2,13 @@
 
 ## Evidence available
 
-- The director's **36 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
+- The director's **45 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
 - The core compiled against actual .NET Standard 2.0 reference assemblies with warnings treated as errors. Its executable test harness ran on .NET 8 against that compiled core.
 - The development container's ordinary `dotnet`/MSBuild path fails during process introspection (`Process.StartTime` / `ProcessName`). Direct invocation of the SDK's Roslyn compiler was used for the observed core checks. This is an environment limitation, not a replacement for checking the normal project build in CI or on a development machine.
 - The plugin compiled with warnings treated as errors using Roslyn 4.11 from .NET SDK **8.0.427**, actual Microsoft .NET Framework 4.8 reference assemblies (**1.0.3**), Jötunn **2.30.2**, BepInEx **5.4.23.2**, and real Valheim references. This checked the source against those assemblies; it did not establish that the normal MSBuild graph executes successfully in this container.
 - Real game references were obtained from the official Steam dedicated-server app **896660**, public Windows depot **896662**, manifest **171106503873955013** dated **2026-10-27**. Assembly metadata inspection found `Version` initializes `GameVersion(1, 0, 21)`, identifying this reference build as **Valheim 1.0.21**. Only reference DLLs were downloaded; no server was launched. These server references do not prove that a separately installed client matches.
 - Jötunn's NuGet package identifies upstream commit `671c486ac8123a9b240eae80639b6c33f63b3884`. No client runtime result is implied by a dependency's availability or compilation success.
-- The initial implementation has **not** been installed into or run in Valheim. No gameplay, dedicated-server coexistence, stream quality, or GPU-performance pass is recorded.
+- A user ran 0.5.0 and supplied the failed distant-probe result recorded below. No successful gameplay, observer isolation, dedicated-server coexistence, stream quality, or GPU-performance pass is recorded. The 0.6.0 observer adapter has not been run in Valheim here.
 
 Run the normal core check with:
 
@@ -150,3 +150,13 @@ Pending runtime check: on a disposable world, a distant attempt must abort befor
 The supplied LogOutput.log identifies Windows x64, Valheim 1.0.21, Unity 6000.0.75, BepInEx 5.4.23.6 (pack 5.4.2360), Jötunn 2.30.2, and Broadcaster 0.5.0. Immediately after `SOLO DISTANT SCENE TEST | Acquiring | 0s | RTMP: Stopped`, Unity logs `Local player destroyed`. No intervening exception appears. The later disconnect corresponds to the user exiting the world. Thus this failure occurred without RTMP publishing and confirms local-player destruction rather than an encoder blackout. The full user log is not committed.
 
 The 0.5.1 CI build still uses the existing BepInEx 5.4.23.2 compile baseline; the supplied log records the actual tested runtime version separately. No successful 0.5.1 game runtime result has yet been recorded.
+
+## 0.6.0 observer foundation — code checks passed, runtime pending
+
+Nine new pure-policy cases cover the closed-world gate (including a hosted world with zero peers), all combinations of native teleport/readiness/position arrival signals, travel timeout with retained active state, outbound cancellation, return completion, repeated return commands without timer reset, retry after failure, world cleanup/reset, and invalid/paused/large time inputs. Total: **45/45**. These do not exercise Unity, Harmony, physics, renderer state or real teleportation.
+
+The plugin compiles with warnings treated as errors against the same real Valheim 1.0.21, Unity, BepInEx 5.4.23.2 and Jötunn 2.30.2 references. The actual user's loader remains BepInEx 5.4.23.6; compilation is not a runtime compatibility result. No new dependency or game binary is packaged.
+
+Metadata/IL inspection verified the exact teleport fields and methods used by the adapter, the player update paths being suppressed, `ZNet.OpenServer`/offline predicates, and the scene-removal path. The resulting code uses real game APIs and reflection, not invented stubs. The supplied failure log and raw inspected game implementation are not committed.
+
+Follow [OBSERVER-TESTS.md](OBSERVER-TESTS.md). Every in-game case there is still pending, including start/stop restoration, body/camera following, teleport/return, timeout recovery, and RTMP continuity. This branch must not be described as multiplayer invisible, simulation-neutral or ready for unattended use.

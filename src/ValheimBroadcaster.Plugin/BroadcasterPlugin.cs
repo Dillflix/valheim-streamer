@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.5.1";
+    public const string PluginVersion = "0.6.0";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -28,6 +28,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private static readonly FieldInfo? ListenerField = AccessTools.Field(typeof(GameCamera), "m_listner");
     private BroadcastSettings settings = null!;
     private readonly BroadcastDirector director = new BroadcastDirector();
+    private readonly ObserverController observer = new ObserverController();
+    private bool observerHooksAvailable;
     private readonly ObserverVisualMask observerVisuals = new ObserverVisualMask();
     private readonly SceneProbe probe = new SceneProbe();
     private Vector3? probeMarker;
@@ -86,6 +88,18 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 harmony.Patch(referenceMethod, prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(BeforeReferencePosition)));
                 remotePatchAvailable = true;
             }
+            var observerMethods = new[] {
+                AccessTools.Method(typeof(Player), "FixedUpdate"), AccessTools.Method(typeof(Player), "Update"),
+                AccessTools.Method(typeof(Player), "SetControls"), AccessTools.Method(typeof(Character), "CustomFixedUpdate", new[] { typeof(float) }) };
+            MethodInfo? openServer = AccessTools.Method(typeof(ZNet), "OpenServer", Type.EmptyTypes);
+            if (remotePatchAvailable && openServer != null && observerMethods.All(method => method != null))
+            {
+                harmony.Patch(observerMethods[0], prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(ObserverFixedUpdate)));
+                foreach (MethodInfo method in observerMethods.Skip(1))
+                    harmony.Patch(method, prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(ObserverInputOrPhysics)));
+                harmony.Patch(openServer, prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(BeforeOpenServer)));
+                observerHooksAvailable = true;
+            }
             CommandManager.Instance.AddConsoleCommand(new BroadcastCommand());
             Logger.LogInfo($"{PluginName} {PluginVersion} ready. F8 toggles; F10 starts self-follow; broadcast help lists commands. Starts disabled.");
         }
@@ -112,7 +126,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     probe.Fail(acquisitionFailure);
                     Logger.LogError(acquisitionFailure);
                 }
-                Stop();
+                Stop(true);
             }
             return;
         }
@@ -132,6 +146,24 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (!director.IsEnabled) return;
         try
         {
+            ObserverPhase previousPhase = observer.Phase;
+            if (observer.Tick(Time.deltaTime))
+            {
+                Stop(true);
+                Logger.LogInfo("Observer session ended; owned state restored.");
+                return;
+            }
+            if (previousPhase == ObserverPhase.Travelling && observer.Phase == ObserverPhase.Watching)
+            {
+                idle.SetRegion(Player.m_localPlayer.transform.position);
+                coverage.Reset(); rig.ResetPose(); nextCreatureRefresh = 0;
+            }
+            if (observer.Active && observer.Phase != ObserverPhase.Watching)
+            {
+                cameraReady = false;
+                LogStatus();
+                return;
+            }
             director.DwellSeconds = settings.Dwell.Value;
             director.TargetTimeoutSeconds = settings.Timeout.Value;
             if (Time.unscaledTime >= nextRosterRefresh)
@@ -165,7 +197,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             { idle.BeginScenicPath(); nextScenicSearch = Time.unscaledTime + 5f; }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
-                !selfTest && !readyPlayer && settings.RemoteTargets.Value && remotePatchAvailable && acquisition.Roster.Count > 0,
+                !observer.Active && !selfTest && !readyPlayer && settings.RemoteTargets.Value && remotePatchAvailable && acquisition.Roster.Count > 0,
                 settings.Timeout.Value, settings.AcquisitionCooldown.Value);
             if (wasAcquiring && !acquiring) acquisition.Next();
             bool probing = probe.Active;
@@ -176,11 +208,16 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 if (probe.Active) SetReference(probeMarker!.Value);
                 else { RestoreReference(); rig.ResetPose(); }
             }
-            else UpdateReference(readyPlayer ? current : acquiring ? roster.Find(acquisition.CurrentTarget?.Id) : null);
-            string status = Status();
-            if (status != lastStatus) { Logger.LogInfo(status); lastStatus = status; }
+            else if (!observer.Active) UpdateReference(readyPlayer ? current : acquiring ? roster.Find(acquisition.CurrentTarget?.Id) : null);
+            LogStatus();
         }
         catch (Exception error) { FailClosed(error); }
+    }
+
+    private void LogStatus()
+    {
+        string status = Status();
+        if (status != lastStatus) { Logger.LogInfo(status); lastStatus = status; }
     }
 
     private static bool IsTextOrMenuOpen() =>
@@ -208,6 +245,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private bool StartBroadcast(bool testSelf = false)
     {
+        if (observer.Active) return false;
         if (!enabled || !Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || !ZNetScene.instance) return false;
         Stop(); // Restore any previous camera/HUD/reference before switching modes.
         acquisitionFailure = null;
@@ -227,8 +265,15 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         return true;
     }
 
-    private void Stop()
+    private void Stop(bool force = false)
     {
+        if (observer.Active && !force)
+        {
+            if (observer.Phase != ObserverPhase.Returning) observer.RequestReturn();
+            cameraReady = false;
+            return;
+        }
+        observer.Release();
         stream?.StopOutput();
         probe.Stop();
         observerVisuals.Restore();
@@ -284,7 +329,20 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private static bool BeforeRemoveObjects(List<ZDO> __0, List<ZDO> __1)
     {
         BroadcasterPlugin? plugin = instance;
-        if (plugin == null || !plugin.remoteReference.HasValue) return true;
+        if (plugin == null) return true;
+        if (plugin.observer.Active)
+        {
+            try
+            {
+                if (!SceneRetention.MustAbort(true, plugin.observer.NetworkObject, __0, __1)) return true;
+                plugin.SuspendObserver("Observer excluded from scene retention; travel suspended. Use broadcast observer return.");
+            }
+            catch (Exception error) { plugin.FailClosed(error); }
+            // Never remove this player using stale interest lists. Its next fixed
+            // tick re-synchronizes body/ZDO/reference before lists are recomputed.
+            return false;
+        }
+        if (!plugin.remoteReference.HasValue) return true;
         try
         {
             if (!SceneRetention.MustAbort(true, plugin.retainedObserver, __0, __1)) return true;
@@ -322,7 +380,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             Vector3? focus = null;
             float azimuth = plugin.settings.Azimuth.Value;
             plugin.observerVisuals.Apply(Player.m_localPlayer, !plugin.selfTest);
-            if (plugin.probe.Active)
+            if (plugin.observer.Active && plugin.observer.Phase != ObserverPhase.Watching) { }
+            else if (plugin.probe.Active)
             {
                 if (plugin.probe.State == ProbeState.Viewing && plugin.probeMarker.HasValue)
                     focus = plugin.probeMarker.Value + Vector3.up * 1.5f;
@@ -343,6 +402,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
                 plugin.settings, plugin.coverage.Revision, __0);
+            if (plugin.cameraReady && plugin.observer.Active)
+            {
+                Camera camera = __instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>();
+                plugin.cameraReady = camera && plugin.observer.FollowCamera(camera.transform.position);
+            }
             plugin.rig.HideHud(plugin.settings.HideHud.Value);
         }
         catch (Exception error) { plugin.FailClosed(error); }
@@ -391,9 +455,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             GUI.color = Color.black;
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
-            GUI.Label(new Rect(24, 24, Screen.width - 48, 60), "Valheim Broadcaster — recovery: waiting for a ready scene\n" + Status());
+            GUI.Label(new Rect(24, 24, Screen.width - 48, 110), "Valheim Broadcaster — recovery: waiting for a ready scene\n" + Status() +
+                (observer.Active ? "\nF8 or broadcast observer return: return to the starting position, then restore controls." : ""));
         }
-        else if (settings.ShowStatus.Value || selfTest || probe.Active)
+        else if (settings.ShowStatus.Value || selfTest || probe.Active || observer.Active)
         {
             GUI.color = Color.white;
             GUI.Box(new Rect(12, 12, Mathf.Max(200, Screen.width - 24), 48), Status());
@@ -403,6 +468,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private string Status()
     {
+        if (observer.Active) return observer.Status + " | " + coverage.Mode + " | RTMP: " + (stream?.Status ?? "Stopped");
         if (acquisitionFailure != null) return acquisitionFailure;
         if (probe.Active) return $"SOLO DISTANT SCENE TEST | {probe.State} | {probe.Elapsed:F0}s | RTMP: {stream?.Status ?? "Stopped"}";
         string subject = coverage.Mode == CoverageMode.Player ? roster.Find(coverage.SubjectId)?.Identity.Name ?? "Player" :
@@ -421,6 +487,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void ProbeCommand(string[] args, Terminal context)
     {
+        if (observer.Active) { context?.AddString("Return and stop observer mode before using the reference-only probe."); return; }
         if (args.Length != 2) { context?.AddString("broadcast probe mark|start|stop|status"); return; }
         switch (args[1].ToLowerInvariant())
         {
@@ -463,16 +530,82 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         }
     }
 
+    private static bool ObserverInputOrPhysics(Character __instance) => instance == null || !instance.observer.Owns(__instance);
+
+    private static bool BeforeOpenServer(ZNet __instance)
+    {
+        BroadcasterPlugin? plugin = instance;
+        if (plugin == null || !plugin.observer.InWorld(__instance)) return true;
+        const string message = "Return and stop offline observer mode before opening this world to multiplayer.";
+        plugin.Logger.LogWarning(message);
+        global::Console.instance?.AddString(message);
+        return false;
+    }
+
+    private static bool ObserverFixedUpdate(Player __instance)
+    {
+        BroadcasterPlugin? plugin = instance;
+        if (plugin == null || !plugin.observer.Owns(__instance)) return true;
+        try { plugin.observer.FixedTick(Time.fixedDeltaTime); }
+        catch (Exception error) { plugin.FailClosed(error); }
+        return false;
+    }
+
+    private void ObserverCommand(string[] args, Terminal context)
+    {
+        if (args.Length != 2) { context?.AddString("broadcast observer start|travel|return|status"); return; }
+        switch (args[1].ToLowerInvariant())
+        {
+            case "start":
+                if (!observerHooksAvailable || !ObserverController.Offline)
+                { context?.AddString("Requires supported game hooks and a CLOSED local world, not a server connection or hosted session."); return; }
+                if (selfTest || probe.Active || observer.Active)
+                { context?.AddString("Stop self-follow/probe/observer mode first."); return; }
+                bool startedCamera = !director.IsEnabled;
+                if (startedCamera && !StartBroadcast()) { context?.AddString("Enter a world with a living character first."); return; }
+                RestoreReference(); acquisitionWindow.Reset();
+                try { observer.Begin(Player.m_localPlayer); }
+                catch { if (startedCamera) Stop(true); throw; }
+                Logger.LogWarning("OFFLINE observer prototype enabled. Local input/physics and ordinary player update loops are suspended. Not a multiplayer or zero-world-impact mode. Return before exiting or disabling.");
+                break;
+            case "travel":
+                if (!observer.Active || !probeMarker.HasValue || probeWorld != ZNet.instance)
+                { context?.AddString("Mark a destination with broadcast probe mark, then start offline observer mode first."); return; }
+                observer.TravelTo(probeMarker.Value);
+                cameraReady = false; rig.ResetPose();
+                break;
+            case "return": observer.RequestReturn(); cameraReady = false; break;
+            case "status": break;
+            default: context?.AddString("broadcast observer start|travel|return|status"); return;
+        }
+        context?.AddString(observer.Diagnostics);
+    }
+
+    private void SuspendObserver(string reason)
+    {
+        if (observer.Phase != ObserverPhase.Suspended) Logger.LogError(reason);
+        observer.Suspend(reason);
+        cameraReady = false;
+    }
+
     private void FailClosed(Exception error)
     {
+        if (observer.Active)
+        {
+            // Releasing physics at the airborne camera position would be unsafe.
+            // Hold the body, stop travel, and keep the return command available.
+            if (observer.Phase != ObserverPhase.Suspended) Logger.LogError($"Observer suspended after an error: {error}");
+            SuspendObserver("Observer adapter error: " + error.GetType().Name + ". Use broadcast observer return.");
+            return;
+        }
         Logger.LogError($"Broadcaster stopped after an error: {error}");
         Stop();
     }
 
-    private void OnDisable() { Stop(); }
+    private void OnDisable() { Stop(true); }
     private void OnDestroy()
     {
-        Stop();
+        Stop(true);
         harmony?.UnpatchSelf();
         if (instance == this) instance = null;
     }
@@ -480,7 +613,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|survey|probe mark|start|stop|status|follow <id>|stream on|off|status";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|survey|observer start|travel|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -490,6 +623,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
+                    case "observer":
+                        try { plugin.ObserverCommand(args, context); }
+                        catch (InvalidOperationException error) { context?.AddString(error.Message); }
+                        return;
                     case "probe":
                         plugin.ProbeCommand(args, context);
                         return;
@@ -506,6 +643,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         return;
                     case "on":
                     case "self":
+                        if (plugin.observer.Active) { context?.AddString("Return and stop observer mode before switching camera modes."); return; }
                         if (!plugin.StartBroadcast(action == "self")) { context?.AddString("Join a world with a living, spawned observer first."); return; }
                         break;
                     case "survey":
@@ -536,7 +674,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 if (action != "status" && action != "list") plugin.cameraReady = false;
                 context?.AddString(plugin.Status());
             }
-            catch (Exception error) { plugin.FailClosed(error); context?.AddString("Stopped after an error; see BepInEx log."); }
+            catch (Exception error)
+            {
+                plugin.FailClosed(error);
+                context?.AddString(plugin.observer.Active ? plugin.observer.Status : "Stopped after an error; see BepInEx log.");
+            }
         }
     }
 }
