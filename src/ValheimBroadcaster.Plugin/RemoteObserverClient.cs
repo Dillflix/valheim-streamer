@@ -16,9 +16,19 @@ internal sealed class RemoteObserverClient
     private ZNet? world;
     private ZNetPeer? server;
     private bool requested, failed, spawned;
-    private float readySince = -1, nextHello;
+    private float readySince = -1, nextHello, nextDiscovery;
+    private readonly ObserverDiscoveryCache discovery = new ObserverDiscoveryCache();
     internal bool Isolated => requested && world && world == ZNet.instance;
     internal bool Approved { get; private set; }
+    internal bool TerminalFailure { get; private set; }
+    internal ObserverDiscoverySnapshot? Discovery => Isolated && Approved ? discovery.Snapshot : null;
+    internal bool DiscoveryFresh => Isolated && Approved && discovery.Fresh(Time.realtimeSinceStartup);
+    internal double DiscoveryAge => discovery.Age(Time.realtimeSinceStartup);
+    internal string DiscoveryStatus => Discovery == null ? "Waiting for server discovery" :
+        !DiscoveryFresh ? "Server discovery stale (" + DiscoveryAge.ToString("F1") + "s)" :
+        !Discovery.DiscoveryEnabled ? "Server discovery disabled" :
+        "Discovery: " + Discovery.Players.Count + " players, " + Discovery.Regions.Count + " generated scenic regions; age " + DiscoveryAge.ToString("F1") + "s" +
+        (Discovery.SharePrivatePositions ? "" : "; private player coordinates withheld");
     internal string Status { get; private set; } = "Observer connection disabled";
 
     internal RemoteObserverClient(Func<bool> configured, Action<string> log) { this.configured = configured; this.log = log; instance = this; }
@@ -42,10 +52,14 @@ internal sealed class RemoteObserverClient
         RemoteObserverClient? client = instance;
         if (client == null || !ZNet.instance || ZNet.instance.IsServer() || !__0.m_server) return;
         client.world = ZNet.instance; client.server = __0;
-        client.requested = client.configured(); client.Approved = client.failed = client.spawned = false;
-        client.readySince = -1; client.nextHello = 0;
+        client.requested = client.configured(); client.Approved = client.failed = client.spawned = client.TerminalFailure = false;
+        client.readySince = -1; client.nextHello = client.nextDiscovery = 0; client.discovery.Reset();
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
-        if (client.requested) __0.m_rpc.Register<int, int>(ObserverProtocol.Reply, client.Reply);
+        if (client.requested)
+        {
+            __0.m_rpc.Register<int, int>(ObserverProtocol.Reply, client.Reply);
+            __0.m_rpc.Register<ZPackage>(ObserverDiscoveryProtocol.Reply, client.DiscoveryReply);
+        }
     }
     private void Reply(ZRpc rpc, int version, int accepted)
     {
@@ -53,10 +67,22 @@ internal sealed class RemoteObserverClient
         if (version != ObserverProtocol.Version || accepted != 1) { Fail("Server denied the observer role or protocol version"); return; }
         if (!Approved) { Approved = true; Status = "Read-only observer authorized; waiting for the character scene"; log(Status); }
     }
+    private void DiscoveryReply(ZRpc rpc, ZPackage package)
+    {
+        if (!Isolated || !Approved || failed || server == null || !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
+        try
+        {
+            if (package.Size() > ObserverDiscoveryProtocol.MaxPacketBytes) throw new ArgumentException("Observer discovery packet too large.");
+            ObserverDiscoverySnapshot snapshot = ObserverDiscoveryProtocol.Decode(package.GetArray());
+            if (snapshot.WorldId != world!.GetWorldUID()) throw new ArgumentException("Observer discovery world mismatch.");
+            discovery.Accept(snapshot, Time.realtimeSinceStartup);
+        }
+        catch (Exception error) { Fail("Invalid observer discovery snapshot: " + error.GetType().Name); }
+    }
     internal void Tick()
     {
         if (!Isolated) return;
-        if (server == null || !world!.GetPeers().Contains(server)) { Fail("Observer connection ended; leave this world"); return; }
+        if (server == null || !world!.GetPeers().Contains(server)) { Fail("Observer connection ended", false); return; }
         if (failed) return;
         if (!server.IsReady()) return;
         if (readySince < 0) readySince = Time.realtimeSinceStartup;
@@ -69,12 +95,17 @@ internal sealed class RemoteObserverClient
             nextHello = Time.realtimeSinceStartup + 2;
             server.m_rpc.Invoke(ObserverProtocol.Hello, ObserverProtocol.Version);
         }
+        if (Approved && Time.realtimeSinceStartup >= nextDiscovery)
+        {
+            nextDiscovery = Time.realtimeSinceStartup + 2;
+            server.m_rpc.Invoke(ObserverDiscoveryProtocol.Request, ObserverDiscoveryProtocol.Version);
+        }
     }
     internal void Spawned() { spawned = true; Status = "Read-only observer connection active"; }
-    internal void Fail(string reason)
+    internal void Fail(string reason, bool terminal = true)
     {
         if (failed) return;
-        failed = true; Approved = false; Status = reason; log(reason);
+        failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); Status = reason; log(reason);
         if (world && world == ZNet.instance && server != null && world.GetPeers().Contains(server)) world.Disconnect(server);
         // Do not unpin input/network restrictions inside a still-loaded world.
     }

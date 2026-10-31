@@ -8,5 +8,7 @@
     <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/StreamOptions.cs" Link="StreamOptions.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/MediaBuffers.cs" Link="MediaBuffers.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/EncoderSession.cs" Link="EncoderSession.cs" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/EncoderDiagnostics.cs" Link="EncoderDiagnostics.cs" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/OutputRecoveryPolicy.cs" Link="OutputRecoveryPolicy.cs" />
   </ItemGroup>
 </Project>

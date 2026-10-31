@@ -6,7 +6,7 @@ namespace ValheimBroadcaster.Core
 {
     public static class ObserverProtocol
     {
-        public const int Version = 1;
+        public const int Version = 2;
         public const string Hello = "ValheimBroadcaster.Observer.Hello1";
         public const string Reply = "ValheimBroadcaster.Observer.Reply1";
         public const double HandshakeSeconds = 15;

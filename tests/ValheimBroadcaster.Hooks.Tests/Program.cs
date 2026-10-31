@@ -40,6 +40,7 @@ internal static class Program
             Check("Bounded request parser matches the routed envelope", readers == "ReadLong,ReadLong,ReadLong,ReadZDOID,ReadInt,ReadPackage");
             var package = game.MainModule.Types.Single(t => t.Name == "ZPackage").Methods.Single(m => m.Name == "ReadPackage" && m.Parameters.Count == 0);
             Check("Embedded package uses a 32-bit length prefix", package.Body.Instructions.First(i => i.Operand is MethodReference).Operand is MethodReference length && length.Name == "ReadInt32");
+            ConnectionRecoveryAudits.Run(game, Check);
             Console.WriteLine($"{checks} real-assembly structural checks passed. This does not run Unity, Harmony patches, or multiplayer.");
             return 0;
         }

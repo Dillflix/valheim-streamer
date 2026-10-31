@@ -64,7 +64,10 @@ internal static class Program
             ("Revocation requests disconnect without clearing the pinned role", ObserverRevoke),
             ("Multiplayer return parks with protections until resumed", ObserverPark),
             ("Parked session cleanup cannot change the next offline return", ObserverParkReset)
-        };
+        }.Concat(AutonomousDirectorTests.Cases)
+            .Concat(ObserverDiscoveryTests.Cases())
+            .Concat(ConnectionRecoveryTests.Cases())
+            .Concat(CameraReachabilityTests.Cases()).ToArray();
 
         int failed = 0;
         foreach (var test in cases)

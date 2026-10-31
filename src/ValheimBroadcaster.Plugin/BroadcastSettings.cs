@@ -1,5 +1,6 @@
 using BepInEx.Configuration;
 using UnityEngine;
+using ValheimBroadcaster.Plugin.Streaming;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -12,11 +13,29 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
     internal readonly ConfigEntry<bool> FlipVertical;
+    internal readonly ConfigEntry<VideoEncoderKind> VideoEncoder;
+    internal readonly ConfigEntry<int> NvencGpu;
+    internal readonly ConfigEntry<bool> AutoStream, RetryStream, Automation, ScenicTravel, Unattended;
+    internal readonly ConfigEntry<float> RegionSeconds, RegionRevisitSeconds, AcquireSeconds, TargetRetrySeconds;
+    internal readonly ConfigEntry<float> MinimumRegionDistance, MaximumRegionDistance;
 
     internal BroadcastSettings(ConfigFile config)
     {
         ObserverConnection = config.Bind("Multiplayer", "ObserverConnection", false, "Select before joining: require the server companion and remain a read-only observer until disconnect. Dedicated Steam servers only; ordinary gameplay is disabled for this connection.");
+        Automation = config.Bind("Automation", "Enabled", true, "Automatically acquire connected players in an authorized read-only observer session. Ordinary F8/F10 and offline observer tests are unchanged.");
+        ScenicTravel = config.Bind("Automation", "ScenicTravel", true, "Travel among previously generated land regions when no player can be acquired. Does not generate new regions or simulate dormant creatures.");
+        RegionSeconds = config.Bind("Automation", "RegionSeconds", 120f, Range("Seconds of usable idle coverage before selecting a fresh region.", 20f, 1800f));
+        RegionRevisitSeconds = config.Bind("Automation", "RegionRevisitSeconds", 1800f, Range("Minimum interval before revisiting a scenic region; exhaustion waits instead of immediately repeating.", 60f, 86400f));
+        AcquireSeconds = config.Bind("Automation", "AcquireSeconds", 65f, Range("Total acquisition budget including native travel and actor readiness.", 50f, 180f));
+        TargetRetrySeconds = config.Bind("Automation", "RetrySeconds", 30f, Range("Cooldown after an unreachable player or scenic destination.", 5f, 600f));
+        MinimumRegionDistance = config.Bind("Automation", "MinimumRegionDistance", 256f, Range("Minimum distance for a fresh scenic region, in metres.", 128f, 2000f));
+        MaximumRegionDistance = config.Bind("Automation", "MaximumRegionDistance", 10000f, Range("Maximum distance of an autonomous scenic transfer, in metres. Player acquisition is not constrained by this limit.", 256f, 20000f));
+        Unattended = config.Bind("Unattended", "Enabled", false, "Opt in to reconnecting the same server/character after unexpected loss of an authorized observer session. First join is manual; credentials stay in memory. Explicit off/logout cancels recovery. Keeps the game running in the background.");
         FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
+        VideoEncoder = config.Bind("Streaming", "VideoEncoder", VideoEncoderKind.libx264, "H.264 encoder: libx264 for CPU or h264_nvenc for NVIDIA GPU. Requires encoder support in the actual FFmpeg executable and a compatible driver.");
+        NvencGpu = config.Bind("Streaming", "NvencGpu", -1, "NVIDIA encoder device index, or -1 for automatic selection.");
+        AutoStream = config.Bind("Streaming", "AutoStart", false, "Start publishing automatically after an authorized observer camera becomes active. Explicit stream off suppresses auto-start until manually started again.");
+        RetryStream = config.Bind("Streaming", "AutoRetry", true, "Retry interrupted output with bounded backoff while publishing is requested. Invalid configuration/capability failures require correction and explicit stream on.");
         RtmpUrl = config.Bind("Streaming", "RtmpUrl", "", "Full rtmp:// or rtmps:// receiver URL including stream key. Keep this config private.");
         StreamWidth = config.Bind("Streaming", "Width", 1280, "Output width: even, 320–1920.");
         StreamHeight = config.Bind("Streaming", "Height", 720, "Output height: even, 180–1080. Match the game aspect ratio.");

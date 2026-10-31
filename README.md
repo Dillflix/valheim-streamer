@@ -2,15 +2,28 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.7.0 is an observer-development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players need no mod. The server companion is required only for the opt-in read-only multiplayer observer role.
+**0.8.0 adds autonomous direction and opt-in recovery to the read-only observer.** The user reported successful 0.7.0 authorization, loading, manual travel and return/resume while alone on a dedicated server. New automatic acquisition, scenic travel, reconnect/output recovery, other-client invisibility and simulation isolation still require the runtime checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players need no mod. The server companion is required for the read-only multiplayer role and its discovery feed.
 
-In normal F8/F10 modes the broadcaster remains an ordinary connected player. Those modes do not provide network invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
+In normal F8/F10 modes the broadcaster remains an ordinary connected player. Those modes do not provide network invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. The ordinary mode follows already-loaded player objects. Choose the separately configured read-only observer role for autonomous multiplayer broadcasting.
+
+## Autonomous broadcasting (0.8.0)
+
+Follow [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) for the configuration, controls, solo route exercise and runtime matrix. Use matching 0.8.0 client/server artifacts from the `autonomous-broadcast` branch; protocol 2 rejects an older observer handshake.
+
+- The companion supplies bounded, authenticated snapshots of connected players and generated scenic destinations. Server policy can permit observer acquisition of players whose map position is not public.
+- The director rotates across connected players, using controlled native travel for distant targets and waiting for actual loaded characters. Only usable player footage advances viewing time. Stale/unreachable targets receive bounded retries and cooldowns.
+- Idle coverage changes local scenic paths and can travel to another previously generated land region, with revisit/failure history and explicit exhaustion diagnostics. It does not generate untouched regions or simulate dormant creatures.
+- Diagnostics distinguish observer lifecycle, target acquisition, discovery freshness, travel, presentation and output/reconnect recovery.
+- Direct RTMP supports software H.264 or NVIDIA NVENC plus game audio. Optional automatic output and retries retain intent through recoverable failures while respecting manual stops.
+- Opt-in connection recovery handles supported unexpected losses after an initial manual observer join. Explicit stop/logout cancels it. In-process recovery does not restart a crashed game or sleeping machine.
+
+Automation defaults on **within an authorized read-only session**. The observer role, automatic streaming and unattended connection recovery remain explicit opt-ins. No live client/server installation or public release is performed by these source changes.
 
 ## Flicker handling and multiplayer observer (0.7.0)
 
 Brief readiness gaps now hold the last captured valid picture for up to 0.75 seconds instead of immediately flashing the recovery slate. Longer gaps still show the slate; travel and explicit faults bypass the hold. `broadcast diagnostics` reports held/slate frames and the last readiness failure. This uses a GPU framebuffer copy, without a second camera render or CPU readback. The reported flicker still needs a user retest.
 
-The optional server companion adds a **read-only observer connection**: the broadcaster's character stays local, world writes/gameplay RPCs are rejected, and the observer is excluded from gameplay player lists and simulation ownership. Other players remain unmodded. Initial support is dedicated Steam servers; multiplayer runtime validation is pending.
+The optional server companion adds a **read-only observer connection**: the broadcaster's character stays local, world writes/gameplay RPCs are rejected, and the observer is excluded from gameplay player lists and simulation ownership. Other players remain unmodded. Support is dedicated Steam servers. Basic solo connection/travel is user-reported working; other-client visibility and simulation behavior remain pending.
 
 Follow [MULTIPLAYER-OBSERVER.md](docs/MULTIPLAYER-OBSERVER.md) for the separate server/client artifacts, Steam-ID allowlist, pre-join client setting, permanent connection-role semantics and test matrix. Dormant creatures do not become active merely because the observer loads their region; untouched regions are not generated for the observer. Return/off parks the multiplayer observer until disconnect or camera resume.
 
@@ -27,10 +40,10 @@ Offline activation rejects dedicated-server connections and hosted worlds, even 
 - Configurable camera distance, height, FOV, world-space azimuth, and follow smoothing.
 - Obstruction checks between the target and camera.
 - Stable-ID target selection, next/previous, timed rotation, hold, and disconnect fallback.
-- Continuous coverage: ready players take priority; otherwise alternate a changing local scenic paths and nearby loaded creatures. A recovery slate appears only when no ready shot can be rendered.
+- Continuous coverage: player acquisition takes priority; idle uses changing scenic paths and eligible nearby creatures, with autonomous generated-region travel in the configured read-only mode. A recovery slate appears when no ready shot can be rendered or controlled travel is in progress.
 - Separate connected-player presence and scene readiness, with bounded experimental remote acquisition attempts.
 - HUD hiding and restoration; matching main/sky camera FOV; restoration of camera state when broadcasting stops or the observer dies.
-- An optional **experimental** distant-target mode using public map positions and the client's network reference position. It starts disabled and has no server-side position relay.
+- The older **experimental** reference-only distant-target mode remains separate from protected native observer travel. It starts disabled; use the companion's discovery/travel path for autonomous read-only coverage.
 
 The mod captures the existing framebuffer and game audio listener, then manages a local FFmpeg process to publish H.264 video plus stereo AAC audio. No OBS, second rendered camera or microphone capture is used. RTMP alone does not require the server companion. FFmpeg is a separate executable you supply. An embedded HLS/DASH web server is not implemented; a remote media server can convert the RTMP feed for browser playback.
 
@@ -66,7 +79,7 @@ dotnet build src/ValheimBroadcaster.Plugin -c Release \
 
 The build requires real game and loader assemblies. It reads those files, excludes Jötunn's build hooks, and has no automatic installation step. Do not commit or distribute the referenced game/Unity/BepInEx/Jötunn DLLs.
 
-GitHub Actions runs the director tests and a separate full plugin build against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide a `valheim-broadcaster-<commit>` artifact containing only this project's two DLLs. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching client assemblies.
+GitHub Actions runs the core tests, real FFmpeg loopback checks on Linux/Windows, game-metadata audits and client/server builds against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide separate `valheim-broadcaster-<commit>` and `valheim-broadcaster-server-<commit>` artifacts, each containing only that role's plugin and Core DLLs. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching assemblies.
 
 Expected output directory: `src/ValheimBroadcaster.Plugin/bin/Release/net48/`.
 
@@ -108,14 +121,17 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast list` | Refresh and print eligible target IDs and names |
 | `broadcast follow <id>` | Select an exact listed ID and hold it; start with `broadcast on` first |
 | `broadcast status` | Show director state, target, hold/auto mode, and roster count |
-| `broadcast stream on` / `off` / `status` | Start/stop RTMP audio + video / inspect encoder state; camera must be active |
+| `broadcast stream on` / `off` / `status` / `diagnostics` | Request/cancel RTMP audio + video and inspect encoder/retry failures; publishing requires an eligible camera |
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
-| `broadcast diagnostics` | Inspect brief frame holds, sustained slate frames and last readiness failure |
+| `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
+| `broadcast auto on/off/status` | Resume/pause/inspect automatic player acquisition and scenic travel in a read-only session |
+| `broadcast route add [x y z]/start/stop/clear/status` | Run a world-session solo acquisition route through the same travel path |
+| `broadcast unattended on/off/status` | Arm/inspect recovery; `off` cancels it, pauses automation and stops requested output |
 | `broadcast help` | Print command usage |
 
-Names are labels; selection uses character ZDO IDs. IDs are session-specific and should not be saved as permanent player identities.
+Names are labels. Ordinary loaded targets use character ZDO IDs; the discovery-backed director uses connection session IDs and separately tracks character IDs across respawns. IDs are session-specific and should not be saved as permanent player identities.
 
 ## Configuration
 
@@ -136,32 +152,40 @@ After the first launch, close the game and edit `BepInEx/config/com.dillflix.val
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Display / ShowStatus` | `true` | Show the director overlay |
+| `Multiplayer / ObserverConnection` | `false` | Select the read-only connection before joining; requires matching companion authorization |
+| `Automation / Enabled`, `ScenicTravel` | `true`, `true` | Acquire players and traverse generated scenic regions in a read-only session |
+| `Automation / RegionSeconds`, `RegionRevisitSeconds` | `120`, `1800` | Usable region coverage and revisit cooldown |
+| `Automation / AcquireSeconds`, `RetrySeconds` | `65`, `30` | Acquisition budget and initial failure cooldown |
+| `Automation / MinimumRegionDistance`, `MaximumRegionDistance` | `256`, `10000` | Scenic destination distance bounds in metres |
+| `Unattended / Enabled` | `false` | Opt-in same-session connection recovery and background running |
+| `Streaming / AutoStart`, `AutoRetry` | `false`, `true` | Automatic output intent and recoverable-failure retries |
+| `Streaming / VideoEncoder`, `NvencGpu` | `libx264`, `-1` | Software/NVIDIA encoder selection and optional NVIDIA device index |
 | `Experimental / RemoteTargets` | `false` | Include public distant positions and change the network reference position |
 | `Controls / StreamToggle` | `F11` | Start/stop RTMP audio + video |
 | `Controls / SelfTest` | `F10` | Start self-follow test mode |
 | `Controls / Toggle`, `Next`, `Previous`, `Hold` | `F8`, `PageDown`, `PageUp`, `F9` | BepInEx keyboard shortcuts |
 
-Only ready players enter the rotation. Hold pauses player cycling or idle shot timing; a lost subject still falls back, and a newly ready player takes priority over idle. Connected but unavailable players remain visible in the status count while the mod rechecks their scenes.
+In ordinary mode, only ready players enter rotation. The read-only autonomous director instead schedules the connected discovery roster and acquires distant scenes. Hold pauses cycling/scenic travel, while readiness and subject loss still require checks. Connected but unavailable players remain visible in diagnostics.
 
 For `RemoteTargets=true`, test first with two players sharing their map positions in widely separated areas. The client waits for both a target scene object and local area readiness. These signals do **not** prove complete server delivery or harmless observer behavior. Follow the remote test matrix before relying on this mode.
 
 ## Direct RTMP video and audio
 
-See [STREAMING.md](docs/STREAMING.md) for Thunderstore setup, receiver testing, configuration, and troubleshooting. The short version: install an FFmpeg executable with `libx264` and `aac`, set `Streaming.FFmpegPath` and `Streaming.RtmpUrl` in your active profile's config, launch modded, press **F10** for solo follow, then **F11** to publish. F11 stops the stream; F8 stops both the camera and stream in ordinary modes. In offline observer mode F8 first returns the character and then stops the session. Streaming never starts automatically.
+See [STREAMING.md](docs/STREAMING.md) for Thunderstore setup, receiver testing, configuration, and troubleshooting. Install an actual FFmpeg executable with the selected `libx264` or `h264_nvenc` encoder and `aac`, set `Streaming.FFmpegPath` and `Streaming.RtmpUrl`, launch modded, press **F10** for an ordinary solo camera test, then **F11** to request output. In a read-only session the camera starts after authorization; F11 requests its output. Automatic output is available with `AutoStart=true`, but explicit stream off wins over automatic retries. F8 stops output and requests protected observer return/park where applicable.
 
-A VM needs accelerated 3D rendering and a working audio device, even if no physical speakers are attached. This first encoder uses software H.264, so budget CPU as well as GPU/capture overhead. Streaming uses a normal authenticated game client; this project does not change platform authentication or game licensing.
+A VM needs accelerated 3D rendering and a working audio device, even if no physical speakers are attached. NVIDIA encoding requires a usable NVIDIA device/driver and matching FFmpeg support on the broadcaster. Capture/readback, conversion and AAC retain CPU/GPU costs. Streaming uses an authenticated game client; this project does not change platform authentication or game licensing.
 
 See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUNTIME-TESTS.md), and [implementation sources](docs/SOURCES.md).
 
 ## Continuous coverage and solo idle test
 
-Press **F8** while alone to test normal idle coverage (F10 is still the explicit self-follow test). The loaded region around the observer is a search boundary, never a fixed camera focus. Each scenic shot moves along a newly selected terrain path; recent locations are excluded. Scenic shots last up to 45 seconds and creature shots up to 25 seconds. A shown creature has a five-minute repeat cooldown, and subjects stationary for ten seconds become ineligible. With no fresh creature, the next scenic path is selected. If no fresh valid path can be found, status reports region exhaustion rather than endlessly orbiting one point. Autonomous traversal into a new region is still required for sustained world-wide coverage.
+Press **F8** while alone to test normal idle coverage (F10 is still the explicit self-follow test). The loaded region around the observer is a search boundary, never a fixed camera focus. Each scenic shot moves along a newly selected terrain path; recent locations are excluded. Scenic shots last up to 45 seconds and creature shots up to 25 seconds. A shown creature has a five-minute repeat cooldown, and subjects stationary for ten seconds become ineligible. With no fresh creature, the next scenic path is selected. The read-only autonomous mode adds generated-region traversal; ordinary/offline modes keep local coverage. If no fresh destination or valid local path exists, diagnostics report the limitation.
 
 Normal coverage locally masks the broadcaster's child renderers, restoring their previous settings on stop. F10 deliberately shows the character for self-follow testing. This is local presentation only: in ordinary modes other clients can still see the character, and player input, collision, damage, AI interactions, and simulation effects are not removed. See [OBSERVER.md](docs/OBSERVER.md).
 
 When other players become ready, coverage switches to them and rotates if several are available. When none remain ready, idle resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
 
-[IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the implemented policy, acquisition limits, and remaining unattended-operation work. Default coverage stays within loaded scenes; autonomous world roaming and automatic reconnection are not implemented. Multiplayer isolation is experimental and requires the companion. The offline observer experiment adds controlled travel to a manually saved destination; it does not yet choose new regions autonomously.
+[IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the local shot layer and its earlier design. [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) documents the current read-only acquisition, scenic traversal and recovery layers. Multiplayer isolation remains experimental and requires the companion. Offline observation retains manually selected travel; automatic discovery requires the authorized server feed.
 
 ## Solo distant-scene test
 

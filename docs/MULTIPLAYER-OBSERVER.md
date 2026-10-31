@@ -1,6 +1,6 @@
-# Read-only multiplayer observer experiment (0.7.0)
+# Read-only multiplayer observer (0.8.0)
 
-This branch implements a server companion plus broadcaster client. It is **not yet runtime-validated in multiplayer**. Other players use ordinary clients. Initial support is a **dedicated Steam server**; crossplay/PlayFab and listen servers are not supported by this protocol.
+This branch implements a server companion plus broadcaster client. The user reported successful 0.7.0 authorization, loading, explicit travel and return/resume while testing alone. **Other-client visibility and simulation isolation remain unverified**, and the 0.8.0 additions require new runtime checks. Other players use ordinary clients. Support is a **dedicated Steam server**; crossplay/PlayFab and listen servers are not supported by this protocol.
 
 The broadcaster keeps a local character to satisfy the game's rendering, camera and scene-loading assumptions. That character is not published to the server. Its connection still supplies a world-interest position and receives ordinary world data. The server rejects object updates and gameplay RPCs from the observer, omits its gameplay player-list entry, leaves its server character identity empty, and refuses to assign it world simulation ownership.
 
@@ -8,7 +8,7 @@ The role belongs to the entire connection and is selected when that connection o
 
 ## Installation and configuration
 
-Use the matching client and server artifacts from one successful `observer-multiplayer` Actions run. Install with those processes stopped; preserve existing configs/worlds and test on copies first. No live installation has been performed by this change.
+Use matching 0.8.0 client and server artifacts from one successful `autonomous-broadcast` Actions run. Upgrade both together: protocol 2 explicitly rejects the older protocol-1 observer handshake. Install with those processes stopped; preserve existing configs/worlds and test on copies first. No live installation has been performed by this source change.
 
 | Instance | Install under its BepInEx plugins folder | Dependencies |
 | --- | --- | --- |
@@ -26,9 +26,13 @@ Server: `BepInEx/config/com.dillflix.valheimbroadcaster.server.cfg`
 [Observer]
 Enabled = true
 SteamIds = YOUR_BROADCASTER_STEAM64_ID
+DiscoveryEnabled = true
+SharePrivatePlayerPositions = true
 ```
 
 Replace the placeholder with the broadcaster account's actual 17-digit Steam64 ID. Multiple IDs are comma-separated. This is an explicit observer-only account allowlist, not a player-name or server-admin check. Restart after editing. Malformed IDs disable authorization. An allowlisted connection without a matching client handshake is disconnected after 15 seconds once authenticated.
+
+`DiscoveryEnabled=true` supplies player presence/positions and already-generated scenic destinations to confirmed observers. `SharePrivatePlayerPositions=true` allows those observers to acquire players who are not sharing a public map position. This setting is an explicit server policy: locations are delivered only to its authenticated, allowlisted observer connections. Set it to false to withhold non-public positions; those players still appear as present but cannot be acquired from hidden coordinates. These discovery settings have no effect unless the observer server role is enabled and authorized.
 
 Broadcaster profile: `BepInEx/config/com.dillflix.valheimbroadcaster.cfg`
 
@@ -39,7 +43,7 @@ ObserverConnection = true
 
 Set this **before joining**. The client pins it to that connection. If the server is absent, disabled, incompatible or does not authorize this Steam identity, the client disconnects instead of silently falling back to gameplay. Password entry uses the game's usual connection flow; the observer handshake deadline starts after the server peer becomes ready. Use an existing test character without the first-login Valkyrie intro.
 
-Ordinary local F8/F10 tests and the closed-world observer experiment remain available with `ObserverConnection=false`. The flicker change does not require the server companion.
+Ordinary local F8/F10 tests and the closed-world observer experiment remain available with `ObserverConnection=false`. The flicker change and RTMP capture alone do not require the server companion. Follow [AUTONOMOUS-BROADCAST.md](AUTONOMOUS-BROADCAST.md) for automatic acquisition, scenic travel, diagnostics and unattended-session controls.
 
 ## Controls and solo checks
 
@@ -49,14 +53,14 @@ The camera starts automatically after authorization and a ready local character.
 | --- | --- |
 | `broadcast status` | Camera/observer phase and stream state |
 | `broadcast observer status` | Current coordinate, origin/destination distances and last camera gap |
-| `broadcast diagnostics` | Held/slate frame counts, last readiness failure, frame capture availability |
+| `broadcast diagnostics` | Discovery, director/travel and frame-presentation diagnostics |
 | `broadcast observer mark` | Save the current carrier coordinate for this connection |
 | `broadcast observer travel` | Native local-carrier teleport to the saved marker |
 | `broadcast observer travel x y z` | Controlled travel to explicit finite coordinates within +/-20000m per axis |
 | `broadcast observer return`, `broadcast off`, F8 while active | Return to activation position and park; ordinary gameplay controls remain suppressed |
 | F8, `broadcast on`, or `broadcast observer start` while parked | Resume camera coverage with the same isolated connection |
 | F10 / self-follow | Unavailable in a read-only connection; broadcaster remains hidden |
-| F11 / stream commands | Explicit RTMP start/stop as before; off/F8 also stops publishing |
+| F11 / stream commands | Explicit RTMP intent/start/stop; off/F8 also stops publishing and suppresses automatic output |
 
 Travel remains bounded to 45 unpaused seconds. Timeout/errors suspend travel with an explicit return option. Retention guards still prevent an excluding scene-removal pass from destroying the local carrier. The reference-only probe is not the multiplayer travel path.
 
@@ -65,6 +69,8 @@ You can test authorization, coordinate travel, return/park/resume and streaming 
 ## Implemented boundaries
 
 - Authorization uses the connected `ZSteamSocket` identity after the game's normal Steam authentication. Custom messages carry a protocol version and decision, never a claimed Steam ID or requested player identity. Replies must come from the broadcaster's actual server RPC object.
+- Discovery is a separate versioned, bounded read protocol. The client requests it every two seconds; the server answers at most once per second per observer. A response is limited to 32 KiB, 64 players and 128 scenic destinations. Discovery expires ten seconds after local receipt and is cleared on connection/world changes; delayed coordinates do not establish that a player's scene is loaded. Rotating destination pages use a bounded catalog/cache rather than an unbounded history.
+- Scenic destinations are dry-land centers of already-generated regions with an already-generated 3×3 zone neighborhood. Procedural height/biome queries do not instantiate content or generate new server regions. A candidate still requires native travel, terrain/camera checks and actual scene readiness on arrival.
 - Server reservations and client restrictions apply before character publication. The server rejects observer `RPC_ZDOData` packets and character-ID announcements; the client also clears its outgoing object sync list. There is no transition that tries to retract an already-visible character.
 - Gameplay routed requests are blocked. The one allowed native `RequestZDO` read is checked against the actual sender, server recipient, empty target object, exact method and a bounded envelope/argument length before native dispatch. Native server save/admin mutation commands are also refused for this role.
 - Interest metadata accepts only finite bounded coordinates, keeps map sharing false, and discards observer gameplay metadata. The observer is excluded from gameplay player lists, random-event peer data and peer-driven server zone generation. Sleeping uses the game's character-ZDO list, which has no observer character.
@@ -81,7 +87,7 @@ This is an experimental boundary around the audited vanilla network paths, not a
 
 With only observers connected, gameplay player count is zero and the native world-time rule can pause time. Rendering, network delivery and local resource loading still consume resources. This does not establish literal zero effect on every local rendering/cache path, every third-party mod, or every server statistic.
 
-Automatic distant-player acquisition and autonomous selection of new idle regions are separate remaining work. This branch supplies explicit travel and the isolation boundary; it does not infer hidden player coordinates.
+The 0.8.0 director uses the authorized discovery feed for automatic distant-player acquisition and scenic-region travel. Manual observer travel remains available. See [AUTONOMOUS-BROADCAST.md](AUTONOMOUS-BROADCAST.md) for selection, stale-data handling, manual overrides and recovery. Creature-simulation improvements remain deferred.
 
 ## Multiplayer runtime matrix — not run here
 
@@ -89,7 +95,7 @@ Use a disposable dedicated Steam server, one broadcaster, and at least one unmod
 
 | Test | Required observation |
 | --- | --- |
-| Allowed broadcaster joins | Matching 0.7.0 client/server startup lines; authorization succeeds; camera starts; no broadcaster actor/nameplate/equipment/map entry appears on ordinary clients |
+| Allowed broadcaster joins | Matching 0.8.0 client/server startup lines; authorization succeeds; camera starts; no broadcaster actor/nameplate/equipment/map entry appears on ordinary clients |
 | Unauthorized / missing companion / mismatched protocol | Clear rejection/disconnection; no ordinary-gameplay fallback on the configured broadcaster |
 | Allowlisted vanilla client without broadcaster mod | Connection held read-only and disconnected after handshake deadline; no published actor |
 | Late ordinary join | No broadcaster appears during initial scene synchronization |
@@ -105,3 +111,5 @@ Use a disposable dedicated Steam server, one broadcaster, and at least one unmod
 | Sustained session | No growing sync queue, pending ZDO requests, repeated errors, frame textures, orphan FFmpeg processes or A/V drift |
 
 Record both plugin versions/commit, actual Valheim/BepInEx/Jötunn versions, all participating mods, commands and per-instance logs. Verify from the ordinary clients and server, not only from the broadcaster's hidden local view.
+
+The user's earlier 0.7.0 solo pass covers the reported basic connection/travel workflow only. The new discovery, autonomous travel, reconnection and output-retry cases are listed in [AUTONOMOUS-BROADCAST.md](AUTONOMOUS-BROADCAST.md) and remain pending in Valheim.
