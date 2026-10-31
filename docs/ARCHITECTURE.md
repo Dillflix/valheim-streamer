@@ -83,3 +83,13 @@ Arguments are constructed from validated numbers and a quoted RTMP/RTMPS URL, wi
 ## Reference-override safety guard (0.5.1)
 
 Reference overrides now require the exact scene-removal hook as well as the reference setter. Capture the observer ZDO before overriding. Before `ZNetScene.RemoveObjects`, require that identity in the near or distant retained lists. Otherwise fail the probe explicitly, stop and restore the override, and skip the stale removal pass. Merely restoring reference within the pass would be insufficient because its lists were computed earlier for the remote position. The next game cycle recomputes lists from local interest. This does not pin terrain or retain two regions; attempts needing that support abort.
+
+## Bodyless experiment (0.7.0 branch)
+
+`BodylessPlugin` is a separate opt-in BepInEx entry in the same two-DLL payload. It is armed at startup; normal broadcaster update/activation is gated off in this role. `SpectatorSession` owns handshake, per-view acknowledgement matching, bounded loading, readiness and failure state. The experiment uses a remote Steam dedicated server, not an offline world with a hidden body.
+
+The companion authenticates through vanilla Steam and reserves configured socket SteamID64 identities. Its firewall restricts ready reserved peers to transport pings, disconnection and the experiment's hello/view messages. `ZNet.UpdatePlayerList` filters those identities. Their ordinary reference remains quarantined; only `ZDOMan.CreateSyncList` temporarily sees the camera reference, with finalizer restoration. Active-area eligibility, ownership assignment and quarantine ghost generation are blocked. Existing generated data can therefore be selected without giving the viewer ordinary spatial presence.
+
+Client spawn/respawn/profile-save barriers remain installed for the process lifetime. World rendering and loading do not begin before server-approved interest. Ownership checks, claims, outgoing routed RPCs and post-ready direct gameplay RPCs are suppressed; unexpected local network-object creation fails the test. Status counts represent observations/blocked attempts, not a universal proof of simulation isolation. An explicit slate replaces the vanilla null-player black screen. The existing capture component records camera/listener output and slates across A/B changes. Stop disconnects rather than attempting in-place player restoration.
+
+See [BODYLESS-EXPERIMENT.md](BODYLESS-EXPERIMENT.md) for supported scope, two-role setup, solo test sequence and evidence limits. The existing camera-relative observer work remains on its own branch.

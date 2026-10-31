@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.5.1";
+    public const string PluginVersion = "0.7.0";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -100,7 +100,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void Update()
     {
-        if (settings == null) return;
+        if (settings == null || BodylessPlugin.ClientMode) return;
         if (!ZNet.instance || probeWorld != ZNet.instance) { probeMarker = null; probeWorld = null; }
         if (!Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || (director.IsEnabled && activeWorld != ZNet.instance))
         {
@@ -208,7 +208,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private bool StartBroadcast(bool testSelf = false)
     {
-        if (!enabled || !Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || !ZNetScene.instance) return false;
+        if (BodylessPlugin.ClientMode || !enabled || !Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || !ZNetScene.instance) return false;
         Stop(); // Restore any previous camera/HUD/reference before switching modes.
         acquisitionFailure = null;
         selfTest = testSelf;

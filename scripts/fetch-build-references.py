@@ -90,7 +90,7 @@ def fetch(output: Path) -> None:
         downloader = root / "DepotDownloader"
         extract_member(downloader_zip, "DepotDownloader", downloader)
         downloader.chmod(0o755)
-        for name in ("BepInEx.dll", "0Harmony.dll"):
+        for name in ("BepInEx.dll", "0Harmony.dll", "Mono.Cecil.dll"):
             extract_member(bepinex_zip, f"BepInEx/core/{name}", root / "bepinex/core" / name)
         filelist = root / "managed-files.txt"
         filelist.write_text(r"regex:.*[\\/]Managed[\\/].*\.dll" + "\n", encoding="utf-8")
