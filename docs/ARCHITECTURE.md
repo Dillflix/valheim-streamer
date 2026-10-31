@@ -12,12 +12,14 @@ The first milestone is a single broadcasting client following and cycling eligib
 | `CoverageDirector` / `IdleShots` | Player priority, scenic/creature timing, recent-use exclusions, bounded creature bindings and terrain paths |
 | `AcquisitionWindow` | Bounded opt-in remote interest attempts with local cooldown |
 | `ObserverTravel` / `ObserverController` | Offline-only observer lifecycle, camera-relative body/interest, native teleport, bounded return and restoration |
+| `FrameContinuity` / `FrameHold` | Hold a recent valid framebuffer through short readiness gaps; expose presentation diagnostics |
+| `RemoteObserverClient` / `ObserverServerPlugin` | Connection-lifetime read-only role, authorization, network publication and simulation guards |
 | `CameraRig` | Smooth a wide shot, check obstructions, hide/restore the HUD, restore camera state |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback, listener placement, and non-mutating game audio capture |
 | `EncoderSession` / media buffers | Bounded transfer, paced video/audio workers, FFmpeg lifetime, watchdogs, and redacted status |
 | External FFmpeg executable | H.264/AAC encoding and RTMP/RTMPS publishing; launched and stopped by the mod |
 
-No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.6.0. RTMP is client-only.
+0.7.0 adds a separate optional server companion and a versioned observer handshake. No persistent player database, embedded HLS/DASH server, web controller or automatic game launcher is implemented. RTMP remains client-side.
 
 ## Director contract
 
@@ -95,4 +97,14 @@ On each valid camera shot the body moves to two metres below the camera; it is n
 
 Travel/return uses a 45-second unpaused-time budget. Native teleport completion, local readiness and position within five metres of the requested destination are all required before proceeding. The world can still be incomplete despite these checks. Return cancels only the observer-owned teleport using verified private fields and starts a new native teleport to the activation point. Repeated return/off commands do not reset its timer. Only successful return releases physics/input, restores saved flags and camera/HUD/renderers, and stops RTMP. Errors enter a protected suspended state with a return command and an explanatory slate; they do not release a character beside an airborne camera. Forced world exit/component disable releases references and saved flags immediately and cannot promise to finish the return trip.
 
-The native `ZNet.OpenServer` call is blocked for the observer's world while the experiment is active. The offline predicate is also rechecked before movement and on update. This is a test restriction, not a multiplayer observer implementation. There is no server binary or role protocol in this branch.
+The native `ZNet.OpenServer` call is blocked for the observer's world while the experiment is active. The offline predicate is also rechecked before movement and on update. This is a test restriction, not a multiplayer observer implementation. The offline path remains separate from the opt-in 0.7.0 server protocol described below.
+
+## Frame continuity and read-only connections (0.7.0)
+
+`FrameHold` captures completed valid frames into one GPU texture. `FrameContinuity` allows a hold for less than 0.75 seconds after that actual capture; provisional director cuts no longer overwrite presentation readiness. Resize, stop and world transitions discard the snapshot. Hard travel/failure states immediately show the slate. Capture failure is reported and falls back to the slate. Diagnostics count actual GUI repaint frames and retain the last failure reason. The extra GPU copy/memory cost and visual result still need runtime measurement.
+
+`RemoteObserverClient` pins the pre-join setting to the actual server connection. It blocks object publication and gameplay routed calls before the player can be published, negotiates protocol 1 over that server's ZRpc, and requires authorization before starting the camera. The native ZDO ownership predicate returns false for world objects while preserving the local avatar. A multiplayer return transitions `ObserverTravel` to Parked, retaining protections; normal offline return still transitions to Off and restores controls.
+
+`ObserverServerPlugin` runs its guards only on dedicated servers. An allowlisted Steam transport identity is reserved as read-only before character publication; normal Steam authentication/readiness precedes acknowledgement. The server drops object writes and character IDs, permits a bounded authenticated RequestZDO read, strips interest metadata down to a finite coordinate, refuses world ownership, and filters gameplay peer enumerations used by player lists, events and server generation. Native connection capacity uses the real connection count. The role remains pinned through timeout/revocation until disconnect; plugin shutdown disconnects observers before unpatching.
+
+This removes the broadcaster character from other peers' ordinary scene data, rather than asking their renderers to hide it. No client-side renderer flag is treated as remote invisibility. Dormant regions are not simulated/generated just for this connection. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for remaining limits and the not-yet-run runtime matrix.

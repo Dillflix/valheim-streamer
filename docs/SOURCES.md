@@ -26,3 +26,11 @@ These references explain the design and API investigation. They are not a claim 
 The previously prepared Jötunn documentation toolkit contains the full Markdown snapshot. Set `JOTUNN_DOCS_ROOT` to its `docs` directory for local agent retrieval. Its published-site commit is `18a0b624ceaf757abcfeb5cb1386d111a6dec9b2`; that identifier is not a Jötunn package version. API/runtime evidence from target assemblies takes precedence when the snapshot differs.
 
 The companion skills are `jotunn-reference`, `jotunn-create-mod`, `jotunn-maintain-mod`, and `jotunn-deploy-mod`. They remain separate reusable tools; this repository does not duplicate the entire corpus or embed installation-specific skill paths.
+
+## 0.7.0 observer and continuity evidence
+
+The server/client isolation hooks were inspected against the pinned real Valheim 1.0.21 assembly. `tests/ValheimBroadcaster.Hooks.Tests` checks critical metadata/IL assumptions in CI; it does not load or execute the game. The checked-in code contains our adapters/audits, not game implementation dumps or game binaries.
+
+The Jötunn snapshot used for compatibility/RPC/config guidance is site commit `18a0b624ceaf757abcfeb5cb1386d111a6dec9b2`, captured 2026-10-30. Both owned plugins use NotEnforced compatibility to preserve ordinary clients; protocol 1 explicitly authorizes only broadcaster/server pairs. Raw per-connection ZRpc messages carry small integers and bind replies to the actual server RPC.
+
+Unity's [6000.0 CaptureScreenshotIntoRenderTexture reference](https://docs.unity.com/en-us/engine/6000.0/script-reference/unityengine/screencapture/capturescreenshotintorendertexture) documents end-of-frame capture of the existing framebuffer. The continuity adapter uses this API without an additional camera render or CPU pixel readback.

@@ -2,17 +2,25 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.6.0 is an observer-development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
+**0.7.0 is an observer-development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players need no mod. The server companion is required only for the opt-in read-only multiplayer observer role.
 
 In normal F8/F10 modes the broadcaster remains an ordinary connected player. Those modes do not provide network invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
 
-## Offline observer experiment (0.6.0)
+## Flicker handling and multiplayer observer (0.7.0)
 
-The `observer-foundation` branch adds an explicitly activated **closed local world** test. `broadcast observer start` hides the local character using the existing renderer mask, suppresses its ordinary input/character update loops, enables local god/ghost flags, disables Rigidbody gravity/collision, and keeps its body two metres below the broadcast camera. Character ZDO position and network interest move together. This is a foundation for a camera-relative observer, not multiplayer spectator isolation.
+Brief readiness gaps now hold the last captured valid picture for up to 0.75 seconds instead of immediately flashing the recovery slate. Longer gaps still show the slate; travel and explicit faults bypass the hold. `broadcast diagnostics` reports held/slate frames and the last readiness failure. This uses a GPU framebuffer copy, without a second camera render or CPU readback. The reported flicker still needs a user retest.
+
+The optional server companion adds a **read-only observer connection**: the broadcaster's character stays local, world writes/gameplay RPCs are rejected, and the observer is excluded from gameplay player lists and simulation ownership. Other players remain unmodded. Initial support is dedicated Steam servers; multiplayer runtime validation is pending.
+
+Follow [MULTIPLAYER-OBSERVER.md](docs/MULTIPLAYER-OBSERVER.md) for the separate server/client artifacts, Steam-ID allowlist, pre-join client setting, permanent connection-role semantics and test matrix. Dormant creatures do not become active merely because the observer loads their region; untouched regions are not generated for the observer. Return/off parks the multiplayer observer until disconnect or camera resume.
+
+## Offline observer experiment (0.6.0 onward)
+
+The offline observer path adds an explicitly activated **closed local world** test. `broadcast observer start` hides the local character using the existing renderer mask, suppresses its ordinary input/character update loops, enables local god/ghost flags, disables Rigidbody gravity/collision, and keeps its body two metres below the broadcast camera. Character ZDO position and network interest move together. This is a foundation for a camera-relative observer, not multiplayer spectator isolation.
 
 Mark a destination before activation with `broadcast probe mark`. Use `broadcast observer travel` to move the body through the game's native distant teleport routine to that marker. `broadcast observer return`, F8, or `broadcast off` requests a return to the activation position; normal controls/physics and the camera are restored **after** the return completes. Travel is bounded to 45 unpaused seconds; failures suspend movement and retain protections while the return command remains available. An RTMP session can remain connected during travel/return slates and stops when return finishes.
 
-The mode rejects dedicated-server connections and hosted worlds, even when no other players are online. Opening the local world to multiplayer is blocked while it is active. No server companion or multiplayer invisibility is implemented. Loading a region can still activate its simulation. Read the [solo observer test procedure](docs/OBSERVER-TESTS.md) before trying it; **in-game results remain pending**.
+Offline activation rejects dedicated-server connections and hosted worlds, even when no other players are online. Opening the local world to multiplayer is blocked while it is active. Use the separately configured read-only connection for supported multiplayer observation. Loading a region can still activate its simulation. Read the [solo observer test procedure](docs/OBSERVER-TESTS.md) before trying it; **in-game results remain pending**.
 
 ## Implemented behavior
 
@@ -24,7 +32,7 @@ The mode rejects dedicated-server connections and hosted worlds, even when no ot
 - HUD hiding and restoration; matching main/sky camera FOV; restoration of camera state when broadcasting stops or the observer dies.
 - An optional **experimental** distant-target mode using public map positions and the client's network reference position. It starts disabled and has no server-side position relay.
 
-The mod captures the existing framebuffer and game audio listener, then manages a local FFmpeg process to publish H.264 video plus stereo AAC audio. No OBS, second rendered camera, microphone capture, or server mod is required. FFmpeg is a separate executable you supply. An embedded HLS/DASH web server is not implemented; a remote media server can convert the RTMP feed for browser playback.
+The mod captures the existing framebuffer and game audio listener, then manages a local FFmpeg process to publish H.264 video plus stereo AAC audio. No OBS, second rendered camera or microphone capture is used. RTMP alone does not require the server companion. FFmpeg is a separate executable you supply. An embedded HLS/DASH web server is not implemented; a remote media server can convert the RTMP feed for browser playback.
 
 ## Build
 
@@ -103,7 +111,8 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast stream on` / `off` / `status` | Start/stop RTMP audio + video / inspect encoder state; camera must be active |
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
-| `broadcast observer start/travel/return/status` | Closed-world observer experiment: activate, teleport to marker, return and stop, or inspect diagnostics |
+| `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
+| `broadcast diagnostics` | Inspect brief frame holds, sustained slate frames and last readiness failure |
 | `broadcast help` | Print command usage |
 
 Names are labels; selection uses character ZDO IDs. IDs are session-specific and should not be saved as permanent player identities.
@@ -152,7 +161,7 @@ Normal coverage locally masks the broadcaster's child renderers, restoring their
 
 When other players become ready, coverage switches to them and rotates if several are available. When none remain ready, idle resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
 
-[IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the implemented policy, acquisition limits, and remaining unattended-operation work. Default coverage stays within loaded scenes; autonomous world roaming, multiplayer observer isolation, and automatic reconnection are not implemented. The offline observer experiment adds controlled travel to a manually saved destination; it does not yet choose new regions autonomously.
+[IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the implemented policy, acquisition limits, and remaining unattended-operation work. Default coverage stays within loaded scenes; autonomous world roaming and automatic reconnection are not implemented. Multiplayer isolation is experimental and requires the companion. The offline observer experiment adds controlled travel to a manually saved destination; it does not yet choose new regions autonomously.
 
 ## Solo distant-scene test
 

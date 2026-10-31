@@ -6,7 +6,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
-// Offline experimental adapter. Not a multiplayer invisibility/zero-impact claim.
+// Local character carrier; multiplayer publication/authority is isolated by the connection adapters.
 internal sealed class ObserverController
 {
     private static readonly MethodInfo? TeleportUpdate = AccessTools.Method(typeof(Player), "UpdateTeleport", new[] { typeof(float) });
@@ -23,12 +23,17 @@ internal sealed class ObserverController
     private Vector3 origin, destination;
     private Quaternion originRotation;
     private float? cameraGap;
+    private bool remoteSession;
+    internal Func<bool> RemoteApproved { get; set; } = () => false;
+    private bool CanOperate => remoteSession ? RemoteApproved() : Offline;
+    internal bool RemoteSession => remoteSession;
+    internal void Resume() => travel.Resume();
     internal bool Active => travel.Active;
     internal ObserverPhase Phase => travel.Phase;
-    internal string Status => $"OFFLINE OBSERVER | {travel.Phase}" +
+    internal string Status => $"{(remoteSession ? "READ-ONLY" : "OFFLINE")} OBSERVER | {travel.Phase}" +
         (travel.Failure == null ? "" : " | " + travel.Failure);
     internal string Diagnostics => Status + $" | travel {travel.ElapsedSeconds:F1}s" +
-        (owner ? $" | origin {Vector3.Distance(owner.transform.position, origin):F1}m | destination {Vector3.Distance(owner.transform.position, destination):F1}m" : "") +
+        (owner ? $" | position {owner.transform.position.ToString("F1")} | origin {Vector3.Distance(owner.transform.position, origin):F1}m | destination {Vector3.Distance(owner.transform.position, destination):F1}m" : "") +
         (cameraGap.HasValue ? $" | last camera gap {cameraGap.Value:F1}m" : "");
     internal ZDO? NetworkObject => view ? view.GetZDO() : null;
     internal bool Owns(Character player) => Active && owner && owner == player;
@@ -36,12 +41,12 @@ internal sealed class ObserverController
     private bool HasOwnership => view && view.IsOwner() && view.GetZDO() != null;
     internal static bool Offline => ZNet.instance && ObserverTravel.CanActivate(ZNet.instance.IsServer(), ZNet.IsOpenServer(), ZNet.instance.GetPeerConnections());
 
-    internal void Begin(Player player)
+    internal void Begin(Player player, bool remote = false)
     {
-        if (!Offline) throw new InvalidOperationException("Observer prototype requires a closed local world with no peers. Multiplayer is not supported yet.");
+        if (!(remote ? RemoteApproved() : Offline)) throw new InvalidOperationException("Observer requires a closed local world or a server-authorized read-only connection.");
         if (Active || !player || player.IsDead() || player.IsTeleporting() || player.IsAttached())
             throw new InvalidOperationException("Observer must be alive, unattached, and not teleporting.");
-        if (!player.IsOnGround() || player.IsSwimming() || player.InAttack() || player.InDodge() || player.IsSleeping())
+        if ((!remote && (!player.IsOnGround() || player.IsSwimming())) || player.InAttack() || player.InDodge() || player.IsSleeping())
             throw new InvalidOperationException("Stand still on dry ground and finish any attack, dodge, or sleep before starting observer mode.");
         if (TeleportUpdate == null || TeleportUpdate.ReturnType != typeof(void) ||
             Teleporting?.FieldType != typeof(bool) || TeleportTimer?.FieldType != typeof(float) || TeleportCooldown?.FieldType != typeof(float))
@@ -53,6 +58,7 @@ internal sealed class ObserverController
             throw new InvalidOperationException("Observer must own its live network object.");
         if (!TargetRoster.Finite(player.transform.position) || !IdleShots.Ready(player.transform.position))
             throw new InvalidOperationException("Wait for the starting area to load.");
+        remoteSession = remote;
         owner = player; world = ZNet.instance; body = next; view = nextView;
         origin = destination = player.transform.position; originRotation = player.transform.rotation;
         god = player.InGodMode(); ghost = player.InGhostMode();
@@ -75,7 +81,7 @@ internal sealed class ObserverController
 
     internal void TravelTo(Vector3 target)
     {
-        if (!Offline || travel.Phase != ObserverPhase.Watching || !owner || !TargetRoster.Finite(target))
+        if (!CanOperate || travel.Phase != ObserverPhase.Watching || !owner || !TargetRoster.Finite(target))
             throw new InvalidOperationException("Start observer mode and finish any current travel first.");
         if (!HasOwnership) { Suspend("Observer network ownership lost; exit the world."); return; }
         if (!owner.TeleportTo(target, originRotation, true)) throw new InvalidOperationException("Game refused teleport (possibly cooldown); wait and retry.");
@@ -86,13 +92,13 @@ internal sealed class ObserverController
 
     internal void RequestReturn()
     {
-        if (!Active || Phase == ObserverPhase.Returning || !owner || world != ZNet.instance) return;
-        if (!Offline) { Suspend("World is no longer closed/offline. Exit the world."); return; }
+        if (!Active || Phase == ObserverPhase.Returning || Phase == ObserverPhase.Parked || !owner || world != ZNet.instance) return;
+        if (!CanOperate) { Suspend("Observer authorization or world isolation lost. Exit the world."); return; }
         if (!HasOwnership) { Suspend("Observer network ownership lost; exit the world."); return; }
         CancelOwnedTeleport();
         destination = origin;
         cameraGap = null;
-        travel.Return();
+        travel.Return(remoteSession);
         if (!owner.TeleportTo(origin, originRotation, true)) Suspend("Return teleport refused; use broadcast observer return to retry.");
     }
 
@@ -106,11 +112,17 @@ internal sealed class ObserverController
 
     // Replaces only this player's FixedUpdate while active. Explicitly advances the
     // real teleport routine; does not run attacks, pickup, stats, or attached controls.
+    internal static void AdvancePendingTeleport(Player player, float dt)
+    {
+        if (TeleportUpdate == null) throw new MissingMethodException("Player.UpdateTeleport");
+        TeleportUpdate.Invoke(player, new object[] { dt });
+    }
+
     internal void FixedTick(float dt)
     {
         if (!Active || !owner || owner != Player.m_localPlayer || world != ZNet.instance) return;
         Enforce();
-        if (!Offline) { Suspend("World is no longer closed/offline. Exit the world."); return; }
+        if (!CanOperate) { Suspend("Observer authorization or world isolation lost. Exit the world."); return; }
         if (Phase != ObserverPhase.Suspended)
         {
             TeleportUpdate!.Invoke(owner, new object[] { dt });
@@ -123,8 +135,8 @@ internal sealed class ObserverController
     {
         if (!Active) return false;
         if (!owner || owner != Player.m_localPlayer || world != ZNet.instance) { Release(); return true; }
-        if (!Offline) Suspend("World is no longer closed/offline. Exit the world; multiplayer observer protections are not implemented.");
-        if (Phase == ObserverPhase.Suspended || Phase == ObserverPhase.Watching) return false;
+        if (!CanOperate) Suspend("Observer authorization or world isolation lost. Exit the world.");
+        if (Phase == ObserverPhase.Suspended || Phase == ObserverPhase.Watching || Phase == ObserverPhase.Parked) return false;
         bool wasActive = Active;
         travel.Tick(dt, owner.IsTeleporting(), IdleShots.Ready(destination),
             (owner.transform.position - destination).sqrMagnitude <= 25f);
@@ -135,7 +147,7 @@ internal sealed class ObserverController
 
     internal bool FollowCamera(Vector3 cameraPosition)
     {
-        if (Phase != ObserverPhase.Watching || !owner || !body || !Offline) return false;
+        if (Phase != ObserverPhase.Watching || !owner || !body || !CanOperate) return false;
         Vector3 position = cameraPosition + Vector3.down * 2f;
         if (!TargetRoster.Finite(position) || (owner.transform.position - position).sqrMagnitude > 10000f || !IdleShots.Ready(position))
         { Suspend("Camera destination requires controlled travel; use broadcast observer return."); return false; }
@@ -175,6 +187,6 @@ internal sealed class ObserverController
             body.linearVelocity = Vector3.zero; body.angularVelocity = Vector3.zero;
             body.WakeUp();
         }
-        owner = null; body = null; view = null; world = null; cameraGap = null; travel.Reset();
+        owner = null; body = null; view = null; world = null; cameraGap = null; remoteSession = false; travel.Reset();
     }
 }

@@ -7,7 +7,7 @@ internal sealed class BroadcastSettings
 {
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
     internal readonly ConfigEntry<float> ScenicDwell, CreatureDwell, CreatureRadius, AcquisitionCooldown;
-    internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus;
+    internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
@@ -15,6 +15,7 @@ internal sealed class BroadcastSettings
 
     internal BroadcastSettings(ConfigFile config)
     {
+        ObserverConnection = config.Bind("Multiplayer", "ObserverConnection", false, "Select before joining: require the server companion and remain a read-only observer until disconnect. Dedicated Steam servers only; ordinary gameplay is disabled for this connection.");
         FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
         RtmpUrl = config.Bind("Streaming", "RtmpUrl", "", "Full rtmp:// or rtmps:// receiver URL including stream key. Keep this config private.");
         StreamWidth = config.Bind("Streaming", "Width", 1280, "Output width: even, 320–1920.");

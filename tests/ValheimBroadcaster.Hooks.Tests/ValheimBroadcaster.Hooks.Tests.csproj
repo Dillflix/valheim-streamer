@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Inspect metadata only; never load or execute the game assembly. -->
+    <Reference Include="$(BepInExCoreDir)/Mono.Cecil.dll" />
+  </ItemGroup>
+</Project>

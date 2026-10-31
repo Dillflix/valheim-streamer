@@ -44,9 +44,20 @@ jobs:
           dotnet-version: '8.0.427'
       - name: Fetch pinned real compilation references
         run: python3 scripts/fetch-build-references.py --output "$RUNNER_TEMP/valheim-build-references"
+      - name: Audit observer assumptions against real game metadata
+        run: >-
+          dotnet run --project tests/ValheimBroadcaster.Hooks.Tests --configuration Release -warnaserror
+          -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+          -- "$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed/assembly_valheim.dll"
       - name: Build plugin against Valheim 1.0.21 and BepInEx 5.4.23.2
         run: >-
           dotnet build src/ValheimBroadcaster.Plugin/ValheimBroadcaster.Plugin.csproj
+          --configuration Release -warnaserror
+          -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
+          -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+      - name: Build observer server companion
+        run: >-
+          dotnet build src/ValheimBroadcaster.Server/ValheimBroadcaster.Server.csproj
           --configuration Release -warnaserror
           -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
           -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
@@ -62,5 +73,17 @@ jobs:
           path: |
             artifacts/ValheimBroadcaster/ValheimBroadcaster.dll
             artifacts/ValheimBroadcaster/ValheimBroadcaster.Core.dll
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stage server companion separately
+        run: |
+          mkdir -p server-artifacts/ValheimBroadcaster
+          cp src/ValheimBroadcaster.Server/bin/Release/net48/ValheimBroadcaster.Server.dll server-artifacts/ValheimBroadcaster/
+          cp src/ValheimBroadcaster.Core/bin/Release/netstandard2.0/ValheimBroadcaster.Core.dll server-artifacts/ValheimBroadcaster/
+      - name: Upload server test build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: valheim-broadcaster-server-${{ github.sha }}
+          path: server-artifacts/
           if-no-files-found: error
           retention-days: 14

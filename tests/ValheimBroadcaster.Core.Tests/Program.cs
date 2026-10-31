@@ -53,7 +53,17 @@ internal static class Program
             ("Repeated return commands cannot postpone timeout", ObserverReturnRepeated),
             ("Failed return can be retried and preserves first failure", ObserverReturnRetry),
             ("World cleanup permits fresh observer activation", ObserverReset),
-            ("Observer travel rejects invalid time without changing state", ObserverTiming)
+            ("Observer travel rejects invalid time without changing state", ObserverTiming),
+            ("Short loading gaps hold only recently captured footage", FrameHoldWindow),
+            ("Forced travel or failure slate cannot be hidden by a good frame", FrameHardFailure),
+            ("Frame reset and clock rollback cannot replay another session", FrameReset),
+            ("Presentation clock rejects invalid values", FrameClock),
+            ("Observer identity configuration accepts exact bounded Steam IDs", ObserverAllowlist),
+            ("Observer handshake requires the matching protocol before its deadline", ObserverHandshake),
+            ("Repeated handshake requests cannot extend an unconfirmed role", ObserverHandshakeDeadline),
+            ("Revocation requests disconnect without clearing the pinned role", ObserverRevoke),
+            ("Multiplayer return parks with protections until resumed", ObserverPark),
+            ("Parked session cleanup cannot change the next offline return", ObserverParkReset)
         };
 
         int failed = 0;
@@ -525,6 +535,83 @@ internal static class Program
             Throws<ArgumentOutOfRangeException>(() => o.Tick(invalid, false, true, true));
         o.Tick(0, true, false, false); Equal(0d, o.ElapsedSeconds); Equal(ObserverPhase.Travelling, o.Phase);
         o.Tick(10000, true, false, false); Equal(ObserverPhase.Suspended, o.Phase);
+    }
+
+    private static void FrameHoldWindow()
+    {
+        var f = new FrameContinuity();
+        Equal(FramePresentation.Slate, f.Select(1, false, false));
+        f.Captured(1);
+        Equal(FramePresentation.Hold, f.Select(1.01, false, false));
+        Equal(FramePresentation.Hold, f.Select(1.74, false, false));
+        Equal(FramePresentation.Slate, f.Select(1.75, false, false));
+        Equal(FramePresentation.Live, f.Select(2, true, false));
+        // Saying a shot is ready does not extend the lifetime of the old image.
+        Equal(FramePresentation.Slate, f.Select(2.01, false, false));
+        f.Captured(2.02); Equal(FramePresentation.Hold, f.Select(2.03, false, false));
+    }
+    private static void FrameHardFailure()
+    {
+        var f = new FrameContinuity(); f.Captured(1);
+        Equal(FramePresentation.Slate, f.Select(1.01, true, true));
+        Equal(FramePresentation.Slate, f.Select(1.01, false, true));
+    }
+    private static void FrameReset()
+    {
+        var f = new FrameContinuity(); f.Captured(5);
+        Equal(FramePresentation.Slate, f.Select(4, false, false));
+        f.Reset(); Equal(FramePresentation.Slate, f.Select(5.01, false, false));
+    }
+    private static void FrameClock()
+    {
+        var f = new FrameContinuity();
+        foreach (double bad in new[] { -1d, double.NaN, double.PositiveInfinity })
+        { Throws<ArgumentOutOfRangeException>(() => f.Captured(bad)); Throws<ArgumentOutOfRangeException>(() => f.Select(bad, true, false)); }
+    }
+    private static void ObserverAllowlist()
+    {
+        Equal(0, ObserverProtocol.SteamAllowlist("").Count);
+        var ids = ObserverProtocol.SteamAllowlist("76561198000000001, 76561198000000001,76561198000000002");
+        Equal(2, ids.Count); False(ids.Contains("Jason"));
+        foreach (string bad in new[] { "Jason", "7656119800000000", "Steam_76561198000000001", "+76561198000000001", "76561198000000001;76561198000000002" })
+            Throws<ArgumentException>(() => ObserverProtocol.SteamAllowlist(bad));
+        Throws<ArgumentException>(() => ObserverProtocol.SteamAllowlist(string.Join(",", Enumerable.Range(1, 17).Select(i => (76561198000000000L + i).ToString()))));
+    }
+    private static void ObserverHandshake()
+    {
+        var lease = new ObserverLease(10);
+        False(lease.Confirm(ObserverProtocol.Version + 1, 11)); False(lease.Confirmed);
+        True(lease.Confirm(ObserverProtocol.Version, 12));
+        False(lease.MustDisconnect(100000, true));
+    }
+    private static void ObserverHandshakeDeadline()
+    {
+        var lease = new ObserverLease(10);
+        for (int i = 0; i < 15; i++) False(lease.Confirm(999, 10 + i));
+        True(lease.MustDisconnect(25, true)); False(lease.Confirm(ObserverProtocol.Version, 25));
+        False(lease.Confirm(ObserverProtocol.Version, 9));
+    }
+    private static void ObserverRevoke()
+    {
+        var lease = new ObserverLease(10); True(lease.Confirm(ObserverProtocol.Version, 11));
+        True(lease.MustDisconnect(12, false)); True(lease.Confirmed);
+        True(lease.MustDisconnect(9, true));
+        Throws<ArgumentOutOfRangeException>(() => lease.MustDisconnect(double.NaN, true));
+    }
+    private static void ObserverPark()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel(); o.Return(true);
+        o.Tick(8, false, true, true); Equal(ObserverPhase.Parked, o.Phase); True(o.Active);
+        o.Tick(1000, false, true, true); o.Return(); Equal(ObserverPhase.Parked, o.Phase);
+        Throws<InvalidOperationException>(() => o.Travel());
+        o.Resume(); Equal(ObserverPhase.Watching, o.Phase); True(o.Active);
+        Throws<InvalidOperationException>(() => o.Resume());
+    }
+    private static void ObserverParkReset()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return(true); o.Tick(8, false, true, true);
+        o.Reset(); o.Start(); o.Return(); o.Tick(8, false, true, true);
+        Equal(ObserverPhase.Off, o.Phase); False(o.Active);
     }
 
     private static void Equal<T>(T expected, T actual)

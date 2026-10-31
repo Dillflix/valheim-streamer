@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>ValheimBroadcaster.Server</AssemblyName>
+    <RootNamespace>ValheimBroadcaster.Server</RootNamespace>
+    <JotunnVersion Condition="'$(JotunnVersion)' == ''">2.30.2</JotunnVersion>
+    <ValheimManagedDir Condition="'$(ValheimManagedDir)' == '' and '$(ValheimDir)' != ''">$(ValheimDir)/valheim_Data/Managed</ValheimManagedDir>
+    <BepInExCoreDir Condition="'$(BepInExCoreDir)' == '' and '$(ValheimDir)' != ''">$(ValheimDir)/BepInEx/core</BepInExCoreDir>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../ValheimBroadcaster.Core/ValheimBroadcaster.Core.csproj" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+    <!-- Compile-only deliberately excludes Jotunn's build hooks and dependency DLLs. -->
+    <PackageReference Include="JotunnLib" Version="$(JotunnVersion)" IncludeAssets="compile" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(ValheimManagedDir)' != ''">
+    <Reference Include="$(ValheimManagedDir)/assembly_valheim.dll;$(ValheimManagedDir)/assembly_utils.dll;$(ValheimManagedDir)/UnityEngine*.dll;$(ValheimManagedDir)/Unity.Collections.dll">
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="$(ValheimManagedDir)/SoftReferenceableAssets.dll" Condition="Exists('$(ValheimManagedDir)/SoftReferenceableAssets.dll')"><Private>false</Private></Reference>
+    <Reference Include="$(ValheimManagedDir)/Splatform.dll" Condition="Exists('$(ValheimManagedDir)/Splatform.dll')"><Private>false</Private></Reference>
+    <Reference Include="$(ValheimManagedDir)/gui_framework.dll" Condition="Exists('$(ValheimManagedDir)/gui_framework.dll')"><Private>false</Private></Reference>
+    <Reference Include="$(ValheimManagedDir)/Unity.TextMeshPro.dll" Condition="Exists('$(ValheimManagedDir)/Unity.TextMeshPro.dll')"><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(BepInExCoreDir)' != ''">
+    <Reference Include="$(BepInExCoreDir)/BepInEx.dll;$(BepInExCoreDir)/0Harmony.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="RequireGameReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ValheimManagedDir)/assembly_valheim.dll')" Text="Set ValheimDir to your Valheim installation or ValheimManagedDir to its Managed directory. Real game assemblies are required and are never downloaded or modified by this build." />
+    <Error Condition="!Exists('$(ValheimManagedDir)/UnityEngine.CoreModule.dll')" Text="ValheimManagedDir must include the UnityEngine modules from the same Valheim build." />
+    <Error Condition="!Exists('$(BepInExCoreDir)/BepInEx.dll') or !Exists('$(BepInExCoreDir)/0Harmony.dll')" Text="Set BepInExCoreDir to the BepInEx 5 core directory containing BepInEx.dll and 0Harmony.dll." />
+  </Target>
+</Project>

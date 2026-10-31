@@ -1,10 +1,10 @@
-# Solo observer test (0.6.0 development branch)
+# Solo observer test (0.6.0 and later)
 
-This tests the camera-relative body and native teleport/return path **without another player**. It is client-side code running in a closed local world. There is no server companion in this build. These steps have not yet been run inside Valheim; record results rather than treating successful compilation as a pass.
+This tests the camera-relative body and native teleport/return path **without another player**. It is client-side code running in a closed local world. This procedure exercises the offline path. For the separately configured 0.7.0 companion, use [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md). These steps have not yet been run inside Valheim; record results rather than treating successful compilation as a pass.
 
 ## Setup
 
-1. Download the successful `observer-foundation` branch Actions artifact, or build that branch against matching real game assemblies. Check the startup log says **0.6.0**.
+1. Download the successful appropriate development branch Actions artifact, or build that branch against matching real game assemblies. Check the startup log says the selected build version.
 2. With Valheim closed, replace both `ValheimBroadcaster.dll` and `ValheimBroadcaster.Core.dll` in `BepInEx/plugins/ValheimBroadcaster/` inside the selected Thunderstore profile. Keep only one copy of each DLL in the profile. BepInEx and Jötunn remain installed through the profile. Launch modded as usual; add `-console` to the launch arguments for F5 commands.
 3. Select a disposable local world and test character. Leave **Start Server** unchecked. Joining your dedicated server while alone does not qualify: observer mode will reject it. Stand on dry ground, away from vehicles, beds and combat.
 4. Start without RTMP. Keep `Experimental.RemoteTargets=false`; observer mode does not use that reference-only path. After movement/restoration succeeds, repeat with RTMP enabled to check audio/video continuity.

@@ -2,11 +2,11 @@
 
 The final broadcaster should remain close to its camera for world loading, never appear as a subject, and avoid gameplay interactions. Invisibility to ordinary clients and exclusion from player-presence rules require separate verification. Loading and simulating a previously inactive region is itself a world effect; this design does not promise literally zero simulation impact.
 
-## Implemented foundation: offline experiment
+## Original foundation: offline experiment (0.6.0)
 
 0.6.0 on `observer-foundation` adds an explicit `broadcast observer` mode. Normal F8/F10 modes retain their previous ordinary-player behavior. All new game behavior is **pending runtime validation**.
 
-| Concern | Offline experiment | Remaining multiplayer work |
+| Concern | Offline experiment | Multiplayer requirements identified at that stage |
 | --- | --- | --- |
 | Body and camera | Body placed two metres below each valid camera shot; ZDO position and interest synchronized | Coordinate acquisition with authoritative observer role and ownership rules |
 | Distant travel | Native player teleport to a marked destination; bounded wait, protected suspension and return | Obtain legitimate target positions and validate travel across network backends |
@@ -18,7 +18,7 @@ The final broadcaster should remain close to its camera for world loading, never
 | Simulation ownership | Ordinary game's ownership behavior remains | Decide which peer simulates observer-only regions and constrain observer ownership |
 | Cleanup | Native return first; restore saved flags, camera, HUD and renderer state after arrival | Disconnect/rejoin, revocation and server restart without lingering invisible actors |
 
-The experiment is restricted to a closed local world with no peers. It rejects a connected dedicated-server client or an open hosted world, including when the broadcaster is alone. It blocks `ZNet.OpenServer` while active and rechecks its offline predicate before moving. There is no permissive configuration switch to turn this into multiplayer observer mode.
+The original offline experiment is restricted to a closed local world with no peers. It rejects a connected dedicated-server client or an open hosted world, including when the broadcaster is alone. It blocks `ZNet.OpenServer` while active and rechecks its offline predicate before moving. The separate 0.7.0 multiplayer path requires a pre-join read-only setting plus matching server authorization; it does not simply bypass this gate.
 
 The scene-removal guard introduced after the 0.5.0 black-screen failure also covers this path. It suspends travel and skips a removal pass if the observer's ZDO is absent from the retained lists. The old reference-only probe is mutually exclusive with observer mode. Keeping body and interest together avoids deliberately separating them; the guard remains necessary until the runtime ordering is proven.
 
@@ -35,14 +35,10 @@ The audit used the repository's pinned real Valheim 1.0.21 references, not a gue
 - Player-count consumers include drop generation and network/time handling. Observer-specific exclusion is not implemented in those systems.
 - `ZNetScene.RemoveObjects` removes instances excluded by the current near/distant lists. Moving network interest away from an ordinary parked player can destroy that player; the supplied 0.5.0 log confirms it happened.
 
-## Planned server companion
+## Read-only server companion (0.7.0)
 
-This section is a design contract, not implemented server code. The target remains one modded broadcaster plus a server companion, with ordinary players unmodded where the protocol permits it.
+The first companion implementation now exists on `observer-multiplayer`. It avoids publishing the broadcaster character at all: the server accepts its bounded interest coordinate, supplies scene data, and rejects its world object writes/gameplay requests. The role is attached to an explicitly allowlisted authenticated Steam connection and stays pinned until disconnect. Gameplay player queries, events, zone generation and ownership assignment exclude that role; actual connection slots remain accounted for.
 
-1. **Authorize the actual connected peer.** The server assigns an observer role from an explicit allowlist/admin decision tied to the authenticated connection. Never accept a claimed player/platform ID inside an RPC as authorization. Bound request size/rate, validate coordinates, and clear role/session state on disconnect. Default to ordinary behavior when authorization is absent.
-2. **Separate interest from gameplay presence.** Maintain the broadcaster's loading/interest position while excluding its role from explicitly audited gameplay queries. A transport connection may still consume a server slot; gameplay-count exclusion must not silently rewrite connection management or capacity.
-3. **Prevent remote actor exposure.** Verify whether the server can withhold the observer player ZDO and related effects from ordinary peers while preserving the broadcaster's own object, world updates and protocol bookkeeping. Cover initial spawn, late join, travel, reconnect and ownership transfer. Local renderer flags cannot implement this. If relevant state is distributed peer-to-peer or required by vanilla clients, revisit the protocol instead of claiming a server-only guarantee.
-4. **Account for simulation ownership.** Server patches do not govern AI or interactions executed by an unmodified client. Either prevent that peer from receiving an observer actor as a participant, provide behavior the existing game already honors, or acknowledge that additional client support is required. Do not advertise a partial workaround as full isolation.
-5. **Test before enabling multiplayer.** Use at least an unmodified observer of the broadcaster, a simulation-owning ordinary player, and the server. Verify visibility/effects, aggro, collisions, pickups, damage, sleep, scaling, raids/spawns, saves, reconnection and ownership. Run Steam and crossplay separately. Only then connect the role to automatic distant player selection and autonomous idle travel.
+The broadcaster still uses its local character as a camera/scene carrier. Normal return restores ordinary control only in the closed local experiment. Multiplayer return parks the carrier while retaining isolation, with F8 to resume. Local renderer, light and audio masking are presentation measures alongside the network boundary.
 
-Until those checks succeed, the development branch deliberately does not enable observer travel on a shared world. The test procedure is [OBSERVER-TESTS.md](OBSERVER-TESTS.md).
+These are implemented source paths, **not a successful multiplayer runtime result**. The target remains one broadcaster plus the companion and unmodified ordinary players. Read [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for installation, exact supported scope, limits and the pending matrix. Crossplay/listen servers, arbitrary third-party mutation RPCs, autonomous travel and server simulation of otherwise dormant regions remain outside this experiment.
