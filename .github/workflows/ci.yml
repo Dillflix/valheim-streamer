@@ -1,4 +1,4 @@
-name: Core checks
+name: Build and checks
 
 on:
   push:
@@ -10,13 +10,44 @@ permissions:
 
 jobs:
   core:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '8.0.427'
       - name: Test director logic
         run: dotnet run --project tests/ValheimBroadcaster.Core.Tests/ValheimBroadcaster.Core.Tests.csproj --configuration Release
-      # The plugin requires a user's matching game/BepInEx assemblies. Public CI
-      # deliberately does not redistribute game DLLs or substitute API stubs.
+
+  plugin:
+    needs: core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.427'
+      - name: Fetch pinned real compilation references
+        run: python3 scripts/fetch-build-references.py --output "$RUNNER_TEMP/valheim-build-references"
+      - name: Build plugin against Valheim 1.0.21 and BepInEx 5.4.23.2
+        run: >-
+          dotnet build src/ValheimBroadcaster.Plugin/ValheimBroadcaster.Plugin.csproj
+          --configuration Release -warnaserror
+          -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
+          -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+      - name: Stage only our plugin and core DLLs
+        run: |
+          mkdir -p artifacts/ValheimBroadcaster
+          cp src/ValheimBroadcaster.Plugin/bin/Release/net48/ValheimBroadcaster.dll artifacts/ValheimBroadcaster/
+          cp src/ValheimBroadcaster.Core/bin/Release/netstandard2.0/ValheimBroadcaster.Core.dll artifacts/ValheimBroadcaster/
+      - name: Upload test build (not a validated game release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: valheim-broadcaster-${{ github.sha }}
+          path: |
+            artifacts/ValheimBroadcaster/ValheimBroadcaster.dll
+            artifacts/ValheimBroadcaster/ValheimBroadcaster.Core.dll
+          if-no-files-found: error
+          retention-days: 14

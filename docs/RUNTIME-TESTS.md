@@ -16,7 +16,7 @@ Run the normal core check with:
 dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 ```
 
-CI checks this same core harness. A green core job does not compile or run the game adapter.
+CI checks this same core harness. A separate `plugin` job downloads pinned real game and BepInEx references and executes the normal `dotnet build` pipeline with warnings treated as errors. It uploads only this project's two DLLs. The dependency archives and game assembly are checksum-verified by `scripts/fetch-build-references.py`. See the [Actions runs](https://github.com/Dillflix/valheim-streamer/actions) for the result at a particular commit. Neither green job establishes in-game behavior.
 
 ## Record the target before testing
 

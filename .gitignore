@@ -11,6 +11,8 @@ Environment.props
 *.mdb
 *.zip
 *.log
+__pycache__/
+*.pyc
 .env
 .env.*
 !*.example

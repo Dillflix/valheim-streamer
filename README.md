@@ -47,7 +47,9 @@ dotnet build src/ValheimBroadcaster.Plugin -c Release \
   -p:BepInExCoreDir="/path/to/profile/BepInEx/core"
 ```
 
-The build requires real game and loader assemblies. It reads those files, excludes Jötunn's build hooks, and has no automatic installation step. Do not commit or distribute the referenced game/Unity/BepInEx/Jötunn DLLs. CI currently exercises only the director core.
+The build requires real game and loader assemblies. It reads those files, excludes Jötunn's build hooks, and has no automatic installation step. Do not commit or distribute the referenced game/Unity/BepInEx/Jötunn DLLs.
+
+GitHub Actions runs the director tests and a separate full plugin build against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide a `valheim-broadcaster-<commit>` artifact containing only this project's two DLLs. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching client assemblies.
 
 Expected output directory: `src/ValheimBroadcaster.Plugin/bin/Release/net48/`.
 
