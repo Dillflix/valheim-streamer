@@ -121,6 +121,7 @@ public sealed partial class BodylessPlugin : BaseUnityPlugin
             // Drive it explicitly as well as intercepting any later vanilla assignments.
             world.SetReferencePosition(haveView && viewAccepted ? viewPosition : Quarantine);
             ZNetPeer? remote = world.GetServerPeer();
+            if (connection != null && (remote == null || !connection.IsConnected())) Fault("Server connection lost");
             if (remote != null && remote.IsReady())
             {
                 connection = remote.m_rpc;

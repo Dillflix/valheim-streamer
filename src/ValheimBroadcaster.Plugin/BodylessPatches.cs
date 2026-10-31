@@ -115,7 +115,12 @@ public sealed partial class BodylessPlugin
         if (p == null || __0 == 0) return true;
         if (p.ClientWorld && __0 == ZDOMan.GetSessionID())
         { p.blockedOwnership++; p.Fault("Assignment of simulation ownership to spectator was blocked"); return false; }
-        if (p.ReservedUid(__0)) { p.blockedOwnership++; return false; }
+        if (p.ReservedUid(__0))
+        {
+            p.blockedOwnership++;
+            if (p.blockedOwnership <= 5) p.Logger.LogWarning("BODYLESS server blocked ownership assignment to a reserved spectator.");
+            return false;
+        }
         return true;
     }
     private static bool ViewAwake(ZNetView __instance)
