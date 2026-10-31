@@ -44,7 +44,9 @@ internal static class Program
             ("Recent creatures are excluded until cooldown", CreatureCooldown),
             ("Distant removal excludes observer and must abort", RetentionAbort),
             ("Normal removal and retained observer remain untouched", RetentionAllowed),
-            ("Probe failure survives cleanup and resets on restart", ProbeFailure)
+            ("Probe failure survives cleanup and resets on restart", ProbeFailure),
+            ("Bodyless session handshake, two regions, recovery and fail-closed lifecycle", SpectatorTests.Run),
+            ("Bodyless coordinates, clock and RPC boundary", SpectatorTests.Boundaries)
         };
 
         int failed = 0;

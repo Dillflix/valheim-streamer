@@ -150,3 +150,7 @@ Pending runtime check: on a disposable world, a distant attempt must abort befor
 The supplied LogOutput.log identifies Windows x64, Valheim 1.0.21, Unity 6000.0.75, BepInEx 5.4.23.6 (pack 5.4.2360), Jötunn 2.30.2, and Broadcaster 0.5.0. Immediately after `SOLO DISTANT SCENE TEST | Acquiring | 0s | RTMP: Stopped`, Unity logs `Local player destroyed`. No intervening exception appears. The later disconnect corresponds to the user exiting the world. Thus this failure occurred without RTMP publishing and confirms local-player destruction rather than an encoder blackout. The full user log is not committed.
 
 The 0.5.1 CI build still uses the existing BepInEx 5.4.23.2 compile baseline; the supplied log records the actual tested runtime version separately. No successful 0.5.1 game runtime result has yet been recorded.
+
+## Bodyless experiment 0.7.0 — runtime pending
+
+Use [BODYLESS-EXPERIMENT.md](BODYLESS-EXPERIMENT.md). The core test count on this branch is 38; the additional two cases each exercise multiple protocol/lifecycle and input-boundary scenarios. Fifty-four separate metadata/IL checks verify real server-build contracts without executing game code. The graphical client, two-region acquisition, real game audio/video, ordinary-peer compatibility and disconnect/rejoin results are all still pending.

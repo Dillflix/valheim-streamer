@@ -2,9 +2,15 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.5.1 is a development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
+**0.7.0 is an experimental development build.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for normal F8/F10 mode; the bodyless experiment requires the server companion.
 
 The broadcaster remains an ordinary connected player. This mod does not provide invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
+
+## Bodyless spectator experiment (0.7.0)
+
+The `bodyless-spectator` branch adds a separate **startup-only** client mode and a Steam dedicated-server companion. It prevents the broadcaster character from spawning, requests existing world data around A/B camera positions, separates that render interest from gameplay interest, and blocks spectator gameplay traffic and ownership. Ordinary players remain unmodified. It uses the existing RTMP video/audio encoder.
+
+**Runtime validation is pending.** This is not an autonomous idle director or a simulation-neutral production spectator. Prepare two previously visited regions on a disposable dedicated world and follow [BODYLESS-EXPERIMENT.md](docs/BODYLESS-EXPERIMENT.md) for marking locations, enabling the two roles, testing without other players, and safely leaving. Both roles default to disabled. It is separate from the `observer-foundation` branch.
 
 ## Implemented behavior
 

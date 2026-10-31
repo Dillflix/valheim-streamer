@@ -50,6 +50,11 @@ jobs:
           --configuration Release -warnaserror
           -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
           -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+      - name: Verify bodyless hooks and network assumptions against real assemblies
+        run: >-
+          dotnet run --project tests/ValheimBroadcaster.Contract.Tests --configuration Release
+          -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+          -- "$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed/assembly_valheim.dll"
       - name: Stage only our plugin and core DLLs
         run: |
           mkdir -p artifacts/ValheimBroadcaster
