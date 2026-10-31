@@ -18,7 +18,10 @@ These references explain the design and API investigation. They are not a claim 
 | [MistWorms reference-position patch](https://github.com/clementplancon/MistWorms/blob/fb552cc413b0c165f75567729be1bd5077eb4cd3/src/MistWorms/Patches/OwnerPatches.cs) | Observed `ZNet.SetReferencePosition(Vector3)` interception |
 | [OttoBifrost destination synchronization](https://github.com/potto007/OttoBifrost/blob/e771be28a820994534e469ae42b3c2b04819a263/Patches/DestinationSync.cs) | Interest-position delivery and the distinction between local readiness and complete server object delivery |
 | [Official Valheim dedicated-server guide](https://www.valheimgame.com/support/a-guide-to-dedicated-servers) | Supported server setup and Steam/crossplay distinction |
-| [OBS Game Capture](https://obsproject.com/kb/game-capture-source) | Capture the already rendered game window |
+| [Unity end-of-frame screenshot/readback](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/ScreenCapture.CaptureScreenshotIntoRenderTexture.html) | Capture an existing framebuffer for asynchronous GPU readback; signatures checked against the target Unity assemblies |
+| [Unity audio filter callback](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/MonoBehaviour.OnAudioFilterRead.html) | Interleaved samples and audio-thread constraints |
+| [Unity WebRTC audio filter](https://github.com/Unity-Technologies/com.unity.webrtc/blob/main/Runtime/Scripts/AudioCustomFilter.cs) and [audio track](https://github.com/Unity-Technologies/com.unity.webrtc/blob/main/Runtime/Scripts/AudioStreamTrack.cs) | Official listener/source tap pattern; our filter preserves local playback |
+| [FFmpeg protocols](https://ffmpeg.org/ffmpeg-protocols.html) and [formats](https://ffmpeg.org/ffmpeg-formats.html) | Pipe/TCP inputs, RTMP/RTMPS, network timeouts, rawvideo/f32le and FLV output |
 
 The previously prepared Jötunn documentation toolkit contains the full Markdown snapshot. Set `JOTUNN_DOCS_ROOT` to its `docs` directory for local agent retrieval. Its published-site commit is `18a0b624ceaf757abcfeb5cb1386d111a6dec9b2`; that identifier is not a Jötunn package version. API/runtime evidence from target assemblies takes precedence when the snapshot differs.
 

@@ -8,6 +8,7 @@ using Jotunn.Managers;
 using Jotunn.Utils;
 using UnityEngine;
 using ValheimBroadcaster.Core;
+using ValheimBroadcaster.Plugin.Streaming;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -18,9 +19,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.2.0";
+    public const string PluginVersion = "0.3.0";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
+    private StreamCapture? stream;
+    private bool listenerPatchAvailable;
+    private static readonly FieldInfo? ListenerField = AccessTools.Field(typeof(GameCamera), "m_listner");
     private BroadcastSettings settings = null!;
     private readonly BroadcastDirector director = new BroadcastDirector();
     private readonly TargetRoster roster = new TargetRoster();
@@ -52,6 +56,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         {
             harmony = new Harmony(PluginGuid);
             harmony.Patch(cameraMethod, postfix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(AfterCameraUpdate)));
+            stream = gameObject.AddComponent<StreamCapture>();
+            MethodInfo? listenerMethod = AccessTools.Method(typeof(GameCamera), "UpdateListner", Type.EmptyTypes);
+            if (listenerMethod != null && ListenerField != null)
+            {
+                harmony.Patch(listenerMethod, postfix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(AfterListenerUpdate)));
+                listenerPatchAvailable = true;
+            }
             MethodInfo? referenceMethod = AccessTools.Method(typeof(ZNet), "SetReferencePosition", new[] { typeof(Vector3) });
             if (referenceMethod != null)
             {
@@ -85,6 +96,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             else if (settings.SelfTest.Value.IsDown()) StartBroadcast(true);
             if (director.IsEnabled)
             {
+                if (settings.StreamToggle.Value.IsDown()) ToggleStream();
                 if (settings.Next.Value.IsDown()) director.Next();
                 if (settings.Previous.Value.IsDown()) director.Previous();
                 if (settings.Hold.Value.IsDown()) director.SetHolding(!director.IsHolding);
@@ -156,6 +168,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop()
     {
+        stream?.StopOutput();
         director.SetEnabled(false);
         selfTest = false;
         cameraReady = false;
@@ -216,6 +229,40 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         catch (Exception error) { plugin.FailClosed(error); }
     }
 
+    private static void AfterListenerUpdate(GameCamera __instance)
+    {
+        instance?.stream?.AlignListener(__instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>());
+    }
+
+    private void ToggleStream()
+    {
+        if (stream != null && stream.Active) { stream.StopOutput(); return; }
+        StartStream();
+    }
+
+    private void StartStream()
+    {
+        if (!director.IsEnabled || stream == null) { Logger.LogWarning("Start the broadcast camera first (F8 or F10)."); return; }
+        if (!listenerPatchAvailable) { Logger.LogError("Streaming unavailable: this game build's audio listener hook was not found."); return; }
+        try
+        {
+            GameCamera camera = FindFirstObjectByType<GameCamera>();
+            AudioListener? listener = camera ? ListenerField?.GetValue(camera) as AudioListener : null;
+            if (!listener) { Logger.LogWarning("Game audio listener unavailable; enter a world first."); return; }
+            stream.Begin(new StreamOptions
+            {
+                Executable = settings.FFmpegPath.Value, Url = settings.RtmpUrl.Value,
+                Width = settings.StreamWidth.Value, Height = settings.StreamHeight.Value,
+                Fps = settings.StreamFps.Value, BitrateKbps = settings.StreamBitrate.Value,
+                SampleRate = AudioSettings.outputSampleRate, FlipVertical = settings.FlipVertical.Value
+            }, listener);
+            Logger.LogInfo("Starting RTMP with H.264 video and stereo AAC game audio. F11 stops output.");
+        }
+        catch (ArgumentException error) { Logger.LogWarning(error.Message); }
+        catch (InvalidOperationException error) { Logger.LogWarning(error.Message); }
+        catch { Logger.LogError("Streaming initialization failed. Check FFmpeg and audio/GPU availability."); }
+    }
+
     private void OnGUI()
     {
         if (!director.IsEnabled || settings == null) return;
@@ -230,12 +277,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         else if (settings.ShowStatus.Value || selfTest)
         {
             GUI.color = Color.white;
-            GUI.Box(new Rect(12, 12, 560, 34), Status());
+            GUI.Box(new Rect(12, 12, 800, 34), Status());
         }
         GUI.color = old;
     }
 
-    private string Status() => $"{(selfTest ? "SELF-FOLLOW TEST | " : "")}{director.State} | {director.CurrentTarget?.Name ?? "No targets"} | {(director.IsHolding ? "Hold" : "Auto")} | {director.Roster.Count} target(s)";
+    private string Status() => $"{(selfTest ? "SELF-FOLLOW TEST | " : "")}{director.State} | {director.CurrentTarget?.Name ?? "No targets"} | {(director.IsHolding ? "Hold" : "Auto")} | {director.Roster.Count} target(s) | RTMP: {stream?.Status ?? "Stopped"}";
 
     private void FailClosed(Exception error)
     {
@@ -254,7 +301,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|follow <id>";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|follow <id>|stream on|off|status";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -264,6 +311,17 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
+                    case "stream":
+                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status"); return; }
+                        switch (args[1].ToLowerInvariant())
+                        {
+                            case "on": plugin.StartStream(); break;
+                            case "off": plugin.stream?.StopOutput(); break;
+                            case "status": break;
+                            default: context?.AddString("broadcast stream on|off|status"); return;
+                        }
+                        context?.AddString("RTMP: " + (plugin.stream?.Status ?? "Stopped"));
+                        return;
                     case "on":
                     case "self":
                         if (!plugin.StartBroadcast(action == "self")) { context?.AddString("Join a world with a living, spawned observer first."); return; }
@@ -284,7 +342,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     case "status": break;
                     default: context?.AddString(Help); return;
                 }
-                plugin.cameraReady = false;
+                if (action != "status" && action != "list") plugin.cameraReady = false;
                 context?.AddString(plugin.Status());
             }
             catch (Exception error) { plugin.FailClosed(error); context?.AddString("Stopped after an error; see BepInEx log."); }

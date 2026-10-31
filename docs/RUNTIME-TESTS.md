@@ -18,6 +18,30 @@ dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 
 CI checks this same core harness. A separate `plugin` job downloads pinned real game and BepInEx references and executes the normal `dotnet build` pipeline with warnings treated as errors. It uploads only this project's two DLLs. The dependency archives and game assembly are checksum-verified by `scripts/fetch-build-references.py`. See the [Actions runs](https://github.com/Dillflix/valheim-streamer/actions) for the result at a particular commit. Neither green job establishes in-game behavior.
 
+## Direct RTMP validation (0.3.0)
+
+The production encoder/session code passed **26 streaming checks** in the development container with real FFmpeg/ffprobe: validated settings, mono upmix, stereo ring wrap, bounded overflow, silence on underflow, latest-frame replacement, missing-executable handling, actual RTMP ingest, H.264/AAC codec and size/channel metadata, decoded flash/stereo tone, synchronization within 250 ms, idempotent process cleanup, and unavailable-receiver termination. These are synthetic media tests, not Unity capture tests. CI runs the same harness. The full plugin compiles against the real assemblies listed above with warnings as errors.
+
+The following remain **pending inside Valheim**, including Windows/Thunderstore and VM testing:
+
+| Case | Required result |
+| --- | --- |
+| Solo A/V | F10 then F11 produces audible game effects/music and the correct self-follow shot on the receiver |
+| Stereo/spatial sound | Left/right sounds match the broadcast camera, including a target far from the observer; local playback remains audible |
+| Input format | Stereo at 44.1 and 48 kHz works; mono duplicates to stereo; surround is rejected clearly |
+| Listener restoration | F11/off restores listener position/rotation; F8, mode switch, death, exit, and disable also stop output |
+| Device loss/change | Output stops with a safe message; after recovery, explicit restart works without duplicate taps |
+| Picture | Upright image, correct colors/aspect ratio, resized game window, HUD/slate/overlay capture |
+| A/V timing | Tool strikes/jumps match sound, initially and after a 30-minute stream; record measured skew |
+| Low frame rate | Repeated video frames, no unbounded queue; audio remains continuous within supported encoder load |
+| Minimize/focus | Confirm whether game keeps rendering/audio; input watchdog stops output after five seconds without callbacks |
+| Receiver loss | Disconnect receiver during publishing: game stays responsive, stream stops, explicit restart works |
+| CPU/network stall | Bounded buffer or output watchdog stops overload; no growing memory or game/audio-thread I/O stall |
+| Repeated start/stop | Twenty cycles leave no FFmpeg processes, listener filters, or textures behind |
+| Private configuration | No ingest URL/key appears in plugin status/logs; config and process arguments remain private |
+
+Setup and receiver commands: [STREAMING.md](STREAMING.md). The mode is client-only; neither a broadcaster server plugin nor mods on other players are part of this test.
+
 ## Record the target before testing
 
 Use a disposable world and character, a separate mod profile, and an unchanged copy of any world needed for comparison. Record:
@@ -48,7 +72,7 @@ These cases are **pending in-game validation**. Start alone in a local test worl
 | Remote setting enabled | Self mode uses normal local reference updates; entering from a distant shot restores the previous override |
 | Mode switch | `broadcast on` excludes self again and shows the waiting slate when alone; `broadcast self` re-enters test mode |
 | Cleanup | F8/off, death, world exit, and component disable restore view/HUD; re-entry via F8 is normal mode |
-| Capture | OBS captures the actual self-follow shot and test label, including main/sky FOV alignment |
+| Capture | Direct RTMP captures the actual self-follow shot and test label, including main/sky FOV alignment |
 
 Passing these tests does not establish multiplayer replication or distant streaming behavior.
 
@@ -73,7 +97,7 @@ Every case below is **pending in-game validation**.
 | Stop/disable | Camera/FOV and prior HUD state restore; the observer can continue normally |
 | World/menu transitions | Leaving a world stops broadcasting; returning does not duplicate handlers or restore stale references |
 | Failure | Adapter exception logs once for that activation, stops broadcasting, and restores owned state |
-| OBS | Correct game window, waiting slate, target changes, audio, and focus changes are captured as intended |
+| RTMP | Correct game framebuffer, waiting slate, target changes, audio, and focus changes are captured as intended |
 
 Observe the parked character during these tests. Document damage, movement, enemy behavior, sleep participation, simulation ownership, and player-count effects; do not infer that an invisible HUD or detached camera makes the character passive.
 

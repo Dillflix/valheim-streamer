@@ -1,0 +1,169 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
+using System.Threading;
+using ValheimBroadcaster.Plugin.Streaming;
+
+internal static class Program
+{
+    private static int checks;
+    private static void Check(bool pass, string name)
+    {
+        if (!pass) throw new Exception(name);
+        checks++;
+        Console.WriteLine("PASS " + name);
+    }
+    private static void Reject(Action action, string name)
+    {
+        bool rejected = false;
+        try { action(); } catch (ArgumentException) { rejected = true; }
+        Check(rejected, name);
+    }
+    private static int Main()
+    {
+        try
+        {
+            foreach (string url in new[] { "", "https://localhost/live/key", "file:///tmp/video", "rtmp://localhost/a\" -f x", "rtmp://localhost/a\nkey", "rtmp://localhost/a\\key" })
+                Reject(() => new StreamOptions { Url = url }.Validate(), "reject unsafe/unsupported URL");
+            new StreamOptions { Url = "rtmps://localhost/live/key?token=abc" }.Validate();
+            Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", Width = 321 }.Validate(), "reject odd width");
+            Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", SampleRate = 96000 }.Validate(), "reject unsupported audio rate");
+            var ring = new AudioRing(8);
+            Check(ring.Push(new float[] { 1, 2, 3 }, 1), "mono is accepted");
+            Check(!ring.Push(new float[] { 4, 5 }, 1), "overflow is rejected without overwriting unread audio");
+            float[] chunk = new float[8];
+            Check(ring.Pop(chunk) == 6 && chunk[0] == 1 && chunk[1] == 1 && chunk[4] == 3 && chunk[5] == 3 && chunk[6] == 0, "mono upmix and underflow silence");
+            Check(ring.Push(new float[] { 4, 5, 6, 7 }, 2) && ring.Pop(chunk) == 4 && chunk[0] == 4 && chunk[3] == 7, "stereo wrap preserves channel order");
+            Check(!ring.Push(new float[6], 6), "surround rejected");
+            var mailbox = new VideoMailbox(4);
+            byte[] first = { 1, 1, 1, 1 }, second = { 2, 2, 2, 2 }, previous = new byte[4];
+            mailbox.Publish(first); mailbox.Publish(second);
+            previous = mailbox.Take(previous);
+            Check(ReferenceEquals(previous, second) && ReferenceEquals(mailbox.Take(previous), previous), "newest video wins and repeats without a queue");
+            bool missing = false;
+            try { new EncoderSession(new StreamOptions { Url = "rtmp://127.0.0.1/live/test", Executable = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()) }); }
+            catch (InvalidOperationException e) { missing = !e.Message.Contains("rtmp"); }
+            Check(missing, "missing encoder gives a redacted error");
+            Loopback();
+            Console.WriteLine($"{checks} streaming checks passed.");
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static Process Start(string executable, string arguments)
+    {
+        var p = new Process { StartInfo = new ProcessStartInfo(executable, arguments) { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true } };
+        p.Start();
+        return p;
+    }
+
+    private static void Loopback()
+    {
+        var reserve = new TcpListener(IPAddress.Loopback, 0);
+        reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
+        string root = Path.Combine(Path.GetTempPath(), "valheim-stream-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string recording = Path.Combine(root, "received.flv");
+        string url = $"rtmp://127.0.0.1:{port}/live/test";
+        using Process receiver = Start("ffmpeg", $"-hide_banner -loglevel error -listen 1 -i {url} -c copy -y \"{recording}\"");
+        var receiverErrors = receiver.StandardError.ReadToEndAsync();
+        var receiverOutput = receiver.StandardOutput.ReadToEndAsync();
+        EncoderSession? encoder = null;
+        try
+        {
+            Thread.Sleep(500); // FFmpeg must bind before the publisher connects.
+            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500 };
+            encoder = new EncoderSession(options);
+            byte[] frame = new byte[320 * 180 * 4];
+            float[] audio = new float[1920];
+            var clock = Stopwatch.StartNew();
+            // A simultaneous white flash and tone at t=2s test mux synchronization.
+            for (int tick = 0; tick < 250; tick++)
+            {
+                while (clock.Elapsed.TotalMilliseconds < tick * 20) Thread.Sleep(1);
+                for (int i = 0; i < frame.Length; i += 4)
+                {
+                    frame[i] = frame[i + 1] = frame[i + 2] = tick >= 100 ? (byte)255 : (byte)0;
+                    frame[i + 3] = 255;
+                }
+                frame = encoder.SubmitVideo(frame);
+                for (int i = 0; i < 960; i++)
+                {
+                    float value = tick >= 100 ? (float)(0.2 * Math.Sin(2 * Math.PI * 440 * (tick * 960 + i) / 48000)) : 0;
+                    audio[i * 2] = value;
+                    audio[i * 2 + 1] = -value; // Preserve distinct left/right channels.
+                }
+                encoder.SubmitAudio(audio, 2);
+                if (encoder.IsStopping) throw new Exception("Publisher stopped early: " + encoder.Status);
+            }
+            Check(encoder.Status == "Publishing H.264 + AAC", "encoder reports actual mux progress");
+            encoder.Stop(); encoder.Stop();
+            Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "idempotent stop closes encoder and workers");
+            Check(receiver.WaitForExit(10000), "RTMP receiver observes stream close");
+            using Process probe = Start("ffprobe", $"-v error -show_streams -of json \"{recording}\"");
+            string json = probe.StandardOutput.ReadToEnd();
+            probe.WaitForExit();
+            using JsonDocument metadata = JsonDocument.Parse(json);
+            bool video = false, sound = false;
+            double videoOrigin = 0, audioOrigin = 0;
+            foreach (JsonElement stream in metadata.RootElement.GetProperty("streams").EnumerateArray())
+            {
+                if (stream.GetProperty("codec_type").GetString() == "video")
+                {
+                    videoOrigin = double.Parse(stream.GetProperty("start_time").GetString()!, CultureInfo.InvariantCulture);
+                    video = stream.GetProperty("codec_name").GetString() == "h264" && stream.GetProperty("width").GetInt32() == 320 && stream.GetProperty("height").GetInt32() == 180;
+                }
+                if (stream.GetProperty("codec_type").GetString() == "audio")
+                {
+                    audioOrigin = double.Parse(stream.GetProperty("start_time").GetString()!, CultureInfo.InvariantCulture);
+                    sound = stream.GetProperty("codec_name").GetString() == "aac" && stream.GetProperty("sample_rate").GetString() == "48000" && stream.GetProperty("channels").GetInt32() == 2;
+                }
+            }
+            Check(video && sound, "remote RTMP receiver records H.264 plus 48kHz stereo AAC");
+            byte[] rawVideo = Decode(recording, "-map 0:v:0 -vf scale=1:1 -pix_fmt gray -f rawvideo");
+            byte[] rawAudio = Decode(recording, "-map 0:a:0 -f f32le -ac 2 -ar 48000");
+            int videoStart = Array.FindIndex(rawVideo, x => x > 128);
+            int audioStart = -1;
+            double energy = 0, channelDifference = 0;
+            for (int i = 0; i + 7 < rawAudio.Length; i += 8)
+            {
+                float left = BitConverter.ToSingle(rawAudio, i), right = BitConverter.ToSingle(rawAudio, i + 4);
+                if (audioStart < 0 && Math.Abs(left) > 0.04) audioStart = i / 8;
+                energy += left * left;
+                channelDifference += Math.Abs(left - right);
+            }
+            Check(videoStart >= 0 && rawVideo.Length > 70, "decoded video contains the test flash and sustained footage");
+            Check(audioStart >= 0 && energy > 100 && channelDifference > 100, "decoded AAC contains audible stereo tone");
+            double skew = Math.Abs(videoOrigin + videoStart / 20.0 - audioOrigin - audioStart / 48000.0);
+            Check(skew < 0.25, $"flash/tone synchronization within 250 ms ({skew:F3}s)");
+            Console.WriteLine("Loopback recording: " + recording);
+            // A second session must fail promptly when a receiver is absent.
+            encoder = new EncoderSession(options);
+            Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "unavailable receiver terminates encoder without blocking caller");
+            Check(!encoder.Status.Contains(url), "failure status does not disclose destination/key");
+        }
+        finally
+        {
+            encoder?.Stop();
+            if (!receiver.HasExited) receiver.Kill();
+            receiver.WaitForExit(5000);
+            Console.WriteLine("Receiver diagnostics: " + receiverErrors.GetAwaiter().GetResult());
+        }
+    }
+
+    private static byte[] Decode(string input, string outputArgs)
+    {
+        using Process p = Start("ffmpeg", $"-v error -i \"{input}\" {outputArgs} pipe:1");
+        var errors = p.StandardError.ReadToEndAsync();
+        using var bytes = new MemoryStream();
+        p.StandardOutput.BaseStream.CopyTo(bytes);
+        p.WaitForExit();
+        Check(p.ExitCode == 0, "decode received media: " + errors.GetAwaiter().GetResult());
+        return bytes.ToArray();
+    }
+}

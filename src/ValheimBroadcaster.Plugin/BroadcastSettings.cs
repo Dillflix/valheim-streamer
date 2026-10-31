@@ -7,10 +7,21 @@ internal sealed class BroadcastSettings
 {
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus;
-    internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest;
+    internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
+    internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
+    internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
+    internal readonly ConfigEntry<bool> FlipVertical;
 
     internal BroadcastSettings(ConfigFile config)
     {
+        FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
+        RtmpUrl = config.Bind("Streaming", "RtmpUrl", "", "Full rtmp:// or rtmps:// receiver URL including stream key. Keep this config private.");
+        StreamWidth = config.Bind("Streaming", "Width", 1280, "Output width: even, 320–1920.");
+        StreamHeight = config.Bind("Streaming", "Height", 720, "Output height: even, 180–1080. Match the game aspect ratio.");
+        StreamFps = config.Bind("Streaming", "FPS", 30, "Output frames per second: 10–60.");
+        StreamBitrate = config.Bind("Streaming", "VideoBitrateKbps", 4000, "H.264 video bitrate: 250–20000 kbps. Stereo AAC adds 128 kbps.");
+        FlipVertical = config.Bind("Streaming", "FlipVertical", false, "Flip output if the receiver shows an upside-down image with your graphics backend.");
+        StreamToggle = config.Bind("Controls", "StreamToggle", new KeyboardShortcut(KeyCode.F11), "Start/stop RTMP video and game audio. Requires active broadcast camera.");
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));
         Height = config.Bind("Camera", "Height", 10f, Range("Height above target in metres.", 1f, 60f));
         FieldOfView = config.Bind("Camera", "FieldOfView", 75f, Range("Vertical camera field of view in degrees.", 30f, 110f));

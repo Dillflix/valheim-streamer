@@ -20,8 +20,21 @@ jobs:
       - name: Test director logic
         run: dotnet run --project tests/ValheimBroadcaster.Core.Tests/ValheimBroadcaster.Core.Tests.csproj --configuration Release
 
+  streaming:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.427'
+      - name: Install test encoder and receiver
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Test buffers and real RTMP audio/video loopback
+        run: dotnet run --project tests/ValheimBroadcaster.Streaming.Tests --configuration Release -warnaserror
+
   plugin:
-    needs: core
+    needs: [core, streaming]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

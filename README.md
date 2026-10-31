@@ -1,8 +1,8 @@
 # Valheim Broadcaster
 
-A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and capture the normal game window in OBS.
+A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.2.0 is a development prototype.** The director's 16 automated cases pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera behavior, multiplayer streaming, and OBS capture still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
+**0.3.0 is a development prototype.** The director and real FFmpeg loopback tests pass, and the plugin compiles against real Valheim 1.0.21 reference assemblies. In-game startup, camera/audio capture, multiplayer streaming, and performance still need the checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players and the server do not need this mod for the implemented client-only mode.
 
 The broadcaster remains an ordinary connected player. This mod does not provide invisibility, invulnerability, teleportation, input suppression, or protection from gameplay effects. Use a separate observer character parked safely in a disposable test world. The default mode follows player objects already loaded on that client; it does not promise to find every online player across the world.
 
@@ -15,7 +15,7 @@ The broadcaster remains an ordinary connected player. This mod does not provide 
 - HUD hiding and restoration; matching main/sky camera FOV; restoration of camera state when broadcasting stops or the observer dies.
 - An optional **experimental** distant-target mode using public map positions and the client's network reference position. It starts disabled and has no server-side position relay.
 
-The mod controls the main camera; it does not create a second rendered view, encode video, or upload a stream. OBS performs capture and streaming on the broadcaster machine.
+The mod captures the existing framebuffer and game audio listener, then manages a local FFmpeg process to publish H.264 video plus stereo AAC audio. No OBS, second rendered camera, microphone capture, or server mod is required. FFmpeg is a separate executable you supply. An embedded HLS/DASH web server is not implemented; a remote media server can convert the RTMP feed for browser playback.
 
 ## Build
 
@@ -71,7 +71,7 @@ No second player or server mod is needed. This works in a local single-player wo
 
 1. Install the two DLLs from the latest test build into your active mod profile. With Thunderstore, open that profile folder and copy both into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
 2. Enter a test world with a living character and press **F10**. Alternatively, with the console enabled, run `broadcast self` and close the console.
-3. Walk, run, jump, and move near walls or trees. The same broadcast camera used for other players now follows you, exercising framing, smoothing, obstruction checks, main/sky FOV, HUD hiding, and OBS capture.
+3. Walk, run, jump, and move near walls or trees. The same broadcast camera used for other players now follows you, exercising framing, smoothing, obstruction checks, main/sky FOV, HUD hiding, and direct stream capture.
 4. Press **F8** or run `broadcast off` to stop and restore the normal view. Run `broadcast on` to switch directly back to ordinary player targeting; alone, that mode should show the waiting slate.
 
 Self-follow is session-only and always shows a `SELF-FOLLOW TEST` status label, even when `ShowStatus=false`. Its roster contains only you, so next/previous and timed cycling stay on you. Other players joining will not become test targets. Distant-streaming overrides are bypassed even if `RemoteTargets=true`; entering self-follow restores any previous override. Death, world exit, and plugin disable stop the test. Starting again with F8 uses normal mode; press F10 or run `broadcast self` to re-enter the test.
@@ -91,6 +91,7 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast list` | Refresh and print eligible target IDs and names |
 | `broadcast follow <id>` | Select an exact listed ID and hold it; start with `broadcast on` first |
 | `broadcast status` | Show director state, target, hold/auto mode, and roster count |
+| `broadcast stream on` / `off` / `status` | Start/stop RTMP audio + video / inspect encoder state; camera must be active |
 | `broadcast help` | Print command usage |
 
 Names are labels; selection uses character ZDO IDs. IDs are session-specific and should not be saved as permanent player identities.
@@ -111,6 +112,7 @@ After the first launch, close the game and edit `BepInEx/config/com.dillflix.val
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Display / ShowStatus` | `true` | Show the director overlay |
 | `Experimental / RemoteTargets` | `false` | Include public distant positions and change the network reference position |
+| `Controls / StreamToggle` | `F11` | Start/stop RTMP audio + video |
 | `Controls / SelfTest` | `F10` | Start self-follow test mode |
 | `Controls / Toggle`, `Next`, `Previous`, `Hold` | `F8`, `PageDown`, `PageUp`, `F9` | BepInEx keyboard shortcuts |
 
@@ -118,10 +120,10 @@ Holding an unavailable target deliberately keeps the waiting slate; resume or se
 
 For `RemoteTargets=true`, test first with two players sharing their map positions in widely separated areas. The client waits for both a target scene object and local area readiness. These signals do **not** prove complete server delivery or harmless observer behavior. Follow the remote test matrix before relying on this mode.
 
-## Capture
+## Direct RTMP video and audio
 
-On Windows, start with OBS **Game Capture → Capture specific window**, selecting Valheim. Use the appropriate window/screen capture source on other platforms. Disable `ShowStatus` for a clean shot. Test focus changes, waiting slates, audio, and reconnects before streaming; the mod does not manage OBS or suppress game menus and other mods' overlays.
+See [STREAMING.md](docs/STREAMING.md) for Thunderstore setup, receiver testing, configuration, and troubleshooting. The short version: install an FFmpeg executable with `libx264` and `aac`, set `Streaming.FFmpegPath` and `Streaming.RtmpUrl` in your active profile's config, launch modded, press **F10** for solo follow, then **F11** to publish. F11 stops the stream; F8 stops both the camera and stream. Streaming never starts automatically.
 
-A VM needs working accelerated 3D rendering. Hardware encoding is preferable, and the VM must be able to access the game window and audio device. Streaming uses a normal authenticated game client; this project does not change platform authentication or game licensing.
+A VM needs accelerated 3D rendering and a working audio device, even if no physical speakers are attached. This first encoder uses software H.264, so budget CPU as well as GPU/capture overhead. Streaming uses a normal authenticated game client; this project does not change platform authentication or game licensing.
 
 See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUNTIME-TESTS.md), and [implementation sources](docs/SOURCES.md).

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/StreamOptions.cs" Link="StreamOptions.cs" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/MediaBuffers.cs" Link="MediaBuffers.cs" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/EncoderSession.cs" Link="EncoderSession.cs" />
+  </ItemGroup>
+</Project>
