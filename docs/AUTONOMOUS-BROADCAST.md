@@ -6,7 +6,7 @@ The user reported that 0.7.0 authorization, loading, explicit travel and return/
 
 ## Upgrade and enable
 
-Use the matching **0.8.3 client and server** artifacts from one successful Actions run. Both retain the existing BepInEx 5 / Jötunn 2.30.2 dependencies and Valheim 1.0.21 compilation baseline. Install with each process stopped, replace the two owned DLLs for that instance, retain existing configs, and avoid duplicate Core DLLs. Ordinary players need no broadcaster mod. Protocol 3 adds explicit observer intent before admission and rejects older observer handshakes rather than falling back to gameplay. The server allowlist grants permission: vanilla clients and clients with `ObserverConnection=false` remain ordinary players, including allowlisted accounts.
+Use the matching **0.8.4 client and server** artifacts from one successful Actions run. Both retain the existing BepInEx 5 / Jötunn 2.30.2 dependencies and Valheim 1.0.21 compilation baseline. Install with each process stopped, replace the two owned DLLs for that instance, retain existing configs, and avoid duplicate Core DLLs. Ordinary players need no broadcaster mod. Protocol 3 adds explicit observer intent before admission and rejects older observer handshakes rather than falling back to gameplay. The server allowlist grants permission: vanilla clients and clients with `ObserverConnection=false` remain ordinary players, including allowlisted accounts.
 
 This requires a dedicated **Steam** server. Crossplay/PlayFab and in-game listen servers remain unsupported. Set up the server allowlist and client role as described in [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md).
 

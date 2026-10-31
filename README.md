@@ -2,7 +2,7 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
-**0.8.3 makes observer mode optional per connection.** The server's `Observer.SteamIds` list grants permission to request the role; it does not force those accounts into it. Vanilla clients and modded clients with `Multiplayer.ObserverConnection=false` join as normal players, including allowlisted accounts. Set that client option to `true` **before joining** to request read-only observation. Use matching 0.8.3 client/server builds (observer protocol 3); disconnect before changing roles. Multiplayer runtime verification of this change is still pending.
+**0.8.4 makes observer mode optional per connection.** The server's `Observer.SteamIds` list grants permission to request the role; it does not force those accounts into it. Vanilla clients and modded clients with `Multiplayer.ObserverConnection=false` join as normal players, including allowlisted accounts. Set that client option to `true` **before joining** to request read-only observation. Use matching 0.8.4 client/server builds (observer protocol 3); disconnect before changing roles. Multiplayer runtime verification of this change is still pending.
 
 **0.8.0 adds autonomous direction and opt-in recovery to the read-only observer.** The user reported successful 0.7.0 authorization, loading, manual travel and return/resume while alone on a dedicated server. New automatic acquisition, scenic travel, reconnect/output recovery, other-client invisibility and simulation isolation still require the runtime checks in [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md). Ordinary players need no mod. The server companion is required for the read-only multiplayer role and its discovery feed.
 
@@ -10,7 +10,7 @@ In normal F8/F10 modes the broadcaster remains an ordinary connected player. Tho
 
 ## Autonomous broadcasting (0.8.0)
 
-Follow [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) for the configuration, controls, solo route exercise and runtime matrix. Use matching 0.8.3 client/server artifacts from one source commit; protocol 3 adds explicit intent before admission and rejects older observer handshakes.
+Follow [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) for the configuration, controls, solo route exercise and runtime matrix. Use matching 0.8.4 client/server artifacts from one source commit; protocol 3 adds explicit intent before admission and rejects older observer handshakes.
 
 - The companion supplies bounded, authenticated snapshots of connected players and generated scenic destinations. Server policy can permit observer acquisition of players whose map position is not public.
 - The director rotates across connected players, using controlled native travel for distant targets and waiting for actual loaded characters. Only usable player footage advances viewing time. Stale/unreachable targets receive bounded retries and cooldowns.

@@ -1,4 +1,4 @@
-# Read-only multiplayer observer (0.8.3)
+# Read-only multiplayer observer (0.8.4)
 
 This branch implements a server companion plus broadcaster client. The user reported successful 0.7.0 authorization, loading, explicit travel and return/resume while testing alone. **Other-client visibility and simulation isolation remain unverified**, and the 0.8.0 additions require new runtime checks. Other players use ordinary clients. Support is a **dedicated Steam server**; crossplay/PlayFab and listen servers are not supported by this protocol.
 
@@ -8,7 +8,7 @@ The client selects whether to request the role when the connection opens. The se
 
 ## Installation and configuration
 
-Use matching 0.8.3 client and server artifacts from one successful Actions run. Upgrade both together: protocol 3 requires pre-admission intent and rejects protocol 1/2 observer handshakes. An older server still has the mandatory-account behavior; changing only the client cannot fix that server. Install with those processes stopped; preserve existing configs/worlds and test on copies first. No live installation has been performed by this source change.
+Use matching 0.8.4 client and server artifacts from one successful Actions run. Upgrade both together: protocol 3 requires pre-admission intent and rejects protocol 1/2 observer handshakes. An older server still has the mandatory-account behavior; changing only the client cannot fix that server. Install with those processes stopped; preserve existing configs/worlds and test on copies first. No live installation has been performed by this source change.
 
 | Instance | Install under its BepInEx plugins folder | Dependencies |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ Use a disposable dedicated Steam server, one broadcaster, and at least one unmod
 
 | Test | Required observation |
 | --- | --- |
-| Allowed broadcaster joins | Matching 0.8.3 client/server startup lines; authorization succeeds; camera starts; no broadcaster actor/nameplate/equipment/map entry appears on ordinary clients |
+| Allowed broadcaster joins | Matching 0.8.4 client/server startup lines; authorization succeeds; camera starts; no broadcaster actor/nameplate/equipment/map entry appears on ordinary clients |
 | Unauthorized / missing companion / mismatched protocol | Clear rejection/disconnection; no ordinary-gameplay fallback on the configured broadcaster |
 | Allowlisted vanilla client without broadcaster mod | Normal login, character publication, movement, interactions and sleep; stays connected beyond 15 seconds |
 | Allowlisted modded client with ObserverConnection=false | Same ordinary gameplay behavior; no observer intent, reservation, lease or discovery access |
