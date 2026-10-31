@@ -202,3 +202,5 @@ A one-second executable-start delay reproduced the screenshot's exact ambiguous 
 ## 0.8.2 diagnostic build
 
 The user's 0.8.1 retest still fails after the audio socket connects, at 48000 Hz and two channels, without FFmpeg stderr. The startup repair is therefore insufficient for this machine. This build adds frozen failure-time capture-rate, queue, media-age, publishing and audio/video writer measurements; it does not claim a runtime fix. A production-session test deliberately submits twice the nominal sample rate and checks that the recorded failure distinguishes excess capture from an unexplained encoder failure. Existing queue limits and retry behavior are retained. Server protocol is unchanged.
+
+Additional user log: attempts 3, 4 and 6 reached NVENC H.264/AAC publishing; attempts 3 and 4 subsequently tripped the shared 1500 ms writer-lateness limit. Automatic scenic travel transitioned from Travelling back to Watching while publishing. This establishes runtime encoder/mux progress and one scenic arrival, not verified receiver playback or long-run stability. The diagnostic build names the late writer and measures its lag.

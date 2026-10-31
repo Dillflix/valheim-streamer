@@ -146,14 +146,14 @@ internal sealed class EncoderSession
         return thread;
     }
 
-    private bool Pace(double dueMilliseconds)
+    private bool Pace(double dueMilliseconds, string writer)
     {
         while (!stopping)
         {
             double remaining = Interlocked.Read(ref mediaStarted) + dueMilliseconds - clock.Elapsed.TotalMilliseconds;
             if (remaining <= 0)
             {
-                if (remaining < -1500) { Fail("Encoder fell behind real time; reduce resolution/FPS or check receiver."); return false; }
+                if (remaining < -1500) { Fail(writer + " writer fell behind its media schedule by " + (-remaining).ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + "ms. See capture rate and writer timing below."); return false; }
                 return true;
             }
             Thread.Sleep((int)Math.Min(10, Math.Max(1, remaining)));
@@ -176,7 +176,7 @@ internal sealed class EncoderSession
             Interlocked.Exchange(ref lastVideoWrite, clock.ElapsedMilliseconds);
             Interlocked.Exchange(ref videoWriteSince, -1);
             while (!stopping && Interlocked.Read(ref mediaStarted) < 0) Thread.Sleep(5);
-            for (long number = 1; Pace(number * 1000.0 / options.Fps); number++)
+            for (long number = 1; Pace(number * 1000.0 / options.Fps, "Video"); number++)
             {
                 frame = video.Take(frame);
                 Interlocked.Exchange(ref videoWriteSince, clock.ElapsedMilliseconds);
@@ -201,7 +201,7 @@ internal sealed class EncoderSession
                 {
                     float[] chunk = new float[options.SampleRate / 50 * 2]; // 20 ms stereo.
                     byte[] bytes = new byte[chunk.Length * sizeof(float)];
-                    for (long number = 0; Pace(number * 20.0); number++)
+                    for (long number = 0; Pace(number * 20.0, "Audio"); number++)
                     {
                         Interlocked.Add(ref consumedFrames, audio.Pop(chunk) / 2); // Underflow remains silence on the shared timeline.
                         Buffer.BlockCopy(chunk, 0, bytes, 0, bytes.Length);
