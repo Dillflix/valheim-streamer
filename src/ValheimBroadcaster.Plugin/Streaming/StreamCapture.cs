@@ -18,21 +18,33 @@ internal sealed class StreamCapture : MonoBehaviour
     private bool listenerMoved;
     private float nextFrame;
     private int fps;
+    private Action<string>? reportFailure;
+    private bool failureReported;
     internal bool Active => active;
+    internal bool IsPublishing => active && session?.IsPublishing == true;
+    internal bool HasCompletedFailure => session?.IsClosed == true && session.FailureDetails.Length != 0;
+    internal bool PermanentFailure => session?.PermanentFailure == true;
+    internal bool CleanupBlocked => session?.CleanupBlocked == true;
+    internal long Generation { get; private set; }
     internal bool CanStart => !active && !pending && (session == null || session.IsClosed);
     internal string Status => session?.Status ?? "Stopped";
+    internal string Diagnostics => session == null ? "No encoder session." : session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails;
 
-    internal void Begin(StreamOptions options, AudioListener gameListener)
+    internal void Begin(StreamOptions options, AudioListener gameListener, Action<string>? onFailure = null)
     {
         if (!CanStart) throw new InvalidOperationException("Wait for the previous encoder to stop.");
         options.Validate();
-        if (!SystemInfo.supportsAsyncGPUReadback) throw new InvalidOperationException("This GPU does not support asynchronous frame readback.");
+        if (!SystemInfo.supportsAsyncGPUReadback) throw new EncoderStartException("This GPU does not support asynchronous frame readback.");
         if (!gameListener || !gameListener.isActiveAndEnabled) throw new InvalidOperationException("The game audio listener is unavailable.");
         if (AudioSettings.speakerMode != AudioSpeakerMode.Stereo && AudioSettings.speakerMode != AudioSpeakerMode.Mono)
-            throw new InvalidOperationException("Select stereo audio output before starting the stream.");
+            throw new ArgumentException("Unsupported speaker mode: " + AudioSettings.speakerMode + ". Select mono/stereo audio output before starting the stream.");
         try
         {
+            ReportFailure();
             session = new EncoderSession(options);
+            Generation++;
+            reportFailure = onFailure;
+            failureReported = false;
             listener = gameListener;
             normalRotation = listener.transform.localRotation;
             AudioSettings.OnAudioConfigurationChanged += AudioConfigurationChanged;
@@ -63,12 +75,20 @@ internal sealed class StreamCapture : MonoBehaviour
 
     private void Update()
     {
+        ReportFailure();
         if (!active || session == null) return;
         if (!listener || !listener.isActiveAndEnabled || !tap)
             session.Fail("Game audio listener changed; restart streaming.");
         else if (AudioSettings.outputSampleRate != session.SampleRate)
             session.Fail("Audio sample rate changed; restart streaming.");
         if (session.IsStopping) StopOutput();
+    }
+
+    private void ReportFailure()
+    {
+        if (session == null || !session.IsClosed || failureReported) return;
+        failureReported = true;
+        if (session.FailureDetails.Length != 0) reportFailure?.Invoke(session.FailureDetails);
     }
 
     private IEnumerator CaptureFrames()

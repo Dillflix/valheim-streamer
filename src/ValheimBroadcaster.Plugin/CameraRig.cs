@@ -21,6 +21,8 @@ internal sealed class CameraRig
     private static readonly FieldInfo? HudRoot = AccessTools.Field(typeof(Hud), "m_rootObject");
     private static readonly FieldInfo? SkyCamera = AccessTools.Field(typeof(GameCamera), "m_skyCamera");
     private int? obstructionMask;
+    internal string LastFailure { get; private set; } = "none";
+    private bool Unready(string reason) { LastFailure = reason; return false; }
 
     internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt)
     {
@@ -47,7 +49,8 @@ internal sealed class CameraRig
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
             settings.Height.Value, Mathf.Cos(radians) * settings.Distance.Value);
         Vector3 desired = focus + offset;
-        if (!IdleShots.Ready(focus) || !IdleShots.Ready(desired)) return false;
+        if (!IdleShots.Ready(focus)) return Unready("Shot focus area loading");
+        if (!IdleShots.Ready(desired)) return Unready("Desired camera area loading");
         if (!hasPose || revision != selectionRevision)
         {
             smoothedPosition = desired;
@@ -65,7 +68,7 @@ internal sealed class CameraRig
         if (ray.sqrMagnitude > 0.01f && Physics.SphereCast(focus, 0.3f, ray.normalized,
                 out RaycastHit hit, ray.magnitude, obstructionMask.Value, QueryTriggerInteraction.Ignore))
             visiblePosition = focus + ray.normalized * Mathf.Max(0.1f, hit.distance - 0.1f);
-        if (!IdleShots.Ready(visiblePosition)) return false;
+        if (!IdleShots.Ready(visiblePosition)) return Unready("Smoothed camera area loading");
         camera.transform.SetPositionAndRotation(visiblePosition, Quaternion.LookRotation(focus - visiblePosition, Vector3.up));
         camera.fieldOfView = settings.FieldOfView.Value;
         if (skyCamera) skyCamera.fieldOfView = settings.FieldOfView.Value;

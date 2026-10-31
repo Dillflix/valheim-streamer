@@ -1,14 +1,26 @@
 # Validation and runtime test record
 
+## 0.8.3 optional observer admission — 2026-10-31
+
+The allowlist now grants permission to request observer mode, rather than forcing a Steam account into that role. The client sends protocol-3 intent before native admission; no request means ordinary gameplay. The entire accepted observer connection remains read-only until disconnect.
+
+- **119/119 core cases passed**, including eight new cases for default ordinary admission, pre-admission intent, rejected late promotion, protocol mismatch, idempotence, authorization/lease separation, timeout/revocation and reconnecting as an ordinary player.
+- **28/28 real-assembly audits passed on each of the actual Linux server and Windows client assemblies**, including `SendPeerInfo` signature, native RPC dispatch, authenticated readiness and reliable FIFO Steam transport. These inspect metadata; they do not execute multiplayer joins.
+- Client and server **0.8.3** compiled with zero warnings/errors and warnings treated as errors, against real installed Valheim 1.0.21 references, BepInEx **5.4.23.6** and Jötunn **2.30.2**. The existing CI baseline remains BepInEx 5.4.23.2. Both artifacts contain only their role's plugin and matching Core DLL.
+- An isolated Linux Docker server with networking disabled loaded **22 plugins, zero skipped and zero failed**, including all 18 existing ServersideQoL modules, their framework, YAML detector, Jötunn and Broadcaster. It logged `Observer server 0.8.3 ready`; no plugin exceptions, Harmony failures, unavailable-server messages or discovery-suspension errors were observed. Discord Connector and production credentials/worlds were excluded. The test container was stopped afterward. Offline Steam connectivity errors are expected and do not constitute a successful network join.
+- The existing production server was not modified or restarted. The original 0.8.0 deployment was halted before any production files were installed.
+
+**Still required:** a vanilla join using an allowlisted identity lasting beyond the former 15-second deadline; the same account joining with the mod installed but observer mode off; an explicit observer join with matching 0.8.3 endpoints; unauthorized/mismatched/late requests; and the visibility, interactions, sleep and ownership matrix in [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md). Startup and policy tests do not prove those runtime behaviors.
+
 ## Evidence available
 
-- The director's **36 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
+- The **0.7.0** director's **55 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
 - The core compiled against actual .NET Standard 2.0 reference assemblies with warnings treated as errors. Its executable test harness ran on .NET 8 against that compiled core.
 - The development container's ordinary `dotnet`/MSBuild path fails during process introspection (`Process.StartTime` / `ProcessName`). Direct invocation of the SDK's Roslyn compiler was used for the observed core checks. This is an environment limitation, not a replacement for checking the normal project build in CI or on a development machine.
 - The plugin compiled with warnings treated as errors using Roslyn 4.11 from .NET SDK **8.0.427**, actual Microsoft .NET Framework 4.8 reference assemblies (**1.0.3**), Jötunn **2.30.2**, BepInEx **5.4.23.2**, and real Valheim references. This checked the source against those assemblies; it did not establish that the normal MSBuild graph executes successfully in this container.
 - Real game references were obtained from the official Steam dedicated-server app **896660**, public Windows depot **896662**, manifest **171106503873955013** dated **2026-10-27**. Assembly metadata inspection found `Version` initializes `GameVersion(1, 0, 21)`, identifying this reference build as **Valheim 1.0.21**. Only reference DLLs were downloaded; no server was launched. These server references do not prove that a separately installed client matches.
 - Jötunn's NuGet package identifies upstream commit `671c486ac8123a9b240eae80639b6c33f63b3884`. No client runtime result is implied by a dependency's availability or compilation success.
-- The initial implementation has **not** been installed into or run in Valheim. No gameplay, dedicated-server coexistence, stream quality, or GPU-performance pass is recorded.
+- A user ran 0.5.0 and supplied the failed distant-probe result recorded below. The user subsequently reported successful **0.7.0 server-companion authorization, loading, manual travel, return, park and resume** while testing alone. This is user-reported runtime evidence, not a developer-run session or a completed multiplayer-isolation matrix. No second-client visibility/ownership result, resolved flicker result, stream-quality pass or GPU-performance pass has been supplied.
 
 Run the normal core check with:
 
@@ -16,7 +28,18 @@ Run the normal core check with:
 dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 ```
 
-CI checks this same core harness. A separate `plugin` job downloads pinned real game and BepInEx references and executes the normal `dotnet build` pipeline with warnings treated as errors. It uploads only this project's two DLLs. The dependency archives and game assembly are checksum-verified by `scripts/fetch-build-references.py`. See the [Actions runs](https://github.com/Dillflix/valheim-streamer/actions) for the result at a particular commit. Neither green job establishes in-game behavior.
+CI checks this core harness. A separate `plugin` job downloads pinned real game and BepInEx references and executes the normal `dotnet build` pipeline with warnings treated as errors. The current workflow uploads separate client/server artifacts containing only the respective plugin and Core DLLs. The dependency archives and game assembly are checksum-verified by `scripts/fetch-build-references.py`. See the [Actions runs](https://github.com/Dillflix/valheim-streamer/actions) for the result at a particular commit. Green jobs do not establish in-game behavior.
+
+## 0.8.0 autonomous milestone — local checks, 2026-10-31
+
+| Check | Observed result |
+| --- | --- |
+| Core harness | **111/111 passed**, including bounded discovery, fair player acquisition, native-travel deadlines, scenic novelty/backoff, route cancellation, reconnect policy and camera reachability |
+| Real-assembly metadata audits | **21/21 passed**, including inspected native reconnect entry points and the existing observer boundary |
+| Streaming harness | **66/66 passed** with real software FFmpeg/ffprobe: stereo AAC, decoded flash/tone synchronization (0.030 seconds), refused-receiver cleanup, receiver restart followed by a new publishing session, and a 48-hour simulated outage/retry schedule |
+| Client and server compilation | Both compiled against the pinned real game/dependency references with warnings treated as errors |
+
+The policy and outage simulations do not run Valheim or establish an actual multi-day soak. Metadata audits do not execute game code or prove Harmony patches applied. These local checks do not claim a successful CI run for a future commit. **Not run:** 0.8.0 Valheim/Unity capture, physical NVIDIA NVENC, multiplayer visibility/ownership, live automatic acquisition/scenic travel, native reconnect, or unattended runtime acceptance. Follow [AUTONOMOUS-BROADCAST.md](AUTONOMOUS-BROADCAST.md) for those cases. No live installation or public release was performed.
 
 ## Direct RTMP validation (0.3.0)
 
@@ -150,3 +173,46 @@ Pending runtime check: on a disposable world, a distant attempt must abort befor
 The supplied LogOutput.log identifies Windows x64, Valheim 1.0.21, Unity 6000.0.75, BepInEx 5.4.23.6 (pack 5.4.2360), Jötunn 2.30.2, and Broadcaster 0.5.0. Immediately after `SOLO DISTANT SCENE TEST | Acquiring | 0s | RTMP: Stopped`, Unity logs `Local player destroyed`. No intervening exception appears. The later disconnect corresponds to the user exiting the world. Thus this failure occurred without RTMP publishing and confirms local-player destruction rather than an encoder blackout. The full user log is not committed.
 
 The 0.5.1 CI build still uses the existing BepInEx 5.4.23.2 compile baseline; the supplied log records the actual tested runtime version separately. No successful 0.5.1 game runtime result has yet been recorded.
+
+## 0.6.0 observer foundation — code checks passed, runtime pending
+
+Nine new pure-policy cases cover the closed-world gate (including a hosted world with zero peers), all combinations of native teleport/readiness/position arrival signals, travel timeout with retained active state, outbound cancellation, return completion, repeated return commands without timer reset, retry after failure, world cleanup/reset, and invalid/paused/large time inputs. Total: **45/45**. These do not exercise Unity, Harmony, physics, renderer state or real teleportation.
+
+The plugin compiles with warnings treated as errors against the same real Valheim 1.0.21, Unity, BepInEx 5.4.23.2 and Jötunn 2.30.2 references. The actual user's loader remains BepInEx 5.4.23.6; compilation is not a runtime compatibility result. No new dependency or game binary is packaged.
+
+Metadata/IL inspection verified the exact teleport fields and methods used by the adapter, the player update paths being suppressed, `ZNet.OpenServer`/offline predicates, and the scene-removal path. The resulting code uses real game APIs and reflection, not invented stubs. The supplied failure log and raw inspected game implementation are not committed.
+
+Follow [OBSERVER-TESTS.md](OBSERVER-TESTS.md). Every in-game case there is still pending, including start/stop restoration, body/camera following, teleport/return, timeout recovery, and RTMP continuity. This branch must not be described as multiplayer invisible, simulation-neutral or ready for unattended use.
+
+## 0.6.0 user feedback and 0.7.0 validation
+
+The user reports that 0.6.0 seems to work, with frequent brief camera flickers and upper-left text visible for one/few frames. This is positive partial runtime feedback, not a completed test matrix. The text/location is consistent with the immediate recovery slate. No new log/video establishing the exact readiness trigger was supplied. 0.7.0 removes provisional director invalidations, adds a bounded hold of a captured valid frame and exposes presentation diagnostics; the flicker fix still needs a user retest.
+
+Ten additional policy checks cover captured-frame expiry and hard-failure precedence, reset/invalid clock handling, bounded exact Steam-ID configuration, protocol/deadline/revocation behavior, and parked multiplayer return/resume versus ordinary offline cleanup. **55/55 core cases passed.** Both client and new server assemblies compile against the pinned real 1.0.21 baseline with warnings treated as errors.
+
+A separate metadata-only harness passed **15 real-assembly structural checks** and verifies the real game's interest-position independence, gameplay-query patch sites, capacity accounting, sleep/character discovery, ownership delegation, object-send path, transport sender signatures, interest packet shape, Steam authentication order and bounded routed-request envelope layout. It never executes game code or supplies fake game types. These structural checks do not establish that Harmony hooks applied or multiplayer behavior works.
+
+Every multiplayer case in [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) remains **not run here**. No live server installation or public release was performed. Existing synthetic FFmpeg tests cover media transport; they do not verify the new held-frame rendering, GPU overhead, or in-game audio during multiplayer travel.
+
+## 0.7.0 user-reported server-companion results — 2026-10-31
+
+After the local dedicated-server setup instructions, the user reported: “All checks are working as intended. Authorization, loading, travel, and return/resume.” The follow-up confirmed normal `Watching` status and continuous `Scenic` coverage while the broadcaster was the only client. Treat the following as **user-reported passes** of the 0.7.0 workflow, with exact installed hashes and fresh logs not supplied:
+
+| Workflow | Reported result |
+| --- | --- |
+| Observer authorization and character/scene loading | Working as intended |
+| Explicit observer travel | Working as intended |
+| Return, protected parking and resume | Working as intended as part of the requested return/resume checks |
+| Solo coverage | `Watching` / `Scenic` observed |
+
+`Scenic` alone is consistent with the current creature eligibility rules and dormant regions; it is not evidence that the server feed, autonomous region selection or creature simulation exists. The user explicitly deferred creature improvements. **Still pending:** visibility and interactions observed from an ordinary client, simulation-ownership handoff, sleep/events/capacity behavior, negative authorization cases, reconnect/soak testing, confirmation that the flicker is resolved, and actual RTMP video/audio quality. The subsequent autonomous milestone needs its own runtime tests; the 0.7.0 report does not validate new code.
+
+## 0.8.1 audio startup regression
+
+A one-second executable-start delay reproduced the screenshot's exact ambiguous audio error using the 0.8.0 encoder code with stereo input. The repaired encoder passed the same real FFmpeg fixture, with decoded audio/video synchronization checked. All 86 local streaming checks passed (66 normal checks plus 20 delayed-start loopback/recovery checks). The delay fixture uses a POSIX exec wrapper and runs on Linux; Windows CI runs the normal 66-check suite. Client compilation against pinned real references passed with warnings as errors. This demonstrates a startup race, but does not prove that every instance of the screenshot error had that cause. Retest actual Valheim audio capture and NVENC on the user's machine.
+
+## 0.8.2 diagnostic build
+
+The user's 0.8.1 retest still fails after the audio socket connects, at 48000 Hz and two channels, without FFmpeg stderr. The startup repair is therefore insufficient for this machine. This build adds frozen failure-time capture-rate, queue, media-age, publishing and audio/video writer measurements; it does not claim a runtime fix. A production-session test deliberately submits twice the nominal sample rate and checks that the recorded failure distinguishes excess capture from an unexplained encoder failure. Existing queue limits and retry behavior are retained. Server protocol is unchanged.
+
+Additional user log: attempts 3, 4 and 6 reached NVENC H.264/AAC publishing; attempts 3 and 4 subsequently tripped the shared 1500 ms writer-lateness limit. Automatic scenic travel transitioned from Travelling back to Watching while publishing. This establishes runtime encoder/mux progress and one scenic arrival, not verified receiver playback or long-run stability. The diagnostic build names the late writer and measures its lag.

@@ -23,8 +23,13 @@ internal static class Program
         try { action(); } catch (ArgumentException) { rejected = true; }
         Check(rejected, name);
     }
-    private static int Main()
+    private static int Main(string[] args)
     {
+        using var deadline = new Timer(_ =>
+        {
+            Console.Error.WriteLine("Streaming harness exceeded its two-minute deadline.");
+            Environment.Exit(1);
+        }, null, 120000, Timeout.Infinite);
         try
         {
             foreach (string url in new[] { "", "https://localhost/live/key", "file:///tmp/video", "rtmp://localhost/a\" -f x", "rtmp://localhost/a\nkey", "rtmp://localhost/a\\key" })
@@ -32,6 +37,8 @@ internal static class Program
             new StreamOptions { Url = "rtmps://localhost/live/key?token=abc" }.Validate();
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", Width = 321 }.Validate(), "reject odd width");
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", SampleRate = 96000 }.Validate(), "reject unsupported audio rate");
+            EncoderSettingsAndDiagnostics();
+            RecoveryChecks.Run(Check);
             var ring = new AudioRing(8);
             Check(ring.Push(new float[] { 1, 2, 3 }, 1), "mono is accepted");
             Check(!ring.Push(new float[] { 4, 5 }, 1), "overflow is rejected without overwriting unread audio");
@@ -48,7 +55,18 @@ internal static class Program
             try { new EncoderSession(new StreamOptions { Url = "rtmp://127.0.0.1/live/test", Executable = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()) }); }
             catch (InvalidOperationException e) { missing = !e.Message.Contains("rtmp"); }
             Check(missing, "missing encoder gives a redacted error");
-            Loopback();
+            Loopback(VideoEncoderKind.libx264);
+            Loopback(VideoEncoderKind.libx264, overload: true);
+            if (!OperatingSystem.IsWindows())
+            {
+                string delayed = Path.Combine(Path.GetTempPath(), "valheim-delayed-ffmpeg-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(delayed, "#!/bin/sh\nsleep 1\nexec ffmpeg \"$@\"\n");
+                File.SetUnixFileMode(delayed, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                try { Loopback(VideoEncoderKind.libx264, delayed); }
+                finally { File.Delete(delayed); }
+            }
+            if (Array.IndexOf(args, "--nvenc") >= 0) Loopback(VideoEncoderKind.h264_nvenc);
+            else Console.WriteLine("NOT RUN: NVENC hardware loopback (use --nvenc on an NVIDIA-equipped host).");
             Console.WriteLine($"{checks} streaming checks passed.");
             return 0;
         }
@@ -62,7 +80,50 @@ internal static class Program
         return p;
     }
 
-    private static void Loopback()
+    private static void EncoderSettingsAndDiagnostics()
+    {
+        var options = new StreamOptions { Url = "rtmp://localhost/live/test" };
+        string software = options.Arguments(12345);
+        Check(software.Contains("-c:v libx264 -preset veryfast -tune zerolatency") && !software.Contains("-gpu"), "existing software encoding remains the default");
+        options.VideoEncoder = VideoEncoderKind.h264_nvenc;
+        options.NvencGpu = 1;
+        options.FlipVertical = true;
+        string hardware = options.Arguments(12345);
+        Check(hardware.Contains("-c:v h264_nvenc -preset p4 -tune ll -rc cbr -gpu 1") && !hardware.Contains("libx264") && !hardware.Contains("zerolatency"), "NVENC uses its own low-latency settings and explicit device");
+        Check(hardware.Contains("-c:a aac") && hardware.Contains("-vf vflip") && hardware.Contains("-pix_fmt yuv420p -bf 0 -g 60"), "hardware mode preserves audio, flip and compatible H.264 output");
+        options.VideoEncoder = (VideoEncoderKind)100;
+        Reject(options.Validate, "unknown encoder is rejected");
+        options.VideoEncoder = VideoEncoderKind.h264_nvenc;
+        options.NvencGpu = -2;
+        Reject(options.Validate, "device-list sentinel cannot be used as a publishing device");
+
+        const string url = "rtmps://username:password@example.invalid/private-app/secret%2Bkey?token=auth%2Fvalue&other=long+value";
+        var diagnostics = new EncoderDiagnostics(url);
+        string safe = diagnostics.Sanitize("Error opening output " + url + " : Connection refused");
+        Check(safe.Contains("Connection refused") && !safe.Contains("secret") && !safe.Contains("example.invalid"), "full ingest URL is removed while error survives");
+        safe = diagnostics.Sanitize("Server rejected app private-app playpath secret+key token auth/value username password long value");
+        Check(!safe.Contains("private-app") && !safe.Contains("secret+key") && !safe.Contains("auth/value") && !safe.Contains("password") && !safe.Contains("long value"), "separately printed decoded credentials, app, playpath and query values are removed");
+        safe = diagnostics.Sanitize("Rejected secret%2bkey auth%2fvalue");
+        Check(!safe.Contains("secret") && !safe.Contains("auth%"), "encoded credentials are redacted case-insensitively");
+        safe = diagnostics.Sanitize("Error tcp://10.20.30.40:1935?timeout=5000000: Connection refused");
+        Check(!safe.Contains("10.20.30.40") && safe.Contains("Connection refused"), "alternate protocol diagnostics redact network destinations");
+        Check(diagnostics.Sanitize(new string('x', 17000)).Contains("omitted"), "oversized diagnostics are discarded without retaining fragments");
+        for (int n = 0; n < 20; n++) diagnostics.AddLine("failure-" + n + new string('x', 600));
+        diagnostics.SetExitCode(7);
+        Check(diagnostics.Details.Length < 4300 && !diagnostics.Details.Contains("failure-0") && diagnostics.Details.Contains("failure-19"), "diagnostic history is bounded and retains recent errors");
+        Check(diagnostics.Summary.Contains("Exit 7") && diagnostics.Summary.Length < 210, "status preserves exit code with bounded error detail");
+        var capability = new EncoderDiagnostics(url);
+        capability.AddLine("[h264_nvenc] Cannot load nvcuda.dll");
+        Check(capability.PermanentFailure, "missing NVIDIA capability blocks futile automatic retries");
+        var unavailable = new EncoderDiagnostics(url);
+        unavailable.AddLine("Connection refused");
+        Check(!unavailable.PermanentFailure, "receiver outage remains retryable");
+        var denied = new EncoderDiagnostics(url);
+        denied.AddLine("Server error: 403 Forbidden");
+        Check(denied.PermanentFailure, "known authorization rejection requires operator correction");
+    }
+
+    private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg", bool overload = false)
     {
         var reserve = new TcpListener(IPAddress.Loopback, 0);
         reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
@@ -77,7 +138,7 @@ internal static class Program
         try
         {
             Thread.Sleep(500); // FFmpeg must bind before the publisher connects.
-            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500 };
+            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder, Executable = executable };
             encoder = new EncoderSession(options);
             byte[] frame = new byte[320 * 180 * 4];
             float[] audio = new float[1920];
@@ -99,9 +160,22 @@ internal static class Program
                     audio[i * 2 + 1] = -value; // Preserve distinct left/right channels.
                 }
                 encoder.SubmitAudio(audio, 2);
-                if (encoder.IsStopping) throw new Exception("Publisher stopped early: " + encoder.Status);
+                if (overload) encoder.SubmitAudio(audio, 2);
+                if (encoder.IsStopping)
+                {
+                    if (!overload) throw new Exception("Publisher stopped early: " + encoder.Status);
+                    Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "overproduction closes encoder workers");
+                    string details = encoder.FailureDetails;
+                    var rate = System.Text.RegularExpressions.Regex.Match(details, @"average (\d+) frames/s");
+                    Check(details.Contains("Audio queue filled") && rate.Success && int.Parse(rate.Groups[1].Value) > 80000,
+                        "failure telemetry identifies doubled callback sample rate");
+                    Check(details.Contains("expected 48000") && details.Contains("queued ") && details.Contains("write blocked ") && details.Contains("Timing at failure"),
+                        "failure telemetry preserves queue and writer timing after cleanup");
+                    return;
+                }
             }
-            Check(encoder.Status == "Publishing H.264 + AAC", "encoder reports actual mux progress");
+            if (overload) throw new Exception("Unbounded overproduction did not fail");
+            Check(encoder.Status == "Publishing H.264 + AAC (" + videoEncoder + ")", "encoder reports actual mux progress and selected encoder");
             encoder.Stop(); encoder.Stop();
             Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "idempotent stop closes encoder and workers");
             Check(receiver.WaitForExit(10000), "RTMP receiver observes stream close");
@@ -146,11 +220,51 @@ internal static class Program
             encoder = new EncoderSession(options);
             Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "unavailable receiver terminates encoder without blocking caller");
             Check(!encoder.Status.Contains(url), "failure status does not disclose destination/key");
+            Check(encoder.FailureDetails.Contains("FFmpeg exit:") && !encoder.FailureDetails.Contains("No FFmpeg error output"), "early pipe/process failure retains real FFmpeg stderr and exit code");
+            Check(!encoder.FailureDetails.Contains(url) && !encoder.FailureDetails.Contains("127.0.0.1"), "persisted failure diagnostics redact destination and key");
+            Check(!encoder.PermanentFailure, "actual refused receiver is classified as retryable");
+
+            // Reconnect the production session after a real receiver outage. The
+            // policy's virtual clock avoids spending five seconds waiting in CI.
+            var retry = new OutputRecoveryPolicy();
+            retry.RequestStart(0);
+            Check(retry.TryBegin(0, true, encoder.IsClosed), "recovery starts only after prior encoder cleanup");
+            retry.Failed(0, encoder.PermanentFailure, true, encoder.FailureDetails);
+            Check(!retry.TryBegin(4, true, true), "real receiver failure observes retry backoff");
+            string recovered = Path.Combine(root, "recovered.flv");
+            using Process replacement = Start("ffmpeg", $"-hide_banner -loglevel error -listen 1 -i {url} -c copy -y \"{recovered}\"");
+            var replacementErrors = replacement.StandardError.ReadToEndAsync();
+            var replacementOutput = replacement.StandardOutput.ReadToEndAsync();
+            try
+            {
+                Thread.Sleep(500);
+                Check(retry.TryBegin(5, true, encoder.IsClosed), "retry becomes eligible after receiver recovery");
+                encoder = new EncoderSession(options);
+                clock.Restart();
+                for (int tick = 0; tick < 150; tick++)
+                {
+                    while (clock.Elapsed.TotalMilliseconds < tick * 20) Thread.Sleep(1);
+                    frame = encoder.SubmitVideo(frame);
+                    encoder.SubmitAudio(audio, 2);
+                    if (encoder.IsStopping) throw new Exception("Recovered publisher stopped early: " + encoder.Status);
+                }
+                Check(encoder.IsPublishing, "production encoder resumes muxing after receiver returns");
+                encoder.Stop();
+                Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000) && replacement.WaitForExit(10000), "recovered session closes without orphan workers");
+                Check(File.Exists(recovered) && new FileInfo(recovered).Length > 1000, "recovered receiver records a new stream");
+            }
+            finally
+            {
+                encoder?.Stop();
+                if (!replacement.HasExited) replacement.Kill(entireProcessTree: true);
+                replacement.WaitForExit(5000);
+                Console.WriteLine("Recovery receiver diagnostics: " + replacementErrors.GetAwaiter().GetResult());
+            }
         }
         finally
         {
             encoder?.Stop();
-            if (!receiver.HasExited) receiver.Kill();
+            if (!receiver.HasExited) receiver.Kill(entireProcessTree: true);
             receiver.WaitForExit(5000);
             Console.WriteLine("Receiver diagnostics: " + receiverErrors.GetAwaiter().GetResult());
         }

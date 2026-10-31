@@ -44,8 +44,31 @@ internal static class Program
             ("Recent creatures are excluded until cooldown", CreatureCooldown),
             ("Distant removal excludes observer and must abort", RetentionAbort),
             ("Normal removal and retained observer remain untouched", RetentionAllowed),
-            ("Probe failure survives cleanup and resets on restart", ProbeFailure)
-        };
+            ("Probe failure survives cleanup and resets on restart", ProbeFailure),
+            ("Observer activation excludes every multiplayer case", ObserverOfflineGate),
+            ("Observer travel requires teleport completion, position and readiness", ObserverArrival),
+            ("Observer timeout holds protections until explicit return", ObserverTimeout),
+            ("Return cancels outbound travel without allowing another destination", ObserverCancel),
+            ("Return releases observer only after verified arrival", ObserverReturn),
+            ("Repeated return commands cannot postpone timeout", ObserverReturnRepeated),
+            ("Failed return can be retried and preserves first failure", ObserverReturnRetry),
+            ("World cleanup permits fresh observer activation", ObserverReset),
+            ("Observer travel rejects invalid time without changing state", ObserverTiming),
+            ("Short loading gaps hold only recently captured footage", FrameHoldWindow),
+            ("Forced travel or failure slate cannot be hidden by a good frame", FrameHardFailure),
+            ("Frame reset and clock rollback cannot replay another session", FrameReset),
+            ("Presentation clock rejects invalid values", FrameClock),
+            ("Observer identity configuration accepts exact bounded Steam IDs", ObserverAllowlist),
+            ("Observer handshake requires the matching protocol before its deadline", ObserverHandshake),
+            ("Repeated handshake requests cannot extend an unconfirmed role", ObserverHandshakeDeadline),
+            ("Revocation requests disconnect without clearing the pinned role", ObserverRevoke),
+            ("Multiplayer return parks with protections until resumed", ObserverPark),
+            ("Parked session cleanup cannot change the next offline return", ObserverParkReset)
+        }.Concat(AutonomousDirectorTests.Cases)
+            .Concat(ObserverAdmissionTests.Cases())
+            .Concat(ObserverDiscoveryTests.Cases())
+            .Concat(ConnectionRecoveryTests.Cases())
+            .Concat(CameraReachabilityTests.Cases()).ToArray();
 
         int failed = 0;
         foreach (var test in cases)
@@ -433,6 +456,166 @@ internal static class Program
         p.Fail("observer excluded"); p.Stop(); p.Tick(100, true);
         Equal(ProbeState.Failed, p.State); Equal("observer excluded", p.FailureReason); False(p.Active);
         p.Start(); Equal(null, p.FailureReason); Equal(ProbeState.Acquiring, p.State);
+    }
+
+    private static void ObserverOfflineGate()
+    {
+        foreach (bool server in new[] { false, true })
+        foreach (bool open in new[] { false, true })
+        foreach (int peers in new[] { -1, 0, 1, 10 })
+            Equal(server && !open && peers == 0, ObserverTravel.CanActivate(server, open, peers));
+    }
+
+    private static void ObserverArrival()
+    {
+        // Every premature combination must keep the observer protected in transit.
+        foreach (bool teleporting in new[] { false, true })
+        foreach (bool ready in new[] { false, true })
+        foreach (bool atDestination in new[] { false, true })
+        {
+            var o = new ObserverTravel(); o.Start(); o.Travel();
+            o.Tick(10, teleporting, ready, atDestination);
+            Equal(!teleporting && ready && atDestination ? ObserverPhase.Watching : ObserverPhase.Travelling, o.Phase);
+            True(o.Active);
+        }
+    }
+
+    private static void ObserverTimeout()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel();
+        o.Tick(44, false, false, true); Equal(ObserverPhase.Travelling, o.Phase);
+        o.Tick(1, false, false, true); Equal(ObserverPhase.Suspended, o.Phase);
+        True(o.Active); True(o.Failure != null);
+        o.Tick(1000, false, true, true); Equal(ObserverPhase.Suspended, o.Phase);
+        Throws<InvalidOperationException>(() => o.Travel());
+    }
+
+    private static void ObserverCancel()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel(); o.Tick(30, true, false, false);
+        o.Return(); Equal(ObserverPhase.Returning, o.Phase); Equal(0d, o.ElapsedSeconds);
+        Throws<InvalidOperationException>(() => o.Travel());
+        Throws<InvalidOperationException>(() => o.Start());
+        o.Tick(10, true, true, true); Equal(ObserverPhase.Returning, o.Phase);
+    }
+
+    private static void ObserverReturn()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return();
+        o.Tick(8, false, false, true); True(o.Active);
+        o.Tick(1, false, true, false); True(o.Active);
+        o.Tick(1, false, true, true); False(o.Active); Equal(ObserverPhase.Off, o.Phase);
+        o.Return(); o.Suspend("late failure"); Equal(ObserverPhase.Off, o.Phase);
+        Equal(null, o.Failure);
+    }
+
+    private static void ObserverReturnRepeated()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return();
+        for (int i = 0; i < 45; i++) { o.Return(); o.Tick(1, true, false, false); }
+        Equal(ObserverPhase.Suspended, o.Phase); Equal(45d, o.ElapsedSeconds);
+    }
+
+    private static void ObserverReturnRetry()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return(); o.Suspend("first error");
+        o.Suspend("secondary error"); Equal("first error", o.Failure);
+        o.Return(); Equal(null, o.Failure); Equal(ObserverPhase.Returning, o.Phase);
+        o.Tick(8, false, true, true); False(o.Active);
+    }
+
+    private static void ObserverReset()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel(); o.Suspend("world unloaded");
+        o.Reset(); o.Reset(); False(o.Active); Equal(null, o.Failure); Equal(0d, o.ElapsedSeconds);
+        o.Start(); Equal(ObserverPhase.Watching, o.Phase);
+        o.Tick(10000, false, false, false); Equal(ObserverPhase.Watching, o.Phase);
+    }
+
+    private static void ObserverTiming()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel();
+        foreach (double invalid in new[] { -1d, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+            Throws<ArgumentOutOfRangeException>(() => o.Tick(invalid, false, true, true));
+        o.Tick(0, true, false, false); Equal(0d, o.ElapsedSeconds); Equal(ObserverPhase.Travelling, o.Phase);
+        o.Tick(10000, true, false, false); Equal(ObserverPhase.Suspended, o.Phase);
+    }
+
+    private static void FrameHoldWindow()
+    {
+        var f = new FrameContinuity();
+        Equal(FramePresentation.Slate, f.Select(1, false, false));
+        f.Captured(1);
+        Equal(FramePresentation.Hold, f.Select(1.01, false, false));
+        Equal(FramePresentation.Hold, f.Select(1.74, false, false));
+        Equal(FramePresentation.Slate, f.Select(1.75, false, false));
+        Equal(FramePresentation.Live, f.Select(2, true, false));
+        // Saying a shot is ready does not extend the lifetime of the old image.
+        Equal(FramePresentation.Slate, f.Select(2.01, false, false));
+        f.Captured(2.02); Equal(FramePresentation.Hold, f.Select(2.03, false, false));
+    }
+    private static void FrameHardFailure()
+    {
+        var f = new FrameContinuity(); f.Captured(1);
+        Equal(FramePresentation.Slate, f.Select(1.01, true, true));
+        Equal(FramePresentation.Slate, f.Select(1.01, false, true));
+    }
+    private static void FrameReset()
+    {
+        var f = new FrameContinuity(); f.Captured(5);
+        Equal(FramePresentation.Slate, f.Select(4, false, false));
+        f.Reset(); Equal(FramePresentation.Slate, f.Select(5.01, false, false));
+    }
+    private static void FrameClock()
+    {
+        var f = new FrameContinuity();
+        foreach (double bad in new[] { -1d, double.NaN, double.PositiveInfinity })
+        { Throws<ArgumentOutOfRangeException>(() => f.Captured(bad)); Throws<ArgumentOutOfRangeException>(() => f.Select(bad, true, false)); }
+    }
+    private static void ObserverAllowlist()
+    {
+        Equal(0, ObserverProtocol.SteamAllowlist("").Count);
+        var ids = ObserverProtocol.SteamAllowlist("76561198000000001, 76561198000000001,76561198000000002");
+        Equal(2, ids.Count); False(ids.Contains("Jason"));
+        foreach (string bad in new[] { "Jason", "7656119800000000", "Steam_76561198000000001", "+76561198000000001", "76561198000000001;76561198000000002" })
+            Throws<ArgumentException>(() => ObserverProtocol.SteamAllowlist(bad));
+        Throws<ArgumentException>(() => ObserverProtocol.SteamAllowlist(string.Join(",", Enumerable.Range(1, 17).Select(i => (76561198000000000L + i).ToString()))));
+    }
+    private static void ObserverHandshake()
+    {
+        var lease = new ObserverLease(10);
+        False(lease.Confirm(ObserverProtocol.Version + 1, 11)); False(lease.Confirmed);
+        True(lease.Confirm(ObserverProtocol.Version, 12));
+        False(lease.MustDisconnect(100000, true));
+    }
+    private static void ObserverHandshakeDeadline()
+    {
+        var lease = new ObserverLease(10);
+        for (int i = 0; i < 15; i++) False(lease.Confirm(999, 10 + i));
+        True(lease.MustDisconnect(25, true)); False(lease.Confirm(ObserverProtocol.Version, 25));
+        False(lease.Confirm(ObserverProtocol.Version, 9));
+    }
+    private static void ObserverRevoke()
+    {
+        var lease = new ObserverLease(10); True(lease.Confirm(ObserverProtocol.Version, 11));
+        True(lease.MustDisconnect(12, false)); True(lease.Confirmed);
+        True(lease.MustDisconnect(9, true));
+        Throws<ArgumentOutOfRangeException>(() => lease.MustDisconnect(double.NaN, true));
+    }
+    private static void ObserverPark()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Travel(); o.Return(true);
+        o.Tick(8, false, true, true); Equal(ObserverPhase.Parked, o.Phase); True(o.Active);
+        o.Tick(1000, false, true, true); o.Return(); Equal(ObserverPhase.Parked, o.Phase);
+        Throws<InvalidOperationException>(() => o.Travel());
+        o.Resume(); Equal(ObserverPhase.Watching, o.Phase); True(o.Active);
+        Throws<InvalidOperationException>(() => o.Resume());
+    }
+    private static void ObserverParkReset()
+    {
+        var o = new ObserverTravel(); o.Start(); o.Return(true); o.Tick(8, false, true, true);
+        o.Reset(); o.Start(); o.Return(); o.Tick(8, false, true, true);
+        Equal(ObserverPhase.Off, o.Phase); False(o.Active);
     }
 
     private static void Equal<T>(T expected, T actual)
