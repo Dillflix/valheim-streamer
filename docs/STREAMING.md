@@ -8,7 +8,7 @@ The audio source is the game's existing AudioListener mix: game sounds/music and
 
 1. Close Valheim. In Thunderstore, select the profile you launch and use **Settings → Browse profile folder** (wording may vary by manager version).
 2. Install both DLLs from the same 0.7.1 test build into `BepInEx/plugins/ValheimBroadcaster/`. Remove duplicate older copies of this plugin elsewhere in that profile. Keep BepInEx and Jötunn installed.
-3. Install a trusted FFmpeg build with your selected video encoder (`libx264` or `h264_nvenc`), `aac`, TCP, RTMP, and optionally RTMPS support. The [FFmpeg download page](https://ffmpeg.org/download.html) links Windows builds. The mod does not download or bundle FFmpeg. Run `ffmpeg -encoders` to check those encoders.
+3. Install a trusted FFmpeg build with your selected video encoder (`libx264` or `h264_nvenc`), `aac`, TCP, RTMP, and optionally RTMPS support. The [FFmpeg download page](https://ffmpeg.org/download.html) links Windows builds. The mod does not download or bundle FFmpeg. Point `FFmpegPath` at the actual binary, not a package-manager launcher/shim or a shell script; the mod must own the encoder process to stop it and close its pipes. For Chocolatey installations the actual binary is normally under `C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin\ffmpeg.exe`, not `C:\ProgramData\chocolatey\bin\ffmpeg.exe`. Run `ffmpeg -encoders` to check those encoders.
 4. Launch modded once to generate the new config entries, then close Valheim. Edit `BepInEx/config/com.dillflix.valheimbroadcaster.cfg` in this same profile:
 
 ```ini

@@ -37,8 +37,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install Windows test encoder and receiver
         if: runner.os == 'Windows'
-        run: choco install ffmpeg --yes --no-progress
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Use the real process: killing a Chocolatey launcher shim can leave its
+          # FFmpeg child holding the redirected pipes open.
+          $binary = Get-ChildItem "$env:ChocolateyInstall/lib/ffmpeg" -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          if (-not $binary) { throw 'Actual FFmpeg executable not found' }
+          $binary.Directory.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Using FFmpeg directory: $($binary.Directory.FullName)"
       - name: Test buffers and real RTMP audio/video loopback
+        timeout-minutes: 3
         run: dotnet run --project tests/ValheimBroadcaster.Streaming.Tests --configuration Release -warnaserror
 
   plugin:

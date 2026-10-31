@@ -25,6 +25,11 @@ internal static class Program
     }
     private static int Main(string[] args)
     {
+        using var deadline = new Timer(_ =>
+        {
+            Console.Error.WriteLine("Streaming harness exceeded its two-minute deadline.");
+            Environment.Exit(1);
+        }, null, 120000, Timeout.Infinite);
         try
         {
             foreach (string url in new[] { "", "https://localhost/live/key", "file:///tmp/video", "rtmp://localhost/a\" -f x", "rtmp://localhost/a\nkey", "rtmp://localhost/a\\key" })
@@ -189,7 +194,7 @@ internal static class Program
         finally
         {
             encoder?.Stop();
-            if (!receiver.HasExited) receiver.Kill();
+            if (!receiver.HasExited) receiver.Kill(entireProcessTree: true);
             receiver.WaitForExit(5000);
             Console.WriteLine("Receiver diagnostics: " + receiverErrors.GetAwaiter().GetResult());
         }
