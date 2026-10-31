@@ -35,6 +35,17 @@ internal static class Program
             int auth = Enumerable.Range(0, handshake.Count).First(i => handshake[i].Operand is MethodReference m && m.Name == "VerifySessionTicket");
             int session = Enumerable.Range(0, handshake.Count).First(i => handshake[i].OpCode == OpCodes.Stfld && handshake[i].Operand is FieldReference f && f.DeclaringType.Name == "ZNetPeer" && f.Name == "m_uid");
             Check("Steam ticket verification precedes session publication", auth < session);
+            var sendInfo = Method("ZNet", "SendPeerInfo");
+            Check("Pre-admission hook uses the real RPC and password signature", sendInfo.Parameters.Count == 2 && sendInfo.Parameters[0].ParameterType.Name == "ZRpc" && sendInfo.Parameters[1].ParameterType.FullName == "System.String");
+            Check("Native admission sends PeerInfo over ZRpc", Calls(sendInfo, "ZRpc", "Invoke") == 1 && sendInfo.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldstr && Equals(i.Operand, "PeerInfo")));
+            var ready = Method("ZNetPeer", "IsReady");
+            Check("Peer readiness is based on the authenticated session UID", ready.Body.Instructions.Count(i => i.OpCode == OpCodes.Ldfld) == 1 && ready.Body.Instructions.Any(i => i.Operand is FieldReference f && f.Name == "m_uid"));
+            Check("RPC sends use the peer socket", Calls(Method("ZRpc", "SendPackage"), "ISocket", "Send") == 1);
+            Check("Steam messages enter a FIFO queue", Method("ZSteamSocket", "Send").Body.Instructions.Count(i => i.Operand is MethodReference m && m.Name == "Enqueue") == 1);
+            var steamSend = Method("ZSteamSocket", "SendQueuedPackages");
+            Check("Steam send drains the FIFO head", steamSend.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == "Peek") && steamSend.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == "Dequeue"));
+            var send = steamSend.Body.Instructions.Single(i => i.Operand is MethodReference m && m.Name == "SendMessageToConnection");
+            Check("Steam RPC messages use reliable delivery flag 8", send.Previous.Previous.OpCode == OpCodes.Ldc_I4_8);
             var envelope = game.MainModule.Types.Single(t => t.Name == "ZRoutedRpc").NestedTypes.Single(t => t.Name == "RoutedRPCData").Methods.Single(m => m.Name == "Deserialize");
             string readers = string.Join(",", envelope.Body.Instructions.Where(i => i.Operand is MethodReference m && m.DeclaringType.Name == "ZPackage").Select(i => ((MethodReference)i.Operand).Name));
             Check("Bounded request parser matches the routed envelope", readers == "ReadLong,ReadLong,ReadLong,ReadZDOID,ReadInt,ReadPackage");

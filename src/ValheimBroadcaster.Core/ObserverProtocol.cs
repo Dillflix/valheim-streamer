@@ -6,7 +6,8 @@ namespace ValheimBroadcaster.Core
 {
     public static class ObserverProtocol
     {
-        public const int Version = 2;
+        public const int Version = 3;
+        public const string Request = "ValheimBroadcaster.Observer.Request3";
         public const string Hello = "ValheimBroadcaster.Observer.Hello1";
         public const string Reply = "ValheimBroadcaster.Observer.Reply1";
         public const double HandshakeSeconds = 15;
@@ -23,6 +24,22 @@ namespace ValheimBroadcaster.Core
             }
             return result;
         }
+    }
+
+    /// <summary>Intent precedes native admission; an ordinary connection cannot be promoted later.</summary>
+    public sealed class ObserverAdmission
+    {
+        public bool ReadOnly { get; private set; }
+        public bool AdmissionStarted { get; private set; }
+
+        public bool Request(int version)
+        {
+            if (version != ObserverProtocol.Version || (AdmissionStarted && !ReadOnly)) return false;
+            ReadOnly = true;
+            return true;
+        }
+
+        public void BeginAdmission() { AdmissionStarted = true; }
     }
 
     /// <summary>A read-only role stays pinned until disconnect, including after timeout/revocation.</summary>

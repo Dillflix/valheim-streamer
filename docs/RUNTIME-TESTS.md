@@ -1,5 +1,17 @@
 # Validation and runtime test record
 
+## 0.8.3 optional observer admission — 2026-10-31
+
+The allowlist now grants permission to request observer mode, rather than forcing a Steam account into that role. The client sends protocol-3 intent before native admission; no request means ordinary gameplay. The entire accepted observer connection remains read-only until disconnect.
+
+- **119/119 core cases passed**, including eight new cases for default ordinary admission, pre-admission intent, rejected late promotion, protocol mismatch, idempotence, authorization/lease separation, timeout/revocation and reconnecting as an ordinary player.
+- **28/28 real-assembly audits passed on each of the actual Linux server and Windows client assemblies**, including `SendPeerInfo` signature, native RPC dispatch, authenticated readiness and reliable FIFO Steam transport. These inspect metadata; they do not execute multiplayer joins.
+- Client and server **0.8.3** compiled with zero warnings/errors and warnings treated as errors, against real installed Valheim 1.0.21 references, BepInEx **5.4.23.6** and Jötunn **2.30.2**. The existing CI baseline remains BepInEx 5.4.23.2. Both artifacts contain only their role's plugin and matching Core DLL.
+- An isolated Linux Docker server with networking disabled loaded **22 plugins, zero skipped and zero failed**, including all 18 existing ServersideQoL modules, their framework, YAML detector, Jötunn and Broadcaster. It logged `Observer server 0.8.3 ready`; no plugin exceptions, Harmony failures, unavailable-server messages or discovery-suspension errors were observed. Discord Connector and production credentials/worlds were excluded. The test container was stopped afterward. Offline Steam connectivity errors are expected and do not constitute a successful network join.
+- The existing production server was not modified or restarted. The original 0.8.0 deployment was halted before any production files were installed.
+
+**Still required:** a vanilla join using an allowlisted identity lasting beyond the former 15-second deadline; the same account joining with the mod installed but observer mode off; an explicit observer join with matching 0.8.3 endpoints; unauthorized/mismatched/late requests; and the visibility, interactions, sleep and ownership matrix in [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md). Startup and policy tests do not prove those runtime behaviors.
+
 ## Evidence available
 
 - The **0.7.0** director's **55 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.

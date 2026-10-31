@@ -15,7 +15,7 @@ internal sealed class RemoteObserverClient
     private readonly Action<string> log;
     private ZNet? world;
     private ZNetPeer? server;
-    private bool requested, failed, spawned;
+    private bool requested, requestSent, failed, spawned;
     private float readySince = -1, nextHello, nextDiscovery;
     private readonly ObserverDiscoveryCache discovery = new ObserverDiscoveryCache();
     internal bool Isolated => requested && world && world == ZNet.instance;
@@ -35,6 +35,7 @@ internal sealed class RemoteObserverClient
     internal void Install(Harmony harmony)
     {
         Patch(harmony, typeof(ZNet), "OnNewConnection", new[] { typeof(ZNetPeer) }, nameof(Connection), true);
+        Patch(harmony, typeof(ZNet), "SendPeerInfo", new[] { typeof(ZRpc), typeof(string) }, nameof(RequestBeforeAdmission), false);
         MethodInfo sync = AccessTools.Method(typeof(ZDOMan), "CreateSyncList") ?? throw new MissingMethodException("ZDOMan.CreateSyncList");
         harmony.Patch(sync, postfix: new HarmonyMethod(typeof(RemoteObserverClient), nameof(PublishObjects)));
         Patch(harmony, typeof(ZRoutedRpc), "InvokeRoutedRPC", new[] { typeof(long), typeof(ZDOID), typeof(string), typeof(object[]) }, nameof(SendGameplay), false);
@@ -52,7 +53,7 @@ internal sealed class RemoteObserverClient
         RemoteObserverClient? client = instance;
         if (client == null || !ZNet.instance || ZNet.instance.IsServer() || !__0.m_server) return;
         client.world = ZNet.instance; client.server = __0;
-        client.requested = client.configured(); client.Approved = client.failed = client.spawned = client.TerminalFailure = false;
+        client.requested = client.configured(); client.requestSent = client.Approved = client.failed = client.spawned = client.TerminalFailure = false;
         client.readySince = -1; client.nextHello = client.nextDiscovery = 0; client.discovery.Reset();
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
         if (client.requested)
@@ -61,9 +62,28 @@ internal sealed class RemoteObserverClient
             __0.m_rpc.Register<ZPackage>(ObserverDiscoveryProtocol.Reply, client.DiscoveryReply);
         }
     }
+    private static bool RequestBeforeAdmission(ZRpc __0)
+    {
+        RemoteObserverClient? client = instance;
+        if (client?.Isolated != true) return true;
+        if (client.failed) return false;
+        if (client.server == null || !ReferenceEquals(__0, client.server.m_rpc) || client.server.m_socket is not ZSteamSocket)
+        { client.Fail("Observer mode requires the dedicated Steam server connection"); return false; }
+        if (client.requestSent) return true;
+        try
+        {
+            // Both RPCs use the same reliable FIFO transport. Put intent ahead of
+            // native authentication/admission, without changing the vanilla packet.
+            __0.Invoke(ObserverProtocol.Request, ObserverProtocol.Version);
+            client.requestSent = true;
+            return true;
+        }
+        catch (Exception error)
+        { client.Fail("Observer request could not be sent: " + error.GetType().Name); return false; }
+    }
     private void Reply(ZRpc rpc, int version, int accepted)
     {
-        if (!Isolated || failed || server == null || !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
+        if (!Isolated || !requestSent || failed || server == null || !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
         if (version != ObserverProtocol.Version || accepted != 1) { Fail("Server denied the observer role or protocol version"); return; }
         if (!Approved) { Approved = true; Status = "Read-only observer authorized; waiting for the character scene"; log(Status); }
     }
@@ -85,6 +105,7 @@ internal sealed class RemoteObserverClient
         if (server == null || !world!.GetPeers().Contains(server)) { Fail("Observer connection ended", false); return; }
         if (failed) return;
         if (!server.IsReady()) return;
+        if (!requestSent) { Fail("Observer intent was not sent before ordinary admission; reconnect with matching plugins"); return; }
         if (readySince < 0) readySince = Time.realtimeSinceStartup;
         if (!Approved && Time.realtimeSinceStartup - readySince >= ObserverProtocol.HandshakeSeconds)
         { Fail("No matching observer server authorization within 15 seconds"); return; }

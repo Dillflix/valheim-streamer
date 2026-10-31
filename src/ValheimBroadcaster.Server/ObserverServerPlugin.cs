@@ -12,7 +12,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.2")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.3")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 public sealed class ObserverServerPlugin : BaseUnityPlugin
@@ -26,6 +26,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
     private bool discoveryFailed;
     private HashSet<string> allowed = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<ZNetPeer> reserved = new HashSet<ZNetPeer>();
+    private readonly Dictionary<ZNetPeer, ObserverAdmission> admissions = new Dictionary<ZNetPeer, ObserverAdmission>();
     private readonly Dictionary<ZNetPeer, ObserverLease> leases = new Dictionary<ZNetPeer, ObserverLease>();
     private readonly Dictionary<ZNetPeer, float> nextReply = new Dictionary<ZNetPeer, float>();
     private ZNet? world;
@@ -37,7 +38,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
     private void Awake()
     {
         allow = Config.Bind("Observer", "Enabled", false, "Opt-in read-only observer connections on a dedicated Steam server. Restart after changing configuration.");
-        identities = Config.Bind("Observer", "SteamIds", "", "Comma-separated Steam64 identities dedicated to broadcasting. These connections cannot play normally; other players need no mod.");
+        identities = Config.Bind("Observer", "SteamIds", "", "Comma-separated Steam64 identities permitted to request observer mode before joining. Vanilla clients and clients with ObserverConnection=false play normally, including these identities. An accepted observer role remains read-only until disconnect.");
         discoveryEnabled = Config.Bind("Observer", "DiscoveryEnabled", true, "Supply connected-player and already-generated scenic destinations only to authenticated, allowlisted observer connections. Requires Enabled.");
         sharePrivatePositions = Config.Bind("Observer", "SharePrivatePlayerPositions", true, "Allow authorized observers to acquire player characters even when their map position is private. False limits destination coordinates to public-map players; presence remains visible. Requires Enabled and DiscoveryEnabled.");
         instance = this;
@@ -47,7 +48,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
             discovery = new ObserverDiscoveryService();
             harmony = new Harmony("com.dillflix.valheimbroadcaster.server");
             Patch(typeof(ZNet), "OnNewConnection", new[] { typeof(ZNetPeer) }, postfix: nameof(NewConnection));
-            Patch(typeof(ZNet), "RPC_PeerInfo", new[] { typeof(ZRpc), typeof(ZPackage) }, postfix: nameof(PeerReady), transpiler: nameof(PreserveAdmissionCount));
+            Patch(typeof(ZNet), "RPC_PeerInfo", new[] { typeof(ZRpc), typeof(ZPackage) }, prefix: nameof(BeginAdmission), postfix: nameof(PeerReady), transpiler: nameof(PreserveAdmissionCount));
             Patch(typeof(ZNet), "RPC_ServerSyncedPlayerData", new[] { typeof(ZRpc), typeof(ZPackage) }, prefix: nameof(ObserverPosition), postfix: nameof(PlayerMetadataReceived));
             Patch(typeof(RandEventSystem), "RefreshPlayerEventData", Type.EmptyTypes, transpiler: nameof(EventPeerList));
             Patch(typeof(ZoneSystem), "Update", Type.EmptyTypes, transpiler: nameof(EventPeerList));
@@ -62,7 +63,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.2 ready; opt-in dedicated Steam connections only. No ordinary-client mod requirement. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.3 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {
@@ -95,12 +96,15 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
 
     private void EnsureWorld()
     {
-        if (world != ZNet.instance) { reserved.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); discoveryFailed = false; world = ZNet.instance; }
+        if (world != ZNet.instance) { reserved.Clear(); admissions.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); discoveryFailed = false; world = ZNet.instance; }
     }
     private void Bind(ZNetPeer peer)
     {
         EnsureWorld();
         if (!peer.IsReady() || !Protected(peer) || leases.ContainsKey(peer)) return;
+        // Native PeerInfo verifies the Steam ticket before publishing m_uid/IsReady.
+        // Pre-admission intent is never authority to receive discovery or approval.
+        if (!Authorized(peer)) { ZNet.instance.Disconnect(peer); return; }
         leases.Add(peer, new ObserverLease(Time.realtimeSinceStartup));
         peer.m_characterID = ZDOID.None;
         Logger.LogInfo("Read-only observer connection reserved; awaiting matching client protocol.");
@@ -111,11 +115,34 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         ObserverServerPlugin plugin = instance!;
         plugin.EnsureWorld();
         if (plugin.configured != plugin.identities.Value) plugin.ReloadAllowlist();
-        // Pin the role before authentication completes. Later allowlist additions
-        // must not convert a live ordinary player with already-published objects.
-        if (plugin.Authorized(__0)) plugin.reserved.Add(__0);
+        // Membership grants permission, not a role. Vanilla peers send no request.
+        plugin.admissions[__0] = new ObserverAdmission();
+        __0.m_rpc.Register<int>(ObserverProtocol.Request, plugin.Request);
         __0.m_rpc.Register<int>(ObserverProtocol.Hello, plugin.Hello);
         __0.m_rpc.Register<int>(ObserverDiscoveryProtocol.Request, plugin.DiscoveryRequest);
+    }
+    private void Request(ZRpc rpc, int version)
+    {
+        if (!Serving || Find(rpc) is not ZNetPeer peer) return;
+        if (!allow.Value || peer.m_socket is not ZSteamSocket ||
+            !admissions.TryGetValue(peer, out ObserverAdmission admission) ||
+            (peer.IsReady() && !Protected(peer)) || !admission.Request(version))
+        {
+            Logger.LogWarning("Observer request rejected: unsupported protocol/backend, disabled service, or ordinary admission already started.");
+            ZNet.instance.Disconnect(peer);
+            return;
+        }
+        // The request arrives on the same reliable Steam stream before PeerInfo.
+        // Restrict this connection immediately; authorize its real identity only
+        // after the game's authentication. Never release these guards in-place.
+        reserved.Add(peer);
+    }
+    private static void BeginAdmission(ZRpc __0)
+    {
+        if (!Serving || Find(__0) is not ZNetPeer peer) return;
+        if (!instance!.admissions.TryGetValue(peer, out ObserverAdmission admission))
+            instance.admissions[peer] = admission = new ObserverAdmission();
+        admission.BeginAdmission();
     }
     private static void PeerReady(ZRpc __0)
     {
@@ -277,6 +304,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
             }
         }
         reserved.RemoveWhere(peer => !ZNet.instance.GetPeers().Contains(peer));
+        foreach (ZNetPeer gone in admissions.Keys.Where(peer => !ZNet.instance.GetPeers().Contains(peer)).ToArray()) admissions.Remove(gone);
         if (!discoveryFailed)
         {
             try

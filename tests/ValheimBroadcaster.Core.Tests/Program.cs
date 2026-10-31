@@ -65,6 +65,7 @@ internal static class Program
             ("Multiplayer return parks with protections until resumed", ObserverPark),
             ("Parked session cleanup cannot change the next offline return", ObserverParkReset)
         }.Concat(AutonomousDirectorTests.Cases)
+            .Concat(ObserverAdmissionTests.Cases())
             .Concat(ObserverDiscoveryTests.Cases())
             .Concat(ConnectionRecoveryTests.Cases())
             .Concat(CameraReachabilityTests.Cases()).ToArray();
