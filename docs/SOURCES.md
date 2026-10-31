@@ -1,0 +1,25 @@
+# Implementation evidence
+
+These references explain the design and API investigation. They are not a claim that a third-party mod supports the installed Valheim version, and this project does not copy their implementations. Verify signatures against the target game's actual assemblies.
+
+| Reference | Relevant evidence |
+| --- | --- |
+| [Jötunn Mod Example](https://github.com/Valheim-Modding/JotunnModExample) | Framework examples and development setup |
+| [Jötunn Mod Stub](https://github.com/Valheim-Modding/JotunnModStub) | Template build conventions; inspect build hooks rather than inherit automatic deployment |
+| [Jötunn console commands](https://valheim-modding.github.io/Jotunn/tutorials/console-commands.html) | `CommandManager` and `ConsoleCommand` integration |
+| [Jötunn network compatibility](https://valheim-modding.github.io/Jotunn/tutorials/networkcompatibility.html) | `NotEnforced` does not require ordinary clients/server to install this camera mod |
+| [Jötunn headless predicate](https://valheim-modding.github.io/Jotunn/api/Jotunn.Managers.GUIManager.IsHeadless.html) | Guard graphical initialization |
+| [Official Jötunn ListPlayersCommand](https://github.com/Valheim-Modding/Jotunn/blob/f4bb47121f1685712b2bcf1279b61fe6de996074/TestMod/ConsoleCommands/ListPlayersCommand.cs) | Instantiated players and names |
+| [BuildCamera camera patch](https://github.com/gittywithexcitement/ValheimBuildCamera/blob/07bba3fc039610802d8b91e5a35683f8b8f89402/BuildCamera.cs) | `GameCamera.UpdateCamera(float)` patch target |
+| [EpicLoot camera patch](https://github.com/RandyKnapp/ValheimMods/blob/79498d09d56e6d14be3c20ac8d2083edf34bd76d/EpicLoot/src/GamePatches/GameCamera_Patch.cs) | Independent use of the camera update patch point |
+| [CameraMan](https://github.com/Oppodelldog/CameraMan) | Jötunn-based detached-camera precedent and distant-travel limitation |
+| [ServerDevcommands player adapter](https://github.com/JereKuusela/valheim-dev/blob/73945fb05372913eefbaa7063a2f14a65fefaab0/ServerDevcommands/Service/PlayerInfo.cs) | Network roster, character ZDO IDs, and instantiated-player matching |
+| [ServerDevcommands position delivery](https://github.com/JereKuusela/valheim-dev/blob/73945fb05372913eefbaa7063a2f14a65fefaab0/ServerDevcommands/Features/MinimapPrivatePlayers.cs) | Why private distant positions can require a server companion; no such relay is implemented here |
+| [MistWorms reference-position patch](https://github.com/clementplancon/MistWorms/blob/fb552cc413b0c165f75567729be1bd5077eb4cd3/src/MistWorms/Patches/OwnerPatches.cs) | Observed `ZNet.SetReferencePosition(Vector3)` interception |
+| [OttoBifrost destination synchronization](https://github.com/potto007/OttoBifrost/blob/e771be28a820994534e469ae42b3c2b04819a263/Patches/DestinationSync.cs) | Interest-position delivery and the distinction between local readiness and complete server object delivery |
+| [Official Valheim dedicated-server guide](https://www.valheimgame.com/support/a-guide-to-dedicated-servers) | Supported server setup and Steam/crossplay distinction |
+| [OBS Game Capture](https://obsproject.com/kb/game-capture-source) | Capture the already rendered game window |
+
+The previously prepared Jötunn documentation toolkit contains the full Markdown snapshot. Set `JOTUNN_DOCS_ROOT` to its `docs` directory for local agent retrieval. Its published-site commit is `18a0b624ceaf757abcfeb5cb1386d111a6dec9b2`; that identifier is not a Jötunn package version. API/runtime evidence from target assemblies takes precedence when the snapshot differs.
+
+The companion skills are `jotunn-reference`, `jotunn-create-mod`, `jotunn-maintain-mod`, and `jotunn-deploy-mod`. They remain separate reusable tools; this repository does not duplicate the entire corpus or embed installation-specific skill paths.
