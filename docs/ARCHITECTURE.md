@@ -8,13 +8,15 @@ The first milestone is a single broadcasting client following and cycling eligib
 | --- | --- |
 | `ValheimBroadcaster.Core` | Pure .NET Standard 2.0 director: identities, roster ordering, selection, dwell, hold, timeout, and states |
 | `BroadcasterPlugin` | BepInEx/Jötunn lifecycle, configuration, controls, console command, camera patch, and experimental network-reference override |
-| `TargetRoster` | Combine instantiated player objects with eligible public network positions when requested; exclude the observer |
+| `TargetRoster` | Track connected-player presence separately from ready candidates and public acquisition positions; exclude the observer |
+| `CoverageDirector` / `IdleShots` | Player priority, scenic/creature timing, bounded creature bindings and session anchor |
+| `AcquisitionWindow` | Bounded opt-in remote interest attempts with local cooldown |
 | `CameraRig` | Smooth a wide shot, check obstructions, hide/restore the HUD, restore camera state |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback, listener placement, and non-mutating game audio capture |
 | `EncoderSession` / media buffers | Bounded transfer, paced video/audio workers, FFmpeg lifetime, watchdogs, and redacted status |
 | External FFmpeg executable | H.264/AAC encoding and RTMP/RTMPS publishing; launched and stopped by the mod |
 
-No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.3.0. RTMP is client-only.
+No server plugin, RPC protocol, persistent player database, embedded HLS/DASH server, web controller, or automatic game launcher is implemented in 0.4.0. RTMP is client-only.
 
 ## Director contract
 
@@ -22,7 +24,11 @@ The adapter supplies roster snapshots and elapsed time. Targets have a string ID
 
 `Disabled` enters a waiting state when enabled. A nonempty roster selects a target; readiness transitions it to `Following`. Dwell time advances only with ready footage. An unavailable target resets dwell and accumulates a separate timeout; the timeout advances to an alternative target. Holding pauses both automatic behaviors. A disappearing target advances to the next surviving ID. One tick makes at most one selection change, so a stalled frame cannot skip the entire roster.
 
-The adapter must re-read the selection after `Tick`, because that call can change the target. `SelectionRevision` lets the camera reset smoothing on a cut. No-target and not-ready states display a slate rather than presenting the observer's normal view as selected-player footage.
+The adapter must re-read the selection after `Tick`, because that call can change the target. `SelectionRevision` lets the camera reset smoothing on a cut. In 0.4.0 the adapter supplies only ready players to the rotation director. `CoverageDirector` independently selects player, scenic, creature, or recovery coverage. Idle does not restart the encoder. Player availability preempts idle; target invalidation falls back immediately (or within the next roster sample). The camera still rechecks readiness in its rendering hook.
+
+Network presence is sampled every half second even when distant targeting is disabled. A connected player without a loaded character is reported as awaiting a scene, not an empty server. The idle anchor captures the observer position at activation; `broadcast anchor` resets it. `IdleShots` scans the existing character registry once per second and stores at most 32 eligible non-player actors within the configured radius. Its reusable ready-ID list checks current liveness/range/readiness each update. Timed creature selection is ordinal round-robin without a growing history. Scenery uses a bounded angle accumulator and the existing camera obstruction checks. Both target/focus and desired/final camera positions require area readiness; failed validation shows a recovery slate.
+
+Scene unavailability does not itself stop RTMP. Observer death, loss/change of the world connection, explicit stop, or component failure still stop and clean up the session. Player/creature bindings and the anchor are cleared on stop.
 
 ## Game lifecycle
 
@@ -40,11 +46,13 @@ Every activation first stops/restores the previous mode. `broadcast on` starts n
 
 ## Distant targets
 
-`RemoteTargets=false` uses instantiated player objects. It is intentionally limited to the client's loaded scene and is not a complete online-player roster.
+`RemoteTargets=false` uses instantiated player objects. Camera candidates are intentionally limited to the client's loaded scene. Presence comes separately from the network roster.
 
 The experimental option combines those objects with the network roster's public map positions. A public position can bootstrap streaming, but the shot is shown only when the corresponding player object exists and `ZNetScene.IsAreaReady` accepts its position. Distant players who do not publish a location cannot be reliably discovered by this route.
 
-While active, the adapter changes `ZNet.SetReferencePosition` and intercepts subsequent setter calls for its own client. It retains the normal reference position for restoration. It does not alter send timers or teleport the character. Changing the interest position may still affect scene unloading, object ownership, simulation, and the parked observer; local readiness does not certify complete server delivery. These are open runtime questions.
+When no player is ready, experimental acquisition waits a configurable local cooldown, then tries one eligible public position for at most `TargetTimeoutSeconds`. It restores local interest between attempts and rotates acquisition candidates, including retrying a lone candidate. Already ready players take priority. Remote loading can unload the local idle area, in which case recovery is shown until a shot is ready; this mode cannot promise uninterrupted local scenery.
+
+While an experimental target is being acquired or followed, the adapter changes `ZNet.SetReferencePosition` and intercepts subsequent setter calls for its own client. It retains the normal reference position for restoration. It does not alter send timers or teleport the character. Changing the interest position may still affect scene unloading, object ownership, simulation, and the parked observer; local readiness does not certify complete server delivery. These are open runtime questions.
 
 A future server companion may supply approved target positions and explicit load/observer coordination. That requires a defined protocol and authorization based on the actual sender peer, bounded messages, target consent rules, and ordinary-client compatibility. It must not trust a claimed identity inside a payload. Such a companion is not necessary for the implemented nearby-player prototype.
 

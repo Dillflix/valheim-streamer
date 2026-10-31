@@ -22,7 +22,7 @@ internal sealed class CameraRig
     private static readonly FieldInfo? SkyCamera = AccessTools.Field(typeof(GameCamera), "m_skyCamera");
     private int? obstructionMask;
 
-    internal void Apply(GameCamera gameCamera, Transform target, BroadcastSettings settings, long selectionRevision, float dt)
+    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt)
     {
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
@@ -43,11 +43,11 @@ internal sealed class CameraRig
             skyCamera = nextSky;
             if (skyCamera) savedSkyFov = skyCamera.fieldOfView;
         }
-        Vector3 focus = target.position + Vector3.up * 1.5f;
-        float radians = settings.Azimuth.Value * Mathf.Deg2Rad;
+        float radians = azimuth * Mathf.Deg2Rad;
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
             settings.Height.Value, Mathf.Cos(radians) * settings.Distance.Value);
         Vector3 desired = focus + offset;
+        if (!IdleShots.Ready(focus) || !IdleShots.Ready(desired)) return false;
         if (!hasPose || revision != selectionRevision)
         {
             smoothedPosition = desired;
@@ -65,9 +65,11 @@ internal sealed class CameraRig
         if (ray.sqrMagnitude > 0.01f && Physics.SphereCast(focus, 0.3f, ray.normalized,
                 out RaycastHit hit, ray.magnitude, obstructionMask.Value, QueryTriggerInteraction.Ignore))
             visiblePosition = focus + ray.normalized * Mathf.Max(0.1f, hit.distance - 0.1f);
+        if (!IdleShots.Ready(visiblePosition)) return false;
         camera.transform.SetPositionAndRotation(visiblePosition, Quaternion.LookRotation(focus - visiblePosition, Vector3.up));
         camera.fieldOfView = settings.FieldOfView.Value;
         if (skyCamera) skyCamera.fieldOfView = settings.FieldOfView.Value;
+        return true;
     }
 
     internal void HideHud(bool hide)

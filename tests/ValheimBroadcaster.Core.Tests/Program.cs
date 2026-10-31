@@ -24,7 +24,20 @@ internal static class Program
             ("Invalid inputs fail explicitly without corrupting roster", InvalidInputs),
             ("Observer changes remove an accidentally selected observer", ObserverChange),
             ("Self test isolates the observer and normal mode excludes it again", SelfTestTransition),
-            ("Solo target remains stable through cycling, readiness, and refresh", SelfTestLifetime)
+            ("Solo target remains stable through cycling, readiness, and refresh", SelfTestLifetime),
+            ("Zero players alternates scenery and creatures", IdleAlternation),
+            ("No creatures maintains scenic coverage", ScenicFallback),
+            ("Creature loss immediately returns to scenery", CreatureLoss),
+            ("Ready player preempts idle and scene recovery", PlayerPriority),
+            ("Connected but unloaded player keeps idle footage", PendingPlayer),
+            ("Unavailable scene recovers when loaded", SceneRecovery),
+            ("Creature rotation is stable across snapshot ordering", CreatureRotation),
+            ("Hold pauses idle timing but does not block ready players", IdleHold),
+            ("Coverage reset clears session state", CoverageReset),
+            ("Coverage rejects invalid timing", CoverageValidation),
+            ("Acquisition is bounded for one target with cooldown", BoundedAcquisition),
+            ("Available player rotation integrates with idle fallback", CoverageIntegration),
+            ("24-hour simulated idle schedule stays valid", IdleSoak)
         };
 
         int failed = 0;
@@ -241,6 +254,120 @@ internal static class Program
         Throws<ArgumentNullException>(() => d.SetSelfTarget(null!));
         Equal("self", d.CurrentTarget!.Id);
         Equal(BroadcastState.Disabled, d.State);
+    }
+
+    private static CoverageDirector Coverage() => new CoverageDirector { ScenicSeconds = 10, CreatureSeconds = 5 };
+    private static readonly string[] Creatures = { "boar", "deer" };
+    private static readonly string[] None = Array.Empty<string>();
+
+    private static void IdleAlternation()
+    {
+        var c = Coverage();
+        c.Tick(0, null, 0, true, Creatures); Equal(CoverageMode.Scenic, c.Mode);
+        c.Tick(10, null, 0, true, Creatures); Equal(CoverageMode.Creature, c.Mode); Equal("boar", c.SubjectId);
+        c.Tick(5, null, 0, true, Creatures); Equal(CoverageMode.Scenic, c.Mode);
+        c.Tick(10, null, 0, true, Creatures); Equal("deer", c.SubjectId);
+    }
+    private static void ScenicFallback()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, None);
+        long revision = c.Revision;
+        c.Tick(86400, null, 0, true, None); Equal(CoverageMode.Scenic, c.Mode); Equal(revision, c.Revision);
+        c.Tick(0, null, 0, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
+    }
+    private static void CreatureLoss()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures);
+        c.Tick(0, null, 0, true, new[] { "deer" }, true);
+        Equal(CoverageMode.Scenic, c.Mode); Equal(null, c.SubjectId);
+    }
+    private static void PlayerPriority()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures);
+        c.Tick(0, "player", 1, false, Creatures); Equal(CoverageMode.Player, c.Mode); Equal("player", c.SubjectId);
+        False(c.AwaitingPlayers);
+        c.Tick(100, "player", 1, false, None); Equal("player", c.SubjectId);
+        c.Tick(0, null, 0, true, None); Equal(CoverageMode.Scenic, c.Mode);
+    }
+    private static void PendingPlayer()
+    {
+        var c = Coverage(); c.Tick(0, null, 2, true, Creatures);
+        True(c.AwaitingPlayers); Equal(CoverageMode.Scenic, c.Mode);
+        c.Tick(10, null, 2, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
+        c.Tick(0, "loaded", 2, true, Creatures); Equal(CoverageMode.Player, c.Mode); False(c.AwaitingPlayers);
+    }
+    private static void SceneRecovery()
+    {
+        var c = Coverage(); c.Tick(0, null, 1, false, Creatures); Equal(CoverageMode.Recovery, c.Mode); True(c.AwaitingPlayers);
+        c.Tick(100, null, 1, true, Creatures); Equal(CoverageMode.Scenic, c.Mode);
+        c.Tick(10, null, 1, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
+        c.Tick(0, null, 1, false, Creatures); Equal(CoverageMode.Recovery, c.Mode); Equal(null, c.SubjectId);
+    }
+    private static void CreatureRotation()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, Creatures); c.Tick(10, null, 0, true, new[] { "deer", "boar" });
+        Equal("boar", c.SubjectId);
+        c.Tick(5, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures); Equal("deer", c.SubjectId);
+        c.Tick(5, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures); Equal("boar", c.SubjectId);
+    }
+    private static void IdleHold()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, Creatures); c.Tick(100, null, 0, true, Creatures, true);
+        Equal(CoverageMode.Scenic, c.Mode);
+        c.Tick(10, null, 0, true, Creatures); c.Tick(100, null, 0, true, Creatures, true); Equal(CoverageMode.Creature, c.Mode);
+        c.Tick(0, "ready", 1, true, Creatures, true); Equal(CoverageMode.Player, c.Mode);
+    }
+    private static void CoverageReset()
+    {
+        var c = Coverage(); c.Tick(0, null, 1, true, Creatures); c.Tick(10, null, 1, true, Creatures);
+        c.Reset(); Equal(CoverageMode.Disabled, c.Mode); False(c.AwaitingPlayers); Equal(null, c.SubjectId);
+        c.Tick(0, null, 0, true, Creatures); c.Tick(10, null, 0, true, Creatures); Equal("boar", c.SubjectId);
+    }
+    private static void CoverageValidation()
+    {
+        var c = Coverage();
+        Throws<ArgumentOutOfRangeException>(() => c.Tick(double.NaN, null, 0, true, None));
+        Throws<ArgumentOutOfRangeException>(() => c.Tick(0, null, -1, true, None));
+        Throws<ArgumentOutOfRangeException>(() => c.ScenicSeconds = 0);
+        Throws<ArgumentOutOfRangeException>(() => c.CreatureSeconds = double.PositiveInfinity);
+        Throws<ArgumentNullException>(() => c.Tick(0, null, 0, true, null!));
+    }
+    private static void BoundedAcquisition()
+    {
+        var a = new AcquisitionWindow();
+        False(a.Tick(29, true, 20, 30)); True(a.Tick(1, true, 20, 30));
+        True(a.Tick(19, true, 20, 30)); False(a.Tick(1, true, 20, 30));
+        False(a.Tick(29, true, 20, 30)); True(a.Tick(1, true, 20, 30));
+        False(a.Tick(0, false, 20, 30)); False(a.Active);
+        False(a.Tick(0, true, 20, 30));
+        Throws<ArgumentOutOfRangeException>(() => a.Tick(-1, true, 20, 30));
+        True(a.Tick(100000, true, 20, 30)); // one transition, no catch-up loop
+        a.Reset(); False(a.Active);
+    }
+    private static void CoverageIntegration()
+    {
+        var players = Director("a", "b"); var c = Coverage();
+        c.Tick(0, players.CurrentTarget!.Id, 3, true, Creatures); Equal("a", c.SubjectId);
+        players.Next(); c.Tick(0, players.CurrentTarget!.Id, 3, true, Creatures); Equal("b", c.SubjectId);
+        players.SetRoster(new[] { new PlayerTarget("a", "A") });
+        players.Tick(100, true); c.Tick(0, players.CurrentTarget!.Id, 3, true, Creatures); Equal("a", c.SubjectId);
+        players.SetRoster(Array.Empty<PlayerTarget>()); c.Tick(0, players.CurrentTarget?.Id, 3, true, Creatures);
+        Equal(CoverageMode.Scenic, c.Mode); True(c.AwaitingPlayers);
+        players.SetRoster(new[] { new PlayerTarget("c", "C") });
+        c.Tick(0, players.CurrentTarget!.Id, 3, true, Creatures); Equal(CoverageMode.Player, c.Mode);
+    }
+    private static void IdleSoak()
+    {
+        var c = Coverage(); int scenic = 0, creature = 0;
+        for (int second = 0; second < 86400; second++)
+        {
+            c.Tick(1, null, 0, true, Creatures);
+            if (c.Mode == CoverageMode.Scenic) scenic++;
+            else if (c.Mode == CoverageMode.Creature) { creature++; True(Creatures.Contains(c.SubjectId)); }
+            else throw new Exception("Idle schedule entered unexpected state.");
+        }
+        True(scenic > creature && creature > 20000);
+        True(c.Revision < 20000);
     }
 
     private static void Equal<T>(T expected, T actual)

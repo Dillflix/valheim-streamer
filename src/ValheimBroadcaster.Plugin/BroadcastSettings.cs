@@ -6,6 +6,7 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class BroadcastSettings
 {
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
+    internal readonly ConfigEntry<float> ScenicDwell, CreatureDwell, CreatureRadius, OrbitSpeed, AcquisitionCooldown;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
@@ -22,6 +23,11 @@ internal sealed class BroadcastSettings
         StreamBitrate = config.Bind("Streaming", "VideoBitrateKbps", 4000, "H.264 video bitrate: 250–20000 kbps. Stereo AAC adds 128 kbps.");
         FlipVertical = config.Bind("Streaming", "FlipVertical", false, "Flip output if the receiver shows an upside-down image with your graphics backend.");
         StreamToggle = config.Bind("Controls", "StreamToggle", new KeyboardShortcut(KeyCode.F11), "Start/stop RTMP video and game audio. Requires active broadcast camera.");
+        ScenicDwell = config.Bind("Idle", "ScenicSeconds", 45f, Range("Scenic orbit duration before trying a nearby creature.", 5f, 600f));
+        CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Creature follow duration before returning to scenery.", 5f, 300f));
+        CreatureRadius = config.Bind("Idle", "CreatureRadius", 50f, Range("Loaded-creature search radius around the session anchor in metres.", 5f, 100f));
+        OrbitSpeed = config.Bind("Idle", "OrbitDegreesPerSecond", 2f, Range("Slow scenic orbit speed. Zero holds the scenic angle.", 0f, 10f));
+        AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));
         Height = config.Bind("Camera", "Height", 10f, Range("Height above target in metres.", 1f, 60f));
         FieldOfView = config.Bind("Camera", "FieldOfView", 75f, Range("Vertical camera field of view in degrees.", 30f, 110f));

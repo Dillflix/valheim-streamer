@@ -2,7 +2,7 @@
 
 ## Evidence available
 
-- The director's **16 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, and return to normal observer exclusion.
+- The director's **29 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
 - The core compiled against actual .NET Standard 2.0 reference assemblies with warnings treated as errors. Its executable test harness ran on .NET 8 against that compiled core.
 - The development container's ordinary `dotnet`/MSBuild path fails during process introspection (`Process.StartTime` / `ProcessName`). Direct invocation of the SDK's Roslyn compiler was used for the observed core checks. This is an environment limitation, not a replacement for checking the normal project build in CI or on a development machine.
 - The plugin compiled with warnings treated as errors using Roslyn 4.11 from .NET SDK **8.0.427**, actual Microsoft .NET Framework 4.8 reference assemblies (**1.0.3**), Jötunn **2.30.2**, BepInEx **5.4.23.2**, and real Valheim references. This checked the source against those assemblies; it did not establish that the normal MSBuild graph executes successfully in this container.
@@ -70,7 +70,7 @@ These cases are **pending in-game validation**. Start alone in a local test worl
 | Cycling and hold | Next/previous, automatic dwell, and hold/resume retain the single self target without errors |
 | Another player joins | Test roster remains self-only |
 | Remote setting enabled | Self mode uses normal local reference updates; entering from a distant shot restores the previous override |
-| Mode switch | `broadcast on` excludes self again and shows the waiting slate when alone; `broadcast self` re-enters test mode |
+| Mode switch | `broadcast on` excludes self again and enters scenic/creature coverage when alone; `broadcast self` re-enters test mode |
 | Cleanup | F8/off, death, world exit, and component disable restore view/HUD; re-entry via F8 is normal mode |
 | Capture | Direct RTMP captures the actual self-follow shot and test label, including main/sky FOV alignment |
 
@@ -84,15 +84,15 @@ Every case below is **pending in-game validation**.
 | --- | --- |
 | Startup/menu | Plugin logs its version and starts disabled; normal menus and camera work |
 | Headless load | No camera/UI initialization or graphical errors; plugin does not require clients to install it |
-| No other players | Enabling shows a waiting slate; stop restores ordinary view |
+| No other players | Enabling starts a slow orbit around the activation position, then creature/scenic alternation; stop restores ordinary view |
 | Two nearby players | Both appear in `broadcast list`; the observer does not; duplicate names remain independently selectable |
 | Follow shot | Target stays framed; FOV, height, azimuth, smoothing, and obstruction response match configuration |
 | Manual cycle | Next/previous wrap predictably and reset the camera pose without displaying a stale target |
 | Automatic cycle | Only ready footage consumes dwell time; rotation does not skip several targets after a frame stall |
 | Hold/resume | Hold stops timed switching; resume continues; manual switching remains possible |
-| Death/unavailable target | An unready target shows the slate; timeout chooses an alternative; holding keeps the target until operator action |
+| Death/unavailable target | An unready target leaves the ready roster; another ready player wins, otherwise idle runs; invalidation overrides hold |
 | Observer death | Broadcasting stops, the ordinary HUD/camera return, and experimental reference override is removed before respawn |
-| Target disconnect | Selection falls back to a surviving target; an empty roster returns to the slate |
+| Target disconnect | Selection falls back to a surviving target; an empty ready roster enters idle coverage, keeping connected-but-unavailable presence distinct |
 | Controls | Hotkeys are ignored in recognized UI/text entry; console commands report useful status and reject unknown IDs |
 | Stop/disable | Camera/FOV and prior HUD state restore; the observer can continue normally |
 | World/menu transitions | Leaving a world stops broadcasting; returning does not duplicate handlers or restore stale references |
@@ -118,3 +118,14 @@ Set `Experimental / RemoteTargets = true` only after the default matrix succeeds
 | Backend variants | Record Steam and crossplay outcomes separately; one does not establish the other |
 
 Do not promote distant mode to the default until the actual client/server combination passes these cases and the remaining observer effects are acceptable. Preserve logs and configuration with each result.
+
+## Continuous coverage (0.4.0) runtime checks — pending
+
+- Alone, F8 starts a local orbit; at default dwell values it alternates 45 seconds of scenery with 25 seconds following a loaded living non-player actor within 50 metres. No actor means continuous scenery.
+- Killing/despawning/moving the subject beyond the radius returns to scenery. Test wildlife, tamed animals, and enemies. No actor is spawned or controlled.
+- Joining ready players preempt idle and rotate; a lone ready player remains selected. Connected players outside the loaded area show awaiting-scene status while valid idle shots continue.
+- Run F11 throughout those automatic transitions and verify one uninterrupted RTMP connection with matching spatial audio. Explicit camera mode restarts (F10 / on / self) still stop output as documented.
+- Move the observer and run `broadcast anchor`; the new local anchor takes effect without stopping output. World exit/re-entry never reuses an old anchor or creature binding.
+- Test empty/unready scenes and orbit positions near the edge of loaded terrain: a recovery slate must hide invalid footage, and valid coverage must resume when ready.
+- With experimental remote mode enabled, verify attempt/cooldown bounds, reference restoration, eventual ready-player selection, and the documented recovery slate if remote loading unloads the local anchor.
+- Run actual eight-hour and 24-hour sessions before claiming unattended reliability. Record memory/texture/process counts, observer survival, A/V skew, target changes, and failures. These runs have not been performed here.
