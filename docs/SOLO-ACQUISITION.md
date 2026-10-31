@@ -4,7 +4,7 @@
 
 An actual Valheim 1.0.21 test on 0.5.0 went black after starting: probe status became Stopped at 0.1 seconds, local-player displacement was unavailable, and neither probe stop nor broadcast off recovered the view. The user exited the world.
 
-Assembly inspection shows `ZNetScene.CreateDestroyObjects` builds retention lists around `ZNet.GetReferencePosition`, then `RemoveObjects` destroys instances outside those lists with no local-player exemption. This explains a concrete route to the observed player loss; the original log is still needed to exclude additional failures.
+Assembly inspection shows `ZNetScene.CreateDestroyObjects` builds retention lists around `ZNet.GetReferencePosition`, then `RemoveObjects` destroys instances outside those lists with no local-player exemption. The supplied log confirms `Local player destroyed` immediately after the probe enters Acquiring, with no intervening exception. This confirms player destruction during the test and matches the inspected removal path.
 
 0.5.1 requires a matching `RemoveObjects(List<ZDO>, List<ZDO>)` guard before permitting reference overrides. The guard checks the captured observer ZDO against both retention lists. If absent, it aborts the acquisition, restores normal reference/camera/rendering state, stops broadcasting, and skips that unsafe removal pass so the next cycle recomputes local lists. Probe status remains Failed with the reason. This is not dual-region retention and not proof of successful distant acquisition. Do not interpret an abort as a passing scene test.
 

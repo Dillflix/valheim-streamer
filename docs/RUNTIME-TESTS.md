@@ -144,3 +144,9 @@ User screenshot: Valheim 1.0.21, probe Stopped after 0.1s, first-ready never, de
 Source investigation found that scene removal destroys instances outside lists generated around the overridden reference, including the observer. 0.5.1 adds a mandatory observer-retention guard and skips the unsafe removal pass while stopping/restoring owned state. Three new regressions cover observer exclusion/missing identity, normal/retained cases, and persistent failure reporting across cleanup. Both experimental remote following and solo probes use the guard.
 
 Pending runtime check: on a disposable world, a distant attempt must abort before observer removal and return to ordinary control. Check local terrain reload, player survival, HUD/render restoration and no missing-player exception. Actual dual-region loading remains unimplemented; the new guard is containment, not an acquisition success claim.
+
+### Log confirmation
+
+The supplied LogOutput.log identifies Windows x64, Valheim 1.0.21, Unity 6000.0.75, BepInEx 5.4.23.6 (pack 5.4.2360), Jötunn 2.30.2, and Broadcaster 0.5.0. Immediately after `SOLO DISTANT SCENE TEST | Acquiring | 0s | RTMP: Stopped`, Unity logs `Local player destroyed`. No intervening exception appears. The later disconnect corresponds to the user exiting the world. Thus this failure occurred without RTMP publishing and confirms local-player destruction rather than an encoder blackout. The full user log is not committed.
+
+The 0.5.1 CI build still uses the existing BepInEx 5.4.23.2 compile baseline; the supplied log records the actual tested runtime version separately. No successful 0.5.1 game runtime result has yet been recorded.
