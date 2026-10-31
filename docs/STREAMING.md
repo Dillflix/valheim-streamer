@@ -95,3 +95,11 @@ dotnet run --project tests/ValheimBroadcaster.Streaming.Tests -c Release
 ```
 
 CI runs this harness on Linux and Windows. It runs the production encoder/session code against an actual local RTMP listener using software encoding. On an NVIDIA-equipped host, append `-- --nvenc` to also run the same received-media and synchronization checks using NVENC. Hardware encoding is explicitly reported as not run unless requested. It validates encoder selection, bounded/redacted diagnostics, early-exit error preservation, input rejection, bounded buffers, mono/stereo transfer, process cleanup, codec metadata, decoded non-silent stereo audio, a synchronized flash/tone, an unavailable receiver, and publishing after the receiver restarts. Recovery policy checks exercise explicit-stop precedence, backoff, stable-output reset and a 48-hour simulated outage. The 0.8.0 local run passed all 66 checks. These checks do not instantiate Unity, prove game audio capture, establish actual multi-day operation, or measure a Windows VM's performance. Physical NVIDIA validation was not run. Follow the game-specific matrix in [RUNTIME-TESTS.md](RUNTIME-TESTS.md).
+
+## 0.8.1 audio startup repair
+
+The previous capture path could fill its half-second audio ring while FFmpeg was still opening video, before the audio socket connected. It then terminated the encoder with an ambiguous overflow/channel-format message. The screenshot from 0.8.0 establishes that ambiguous failure, not a proven NVIDIA driver or speaker-mode fault.
+
+The encoder now receives one initial video frame with raw-input probing minimized. Audio before the input connection is discarded as pre-roll; continuing video and audio share the connection epoch. Startup remains bounded to ten seconds. Buffer overflow after connection and unsupported callback channels have distinct messages, including observed channels, sample rate and connection state. Unsupported formats block automatic retries until an explicit restart.
+
+Client 0.8.1 remains protocol-compatible with server 0.8.0. Replace the client plugin and its matching Core DLL together. Live Valheim/NVENC validation remains pending.

@@ -21,16 +21,19 @@ internal sealed class EncoderSession
     private volatile bool stopping, closed;
     private string failure = "";
     private long lastVideo, lastAudio, lastProgress;
+    private long mediaStarted = -1;
+    private int audioChannels;
+    private volatile bool invalidAudioFormat;
     private volatile bool publishing;
     private volatile bool errorsComplete;
     private volatile bool cleanupBlocked;
     internal bool IsClosed => closed;
     internal bool IsStopping => stopping;
     internal bool IsPublishing => publishing && !stopping;
-    internal bool PermanentFailure => diagnostics.PermanentFailure;
+    internal bool PermanentFailure => invalidAudioFormat || diagnostics.PermanentFailure;
     internal bool CleanupBlocked => cleanupBlocked;
     internal string Status => failure.Length != 0 ? failure + diagnostics.Summary : closed ? "Stopped" : stopping ? "Stopping" : publishing ? "Publishing H.264 + AAC (" + options.VideoEncoder + ")" : "Starting encoder (" + options.VideoEncoder + ")";
-    internal string FailureDetails => failure.Length == 0 ? "" : failure + "\nEncoder: " + options.VideoEncoder + "\n" + diagnostics.Details;
+    internal string FailureDetails => failure.Length == 0 ? "" : failure + "\nEncoder: " + options.VideoEncoder + "; audio " + options.SampleRate + " Hz / " + Volatile.Read(ref audioChannels) + " channels; input connected " + (Interlocked.Read(ref mediaStarted) >= 0) + "\n" + diagnostics.Details;
     internal int SampleRate => options.SampleRate;
 
     internal EncoderSession(StreamOptions options)
@@ -86,9 +89,19 @@ internal sealed class EncoderSession
     internal void SubmitAudio(float[] data, int channels)
     {
         if (stopping) return;
-        if (!audio.Push(data, channels))
-        { Fail("Audio buffer overflow or unsupported channels; use stereo audio and restart."); return; }
+        Volatile.Write(ref audioChannels, channels);
         Interlocked.Exchange(ref lastAudio, clock.ElapsedMilliseconds);
+        if ((channels != 1 && channels != 2) || data.Length % channels != 0)
+        {
+            invalidAudioFormat = true;
+            Fail("Unsupported game audio callback format: " + channels + " channels; select mono/stereo output and restart streaming.");
+            return;
+        }
+        // Pre-roll is not part of the output timeline. Never accumulate it while
+        // FFmpeg is opening its inputs (which can take seconds on a cold start).
+        if (Interlocked.Read(ref mediaStarted) < 0) return;
+        if (!audio.Push(data, channels))
+            Fail("Audio buffer overflow after input connected; encoder consumption fell behind game audio. Check encoder/receiver load.");
     }
 
     internal void Stop() { stopping = true; }
@@ -109,7 +122,7 @@ internal sealed class EncoderSession
     {
         while (!stopping)
         {
-            double remaining = dueMilliseconds - clock.Elapsed.TotalMilliseconds;
+            double remaining = Interlocked.Read(ref mediaStarted) + dueMilliseconds - clock.Elapsed.TotalMilliseconds;
             if (remaining <= 0)
             {
                 if (remaining < -1500) { Fail("Encoder fell behind real time; reduce resolution/FPS or check receiver."); return false; }
@@ -126,7 +139,12 @@ internal sealed class EncoderSession
         {
             byte[] frame = new byte[options.Width * options.Height * 4];
             Stream pipe = process.StandardInput.BaseStream;
-            for (long number = 0; Pace(number * 1000.0 / options.Fps); number++)
+            // One timestamp-zero frame lets FFmpeg open raw video before it opens
+            // audio. Both continuing writers then use the audio connection epoch.
+            frame = video.Take(frame);
+            pipe.Write(frame, 0, frame.Length);
+            while (!stopping && Interlocked.Read(ref mediaStarted) < 0) Thread.Sleep(5);
+            for (long number = 1; Pace(number * 1000.0 / options.Fps); number++)
             {
                 frame = video.Take(frame);
                 pipe.Write(frame, 0, frame.Length);
@@ -142,6 +160,7 @@ internal sealed class EncoderSession
             using (TcpClient client = listener.AcceptTcpClient())
             {
                 client.SendTimeout = 5000;
+                Interlocked.Exchange(ref mediaStarted, clock.ElapsedMilliseconds);
                 using (NetworkStream pipe = client.GetStream())
                 {
                     float[] chunk = new float[options.SampleRate / 50 * 2]; // 20 ms stereo.
@@ -165,6 +184,7 @@ internal sealed class EncoderSession
             while (!stopping)
             {
                 long now = clock.ElapsedMilliseconds;
+                if (now > 10000 && Interlocked.Read(ref mediaStarted) < 0) Fail("FFmpeg did not open its audio input within ten seconds. Check the executable and encoder startup diagnostics.");
                 if (process.HasExited) { Fail("FFmpeg exited. See RTMP diagnostics in LogOutput.log."); break; }
                 if (now - Interlocked.Read(ref lastVideo) > 5000) Fail("No video frames for five seconds; restore the game window and restart.");
                 if (now - Interlocked.Read(ref lastAudio) > 5000) Fail("No game audio callbacks for five seconds; check the audio device and restart.");

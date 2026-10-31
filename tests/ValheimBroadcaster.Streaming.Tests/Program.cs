@@ -56,6 +56,14 @@ internal static class Program
             catch (InvalidOperationException e) { missing = !e.Message.Contains("rtmp"); }
             Check(missing, "missing encoder gives a redacted error");
             Loopback(VideoEncoderKind.libx264);
+            if (!OperatingSystem.IsWindows())
+            {
+                string delayed = Path.Combine(Path.GetTempPath(), "valheim-delayed-ffmpeg-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(delayed, "#!/bin/sh\nsleep 1\nexec ffmpeg \"$@\"\n");
+                File.SetUnixFileMode(delayed, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                try { Loopback(VideoEncoderKind.libx264, delayed); }
+                finally { File.Delete(delayed); }
+            }
             if (Array.IndexOf(args, "--nvenc") >= 0) Loopback(VideoEncoderKind.h264_nvenc);
             else Console.WriteLine("NOT RUN: NVENC hardware loopback (use --nvenc on an NVIDIA-equipped host).");
             Console.WriteLine($"{checks} streaming checks passed.");
@@ -114,7 +122,7 @@ internal static class Program
         Check(denied.PermanentFailure, "known authorization rejection requires operator correction");
     }
 
-    private static void Loopback(VideoEncoderKind videoEncoder)
+    private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg")
     {
         var reserve = new TcpListener(IPAddress.Loopback, 0);
         reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
@@ -129,7 +137,7 @@ internal static class Program
         try
         {
             Thread.Sleep(500); // FFmpeg must bind before the publisher connects.
-            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder };
+            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder, Executable = executable };
             encoder = new EncoderSession(options);
             byte[] frame = new byte[320 * 180 * 4];
             float[] audio = new float[1920];

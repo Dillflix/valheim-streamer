@@ -12,7 +12,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.0")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.1")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 public sealed class ObserverServerPlugin : BaseUnityPlugin
@@ -62,7 +62,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.0 ready; opt-in dedicated Steam connections only. No ordinary-client mod requirement. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.1 ready; opt-in dedicated Steam connections only. No ordinary-client mod requirement. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {

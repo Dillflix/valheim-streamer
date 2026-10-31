@@ -22,7 +22,7 @@ internal sealed class StreamRecovery
         "Retry in " + policy.RetryIn(Time.realtimeSinceStartup).ToString("F0") + "s (attempts " + policy.Attempts + ")";
     internal string Diagnostics => "RTMP: " + Status + "\nEncoder: " + encoder + "; desired " + policy.Desired +
         "; manual stop " + policy.ManualSuppressed + "; attempts " + policy.Attempts + "; failures in retry cycle " + policy.FailuresInBurst +
-        "\nLast failure: " + policy.LastFailure + "\n" + capture.Diagnostics;
+        "\nLast failure: " + policy.LastFailure;
 
     internal StreamRecovery(StreamCapture capture, Func<StreamOptions> options, Func<AudioListener?> listener, Action<string> log)
     { this.capture = capture; this.options = options; this.listener = listener; this.log = log; }

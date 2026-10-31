@@ -194,3 +194,7 @@ After the local dedicated-server setup instructions, the user reported: “All c
 | Solo coverage | `Watching` / `Scenic` observed |
 
 `Scenic` alone is consistent with the current creature eligibility rules and dormant regions; it is not evidence that the server feed, autonomous region selection or creature simulation exists. The user explicitly deferred creature improvements. **Still pending:** visibility and interactions observed from an ordinary client, simulation-ownership handoff, sleep/events/capacity behavior, negative authorization cases, reconnect/soak testing, confirmation that the flicker is resolved, and actual RTMP video/audio quality. The subsequent autonomous milestone needs its own runtime tests; the 0.7.0 report does not validate new code.
+
+## 0.8.1 audio startup regression
+
+A one-second executable-start delay reproduced the screenshot's exact ambiguous audio error using the 0.8.0 encoder code with stereo input. The repaired encoder passed the same real FFmpeg fixture, with decoded audio/video synchronization checked. All 86 local streaming checks passed (66 normal checks plus 20 delayed-start loopback/recovery checks). The delay fixture uses a POSIX exec wrapper and runs on Linux; Windows CI runs the normal 66-check suite. Client compilation against pinned real references passed with warnings as errors. This demonstrates a startup race, but does not prove that every instance of the screenshot error had that cause. Retest actual Valheim audio capture and NVENC on the user's machine.

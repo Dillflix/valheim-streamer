@@ -37,7 +37,7 @@ internal sealed class StreamCapture : MonoBehaviour
         if (!SystemInfo.supportsAsyncGPUReadback) throw new EncoderStartException("This GPU does not support asynchronous frame readback.");
         if (!gameListener || !gameListener.isActiveAndEnabled) throw new InvalidOperationException("The game audio listener is unavailable.");
         if (AudioSettings.speakerMode != AudioSpeakerMode.Stereo && AudioSettings.speakerMode != AudioSpeakerMode.Mono)
-            throw new InvalidOperationException("Select stereo audio output before starting the stream.");
+            throw new ArgumentException("Unsupported speaker mode: " + AudioSettings.speakerMode + ". Select mono/stereo audio output before starting the stream.");
         try
         {
             ReportFailure();

@@ -42,8 +42,8 @@ internal sealed class StreamOptions
         Validate();
         return string.Format(CultureInfo.InvariantCulture,
             "-hide_banner -loglevel error -nostdin -nostats " +
-            "-thread_queue_size 8 -f rawvideo -pixel_format rgba -video_size {0}x{1} -framerate {2} -i pipe:0 " +
-            "-thread_queue_size 8 -f f32le -ar {3} -ac 2 -i tcp://127.0.0.1:{4} " +
+            "-thread_queue_size 8 -probesize 32 -analyzeduration 0 -fpsprobesize 0 -f rawvideo -pixel_format rgba -video_size {0}x{1} -framerate {2} -i pipe:0 " +
+            "-thread_queue_size 8 -probesize 32 -analyzeduration 0 -f f32le -ar {3} -ac 2 -i tcp://127.0.0.1:{4} " +
             "-map 0:v:0 -map 1:a:0 {5}{10} " +
             "-pix_fmt yuv420p -bf 0 -g {6} -keyint_min {6} -b:v {7}k -maxrate {7}k -bufsize {8}k " +
             "-c:a aac -b:a 128k -ar 48000 -progress pipe:1 -rw_timeout 5000000 " +
