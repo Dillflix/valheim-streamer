@@ -28,7 +28,7 @@ internal sealed class StreamCapture : MonoBehaviour
     internal long Generation { get; private set; }
     internal bool CanStart => !active && !pending && (session == null || session.IsClosed);
     internal string Status => session?.Status ?? "Stopped";
-    internal string Diagnostics => session?.FailureDetails ?? "No encoder session.";
+    internal string Diagnostics => session == null ? "No encoder session." : session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails;
 
     internal void Begin(StreamOptions options, AudioListener gameListener, Action<string>? onFailure = null)
     {

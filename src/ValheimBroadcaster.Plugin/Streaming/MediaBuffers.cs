@@ -9,6 +9,7 @@ internal sealed class AudioRing
 {
     private readonly float[] samples;
     private long written, read;
+    internal long QueuedSamples => Math.Max(0, Volatile.Read(ref written) - Volatile.Read(ref read));
     internal AudioRing(int capacity) { samples = new float[capacity]; }
     internal bool Push(float[] data, int channels)
     {

@@ -56,6 +56,7 @@ internal static class Program
             catch (InvalidOperationException e) { missing = !e.Message.Contains("rtmp"); }
             Check(missing, "missing encoder gives a redacted error");
             Loopback(VideoEncoderKind.libx264);
+            Loopback(VideoEncoderKind.libx264, overload: true);
             if (!OperatingSystem.IsWindows())
             {
                 string delayed = Path.Combine(Path.GetTempPath(), "valheim-delayed-ffmpeg-" + Guid.NewGuid().ToString("N"));
@@ -122,7 +123,7 @@ internal static class Program
         Check(denied.PermanentFailure, "known authorization rejection requires operator correction");
     }
 
-    private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg")
+    private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg", bool overload = false)
     {
         var reserve = new TcpListener(IPAddress.Loopback, 0);
         reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
@@ -159,8 +160,21 @@ internal static class Program
                     audio[i * 2 + 1] = -value; // Preserve distinct left/right channels.
                 }
                 encoder.SubmitAudio(audio, 2);
-                if (encoder.IsStopping) throw new Exception("Publisher stopped early: " + encoder.Status);
+                if (overload) encoder.SubmitAudio(audio, 2);
+                if (encoder.IsStopping)
+                {
+                    if (!overload) throw new Exception("Publisher stopped early: " + encoder.Status);
+                    Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "overproduction closes encoder workers");
+                    string details = encoder.FailureDetails;
+                    var rate = System.Text.RegularExpressions.Regex.Match(details, @"average (\d+) frames/s");
+                    Check(details.Contains("Audio queue filled") && rate.Success && int.Parse(rate.Groups[1].Value) > 80000,
+                        "failure telemetry identifies doubled callback sample rate");
+                    Check(details.Contains("expected 48000") && details.Contains("queued ") && details.Contains("write blocked ") && details.Contains("Timing at failure"),
+                        "failure telemetry preserves queue and writer timing after cleanup");
+                    return;
+                }
             }
+            if (overload) throw new Exception("Unbounded overproduction did not fail");
             Check(encoder.Status == "Publishing H.264 + AAC (" + videoEncoder + ")", "encoder reports actual mux progress and selected encoder");
             encoder.Stop(); encoder.Stop();
             Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "idempotent stop closes encoder and workers");

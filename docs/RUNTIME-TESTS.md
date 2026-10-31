@@ -198,3 +198,7 @@ After the local dedicated-server setup instructions, the user reported: “All c
 ## 0.8.1 audio startup regression
 
 A one-second executable-start delay reproduced the screenshot's exact ambiguous audio error using the 0.8.0 encoder code with stereo input. The repaired encoder passed the same real FFmpeg fixture, with decoded audio/video synchronization checked. All 86 local streaming checks passed (66 normal checks plus 20 delayed-start loopback/recovery checks). The delay fixture uses a POSIX exec wrapper and runs on Linux; Windows CI runs the normal 66-check suite. Client compilation against pinned real references passed with warnings as errors. This demonstrates a startup race, but does not prove that every instance of the screenshot error had that cause. Retest actual Valheim audio capture and NVENC on the user's machine.
+
+## 0.8.2 diagnostic build
+
+The user's 0.8.1 retest still fails after the audio socket connects, at 48000 Hz and two channels, without FFmpeg stderr. The startup repair is therefore insufficient for this machine. This build adds frozen failure-time capture-rate, queue, media-age, publishing and audio/video writer measurements; it does not claim a runtime fix. A production-session test deliberately submits twice the nominal sample rate and checks that the recorded failure distinguishes excess capture from an unexplained encoder failure. Existing queue limits and retry behavior are retained. Server protocol is unchanged.
