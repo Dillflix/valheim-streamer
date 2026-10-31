@@ -127,3 +127,7 @@ See [STREAMING.md](docs/STREAMING.md) for Thunderstore setup, receiver testing, 
 A VM needs accelerated 3D rendering and a working audio device, even if no physical speakers are attached. This first encoder uses software H.264, so budget CPU as well as GPU/capture overhead. Streaming uses a normal authenticated game client; this project does not change platform authentication or game licensing.
 
 See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUNTIME-TESTS.md), and [implementation sources](docs/SOURCES.md).
+
+## Continuous coverage roadmap
+
+[IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) proposes player-priority coverage with scenic anchors, loaded wildlife, and bounded recovery for an unattended client. This is a design for the next milestone; 0.3.0 still uses the waiting slate when no eligible target is loaded.
