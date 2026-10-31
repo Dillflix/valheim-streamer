@@ -41,7 +41,10 @@ internal static class Program
             ("Solo probe acquires and preserves readiness timing", ProbeReady),
             ("Solo probe timeout and stop restore inactive policy", ProbeTimeout),
             ("Solo probe bounds total duration and readiness loss", ProbeLifetime),
-            ("Recent creatures are excluded until cooldown", CreatureCooldown)
+            ("Recent creatures are excluded until cooldown", CreatureCooldown),
+            ("Distant removal excludes observer and must abort", RetentionAbort),
+            ("Normal removal and retained observer remain untouched", RetentionAllowed),
+            ("Probe failure survives cleanup and resets on restart", ProbeFailure)
         };
 
         int failed = 0;
@@ -405,6 +408,31 @@ internal static class Program
         c.Tick(10, null, 0, true, new[] { "boar" });
         Equal(CoverageMode.Scenic, c.Mode); True(c.Revision > revision);
         c.Tick(300, null, 0, true, new[] { "boar" }); Equal("boar", c.SubjectId);
+    }
+
+    private static void RetentionAbort()
+    {
+        var observer = new object(); var distantActor = new object();
+        True(SceneRetention.MustAbort(true, observer, new[] { distantActor }, Array.Empty<object>()));
+        True(SceneRetention.MustAbort<object>(true, null, new[] { distantActor }, Array.Empty<object>()));
+        // These are the already-computed removal inputs; restoring reference alone
+        // cannot make them safe. The caller must skip this pass and recompute.
+        var recomputed = new[] { observer };
+        False(SceneRetention.MustAbort(true, observer, recomputed, Array.Empty<object>()));
+    }
+    private static void RetentionAllowed()
+    {
+        var observer = new object();
+        False(SceneRetention.MustAbort(false, observer, Array.Empty<object>(), Array.Empty<object>()));
+        False(SceneRetention.MustAbort(true, observer, new[] { observer }, Array.Empty<object>()));
+        False(SceneRetention.MustAbort(true, observer, Array.Empty<object>(), new[] { observer }));
+    }
+    private static void ProbeFailure()
+    {
+        var p = new SceneProbe(); p.Start(); p.Tick(0.1, false);
+        p.Fail("observer excluded"); p.Stop(); p.Tick(100, true);
+        Equal(ProbeState.Failed, p.State); Equal("observer excluded", p.FailureReason); False(p.Active);
+        p.Start(); Equal(null, p.FailureReason); Equal(ProbeState.Acquiring, p.State);
     }
 
     private static void Equal<T>(T expected, T actual)

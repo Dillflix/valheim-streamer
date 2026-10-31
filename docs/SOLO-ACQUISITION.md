@@ -1,6 +1,18 @@
 # Distant scene acquisition with only the broadcaster
 
-0.5.0 adds an explicit no-teleport scene probe. It tests real network-reference loading and camera rendering without inventing another player. Use a disposable world/character because the observer remains a normal simulated player.
+## Known failure and 0.5.1 containment
+
+An actual Valheim 1.0.21 test on 0.5.0 went black after starting: probe status became Stopped at 0.1 seconds, local-player displacement was unavailable, and neither probe stop nor broadcast off recovered the view. The user exited the world.
+
+Assembly inspection shows `ZNetScene.CreateDestroyObjects` builds retention lists around `ZNet.GetReferencePosition`, then `RemoveObjects` destroys instances outside those lists with no local-player exemption. This explains a concrete route to the observed player loss; the original log is still needed to exclude additional failures.
+
+0.5.1 requires a matching `RemoveObjects(List<ZDO>, List<ZDO>)` guard before permitting reference overrides. The guard checks the captured observer ZDO against both retention lists. If absent, it aborts the acquisition, restores normal reference/camera/rendering state, stops broadcasting, and skips that unsafe removal pass so the next cycle recomputes local lists. Probe status remains Failed with the reason. This is not dual-region retention and not proof of successful distant acquisition. Do not interpret an abort as a passing scene test.
+
+On the affected old build, exit/rejoin to recreate the normal client state; stop commands cannot reconstruct a removed local player. Keep RemoteTargets disabled for normal use. The containment change is compiled/unit-tested but still requires runtime verification on a disposable character/world, with logs preserved. After a guarded abort, the expected result is ordinary camera/player control and no persistent black view. If it still fails, exit and preserve LogOutput.log; do not repeat the probe.
+
+## Original diagnostic workflow
+
+0.5.0 added an explicit no-teleport scene probe. It tests real network-reference loading and camera rendering without inventing another player. Use a disposable world/character because the observer remains a normal simulated player.
 
 1. Enable Valheim's console using `-console` in the launch arguments used by your Thunderstore profile.
 2. Visit an identifiable location (terrain, structures and creatures you can compare later). Run `broadcast probe mark` in F5. This saves your position only for this world session; it creates no object.

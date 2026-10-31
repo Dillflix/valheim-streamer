@@ -2,7 +2,7 @@
 
 ## Evidence available
 
-- The director's **33 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
+- The director's **36 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.
 - The core compiled against actual .NET Standard 2.0 reference assemblies with warnings treated as errors. Its executable test harness ran on .NET 8 against that compiled core.
 - The development container's ordinary `dotnet`/MSBuild path fails during process introspection (`Process.StartTime` / `ProcessName`). Direct invocation of the SDK's Roslyn compiler was used for the observed core checks. This is an environment limitation, not a replacement for checking the normal project build in CI or on a development machine.
 - The plugin compiled with warnings treated as errors using Roslyn 4.11 from .NET SDK **8.0.427**, actual Microsoft .NET Framework 4.8 reference assemblies (**1.0.3**), Jötunn **2.30.2**, BepInEx **5.4.23.2**, and real Valheim references. This checked the source against those assemblies; it did not establish that the normal MSBuild graph executes successfully in this container.
@@ -136,3 +136,11 @@ Do not promote distant mode to the default until the actual client/server combin
 - Verify normal footage excludes the broadcaster and newly equipped items; stopping restores rendering. F10 remains visible. Use another client to confirm local masking does not falsely imply network invisibility.
 - Exercise probe mark/start/stop/status with a distant unloaded destination, timeout, readiness loss, total-duration expiry, F8, death and world exit. Confirm return to ordinary interest and no stale cross-world marker.
 - A real game soak test remains necessary. The automated timing simulations do not establish dynamic shot quality, terrain fidelity, passive observer behavior, or long-running stream health.
+
+## Observed 0.5.0 failure / 0.5.1 containment
+
+User screenshot: Valheim 1.0.21, probe Stopped after 0.1s, first-ready never, destination/player displacement unavailable. User confirmed probe stop and broadcast off did not restore the black view and exited the world. This is a failed runtime result, not a timeout or successful acquisition.
+
+Source investigation found that scene removal destroys instances outside lists generated around the overridden reference, including the observer. 0.5.1 adds a mandatory observer-retention guard and skips the unsafe removal pass while stopping/restoring owned state. Three new regressions cover observer exclusion/missing identity, normal/retained cases, and persistent failure reporting across cleanup. Both experimental remote following and solo probes use the guard.
+
+Pending runtime check: on a disposable world, a distant attempt must abort before observer removal and return to ordinary control. Check local terrain reload, player survival, HUD/render restoration and no missing-player exception. Actual dual-region loading remains unimplemented; the new guard is containment, not an acquisition success claim.

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using System.Reflection;
 using BepInEx;
 using HarmonyLib;
@@ -19,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.5.0";
+    public const string PluginVersion = "0.5.1";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -46,6 +47,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private bool selfTest;
     private ZNet? activeWorld;
     private Vector3? remoteReference;
+    private ZDO? retainedObserver;
+    private string? acquisitionFailure;
     private Vector3? normalReference;
     private ZNet? referenceOwner;
     private long lastRevision = -1;
@@ -76,8 +79,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 listenerPatchAvailable = true;
             }
             MethodInfo? referenceMethod = AccessTools.Method(typeof(ZNet), "SetReferencePosition", new[] { typeof(Vector3) });
-            if (referenceMethod != null)
+            MethodInfo? removeMethod = AccessTools.Method(typeof(ZNetScene), "RemoveObjects", new[] { typeof(List<ZDO>), typeof(List<ZDO>) });
+            if (referenceMethod != null && removeMethod != null)
             {
+                harmony.Patch(removeMethod, prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(BeforeRemoveObjects)));
                 harmony.Patch(referenceMethod, prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(BeforeReferencePosition)));
                 remotePatchAvailable = true;
             }
@@ -99,7 +104,16 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (!ZNet.instance || probeWorld != ZNet.instance) { probeMarker = null; probeWorld = null; }
         if (!Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || (director.IsEnabled && activeWorld != ZNet.instance))
         {
-            if (director.IsEnabled) Stop();
+            if (director.IsEnabled)
+            {
+                if (remoteReference.HasValue && !Player.m_localPlayer && ZNet.instance)
+                {
+                    acquisitionFailure = "Local player became unavailable during acquisition. Stopped; rejoin if the normal view does not return.";
+                    probe.Fail(acquisitionFailure);
+                    Logger.LogError(acquisitionFailure);
+                }
+                Stop();
+            }
             return;
         }
         // Hotkeys must not fire while the player types into chat/console or navigates a menu.
@@ -196,6 +210,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     {
         if (!enabled || !Player.m_localPlayer || Player.m_localPlayer.IsDead() || !ZNet.instance || !ZNetScene.instance) return false;
         Stop(); // Restore any previous camera/HUD/reference before switching modes.
+        acquisitionFailure = null;
         selfTest = testSelf;
         activeWorld = ZNet.instance;
         idle.SetRegion(Player.m_localPlayer.transform.position);
@@ -250,6 +265,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             RestoreReference();
             referenceOwner = ZNet.instance;
             normalReference = referenceOwner.GetReferencePosition();
+            retainedObserver = Player.m_localPlayer ? Player.m_localPlayer.GetComponent<ZNetView>()?.GetZDO() : null;
         }
         remoteReference = position;
         // The setter patch also covers subsequent normal game updates. Do not change send timers.
@@ -258,10 +274,33 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void RestoreReference()
     {
+        retainedObserver = null;
         remoteReference = null; // Remove override before calling the original setter.
         if (referenceOwner && normalReference.HasValue) referenceOwner.SetReferencePosition(normalReference.Value);
         referenceOwner = null;
         normalReference = null;
+    }
+
+    private static bool BeforeRemoveObjects(List<ZDO> __0, List<ZDO> __1)
+    {
+        BroadcasterPlugin? plugin = instance;
+        if (plugin == null || !plugin.remoteReference.HasValue) return true;
+        try
+        {
+            if (!SceneRetention.MustAbort(true, plugin.retainedObserver, __0, __1)) return true;
+            plugin.acquisitionFailure = "Acquisition aborted before scene removal: the distant reference excludes the observer. Dual-region retention is required; non-teleport travel is not safe on this path.";
+            plugin.probe.Fail(plugin.acquisitionFailure);
+            plugin.Logger.LogError(plugin.acquisitionFailure);
+            plugin.Stop(); // Clear override, restore camera/HUD/renderers, release encoder.
+        }
+        catch (Exception error)
+        {
+            plugin.Logger.LogError("Scene retention guard failed; cancelling acquisition before removal: " + error.GetType().Name);
+            plugin.Stop();
+        }
+        // Lists were computed for the unsafe distant reference. Do not pass them to
+        // vanilla removal after restoring local interest. Next cycle recomputes them.
+        return false;
     }
 
     private static void BeforeReferencePosition(ZNet __instance, ref Vector3 __0)
@@ -364,6 +403,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private string Status()
     {
+        if (acquisitionFailure != null) return acquisitionFailure;
         if (probe.Active) return $"SOLO DISTANT SCENE TEST | {probe.State} | {probe.Elapsed:F0}s | RTMP: {stream?.Status ?? "Stopped"}";
         string subject = coverage.Mode == CoverageMode.Player ? roster.Find(coverage.SubjectId)?.Identity.Name ?? "Player" :
             coverage.Mode == CoverageMode.Creature ? idle.Find(coverage.SubjectId)?.GetHoverName() ?? "Creature" : "Scenery";
@@ -404,6 +444,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 RestoreReference();
                 acquisitionWindow.Reset();
                 probeOrigin = Player.m_localPlayer.transform.position;
+                acquisitionFailure = null;
                 probe.Start(); rig.ResetPose(); cameraReady = false;
                 SetReference(probeMarker.Value);
                 Logger.LogWarning("Solo scene probe started: changing network interest only, no teleport. 30s acquisition timeout, 120s total limit. Scene readiness is not proof of full scene delivery.");
@@ -411,12 +452,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 return;
             case "stop":
                 probe.Stop(); RestoreReference(); acquisitionWindow.Reset(); rig.ResetPose(); cameraReady = false;
-                context?.AddString("Probe stopped; normal coverage resumes without restarting RTMP.");
+                context?.AddString(director.IsEnabled ? "Probe stopped; normal coverage resumes without restarting RTMP." : "Probe is inactive; broadcast camera is off. " + (acquisitionFailure ?? ""));
                 return;
             case "status":
                 string distanceText = probeMarker.HasValue && Player.m_localPlayer ? Vector3.Distance(Player.m_localPlayer.transform.position, probeMarker.Value).ToString("F0") + "m" : "unavailable";
                 string moved = Player.m_localPlayer && probe.State != ProbeState.Idle ? Vector3.Distance(Player.m_localPlayer.transform.position, probeOrigin).ToString("F1") + "m" : "unavailable";
-                context?.AddString($"Probe: {probe.State}; elapsed {probe.Elapsed:F1}s; first-ready {probe.FirstReadySeconds?.ToString("F1") ?? "never"}s; destination distance {distanceText}; observer displacement {moved}. Readiness is not a complete-scene verdict.");
+                context?.AddString($"Probe: {probe.State}; elapsed {probe.Elapsed:F1}s; first-ready {probe.FirstReadySeconds?.ToString("F1") ?? "never"}s; destination distance {distanceText}; observer displacement {moved}. Readiness is not a complete-scene verdict. {probe.FailureReason ?? ""}");
                 return;
             default: context?.AddString("broadcast probe mark|start|stop|status"); return;
         }
