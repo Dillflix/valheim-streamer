@@ -103,3 +103,7 @@ The previous capture path could fill its half-second audio ring while FFmpeg was
 The encoder now receives one initial video frame with raw-input probing minimized. Audio before the input connection is discarded as pre-roll; continuing video and audio share the connection epoch. Startup remains bounded to ten seconds. Buffer overflow after connection and unsupported callback channels have distinct messages, including observed channels, sample rate and connection state. Unsupported formats block automatic retries until an explicit restart.
 
 Client 0.8.1 remains protocol-compatible with server 0.8.0. Replace the client plugin and its matching Core DLL together. Live Valheim/NVENC validation remains pending.
+
+### 0.8.3 output readiness
+
+An audio socket connection does not finish FFmpeg/RTMP startup. The mod now waits for mux progress and for both media writers to reach the shared real-time schedule before admitting live audio. During that bounded startup interval it sends silence and the latest video; it does not queue old game audio. `Synchronizing live audio/video` distinguishes this from healthy publishing. Startup settling fails after ten seconds; normal half-second audio capacity and 1.5-second writer-lateness guards remain active once live. Client 0.8.3 still works with server 0.8.0.

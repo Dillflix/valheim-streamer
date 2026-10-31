@@ -27,15 +27,15 @@ internal sealed class EncoderSession
     private long firstCallback = -1, failureAt = -1, audioWriteSince = -1, videoWriteSince = -1;
     private long lastAudioWrite = -1, lastVideoWrite = -1, queuedAtFailure;
     private volatile bool invalidAudioFormat;
-    private volatile bool publishing;
+    private volatile bool publishing, liveAudioReady;
     private volatile bool errorsComplete;
     private volatile bool cleanupBlocked;
     internal bool IsClosed => closed;
     internal bool IsStopping => stopping;
-    internal bool IsPublishing => publishing && !stopping;
+    internal bool IsPublishing => publishing && liveAudioReady && !stopping;
     internal bool PermanentFailure => invalidAudioFormat || diagnostics.PermanentFailure;
     internal bool CleanupBlocked => cleanupBlocked;
-    internal string Status => failure.Length != 0 ? failure + diagnostics.Summary : closed ? "Stopped" : stopping ? "Stopping" : publishing ? "Publishing H.264 + AAC (" + options.VideoEncoder + ")" : "Starting encoder (" + options.VideoEncoder + ")";
+    internal string Status => failure.Length != 0 ? failure + diagnostics.Summary : closed ? "Stopped" : stopping ? "Stopping" : publishing ? (liveAudioReady ? "Publishing H.264 + AAC (" + options.VideoEncoder + ")" : "Synchronizing live audio/video") : "Starting encoder (" + options.VideoEncoder + ")";
     internal string FailureDetails => failure.Length == 0 ? "" : failure + "\nEncoder: " + options.VideoEncoder + "; audio " + options.SampleRate + " Hz / " + Volatile.Read(ref audioChannels) + " channels; input connected " + (Interlocked.Read(ref mediaStarted) >= 0) + "\n" + failureTiming + "\n" + diagnostics.Details;
     internal string TimingDetails
     {
@@ -49,7 +49,7 @@ internal sealed class EncoderSession
             double rate = first >= 0 && now > first ? frames * 1000.0 / (now - first) : 0;
             long queued = failed >= 0 ? Interlocked.Read(ref queuedAtFailure) : audio.QueuedSamples;
             return "Timing at " + (failed >= 0 ? "failure" : "observation") + ": session " + now + "ms; audio connected " + (began >= 0 ? (now - began) + "ms ago" : "never") +
-                "; mux progress " + publishing + "; mode " + options.Width + "x" + options.Height + "@" + options.Fps +
+                "; mux progress " + publishing + "; live audio ready " + liveAudioReady + "; mode " + options.Width + "x" + options.Height + "@" + options.Fps +
                 "\nCapture: " + Interlocked.Read(ref audioCallbacks) + " callbacks; " + frames + " frames; average " + rate.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " frames/s (expected " + options.SampleRate + "); since connect " + Interlocked.Read(ref connectedFrames) +
                 "\nAudio: queued " + (queued * 500.0 / options.SampleRate).ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "ms; consumed " + Interlocked.Read(ref consumedFrames) + " real frames; sent " + Interlocked.Read(ref sentFrames) + " total frames; write blocked " + WriteAge(audioWriteSince, now) + "ms; last write " + WriteAge(lastAudioWrite, now) + "ms ago" +
                 "\nVideo: " + Interlocked.Read(ref videoWrites) + " writes; write blocked " + WriteAge(videoWriteSince, now) + "ms; last write " + WriteAge(lastVideoWrite, now) + "ms ago";
@@ -122,9 +122,9 @@ internal sealed class EncoderSession
             return;
         }
         Interlocked.Add(ref capturedFrames, data.Length / channels);
-        // Pre-roll is not part of the output timeline. Never accumulate it while
-        // FFmpeg is opening its inputs (which can take seconds on a cold start).
-        if (Interlocked.Read(ref mediaStarted) < 0) return;
+        // Until output is publishing and both writers have caught up, submit
+        // silence on the existing timeline instead of accumulating live pre-roll.
+        if (!liveAudioReady) return;
         Interlocked.Add(ref connectedFrames, data.Length / channels);
         if (!audio.Push(data, channels))
             Fail("Audio queue filled after input connected. See capture rate and writer timing below.");
@@ -153,7 +153,7 @@ internal sealed class EncoderSession
             double remaining = Interlocked.Read(ref mediaStarted) + dueMilliseconds - clock.Elapsed.TotalMilliseconds;
             if (remaining <= 0)
             {
-                if (remaining < -1500) { Fail(writer + " writer fell behind its media schedule by " + (-remaining).ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + "ms. See capture rate and writer timing below."); return false; }
+                if (liveAudioReady && remaining < -1500) { Fail(writer + " writer fell behind its media schedule by " + (-remaining).ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + "ms. See capture rate and writer timing below."); return false; }
                 return true;
             }
             Thread.Sleep((int)Math.Min(10, Math.Max(1, remaining)));
@@ -217,6 +217,21 @@ internal sealed class EncoderSession
         catch { if (!stopping) Fail("Audio encoder connection closed; check receiver and FFmpeg."); }
     }
 
+    private void ObserveStartup(long now)
+    {
+        if (liveAudioReady) return;
+        long began = Interlocked.Read(ref mediaStarted);
+        if (began < 0) return;
+        double elapsed = now - began;
+        // Input connection alone does not mean the encoder or RTMP handshake is
+        // ready. Retain one common timeline; don't reset audio timestamps later.
+        if (publishing && Interlocked.Read(ref sentFrames) * 1000.0 / options.SampleRate >= elapsed - 100 &&
+            Interlocked.Read(ref videoWrites) * 1000.0 / options.Fps >= elapsed - 100)
+            liveAudioReady = true;
+        else if (elapsed > 10000)
+            Fail("Encoder startup did not reach live audio/video pacing within ten seconds. See writer timing below.");
+    }
+
     private void Supervise()
     {
         try
@@ -224,6 +239,7 @@ internal sealed class EncoderSession
             while (!stopping)
             {
                 long now = clock.ElapsedMilliseconds;
+                ObserveStartup(now);
                 if (now > 10000 && Interlocked.Read(ref mediaStarted) < 0) Fail("FFmpeg did not open its audio input within ten seconds. Check the executable and encoder startup diagnostics.");
                 if (process.HasExited) { Fail("FFmpeg exited. See RTMP diagnostics in LogOutput.log."); break; }
                 if (now - Interlocked.Read(ref lastVideo) > 5000) Fail("No video frames for five seconds; restore the game window and restart.");

@@ -55,6 +55,8 @@ internal static class Program
             try { new EncoderSession(new StreamOptions { Url = "rtmp://127.0.0.1/live/test", Executable = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()) }); }
             catch (InvalidOperationException e) { missing = !e.Message.Contains("rtmp"); }
             Check(missing, "missing encoder gives a redacted error");
+            Loopback(VideoEncoderKind.libx264, width: 1920, height: 1080, fps: 60);
+            Loopback(VideoEncoderKind.libx264, width: 1920, height: 1080, fps: 60, delayedReceiver: true);
             Loopback(VideoEncoderKind.libx264);
             Loopback(VideoEncoderKind.libx264, overload: true);
             if (!OperatingSystem.IsWindows())
@@ -123,7 +125,7 @@ internal static class Program
         Check(denied.PermanentFailure, "known authorization rejection requires operator correction");
     }
 
-    private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg", bool overload = false)
+    private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg", bool overload = false, int width = 320, int height = 180, int fps = 20, bool delayedReceiver = false)
     {
         var reserve = new TcpListener(IPAddress.Loopback, 0);
         reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
@@ -134,13 +136,14 @@ internal static class Program
         using Process receiver = Start("ffmpeg", $"-hide_banner -loglevel error -listen 1 -i {url} -c copy -y \"{recording}\"");
         var receiverErrors = receiver.StandardError.ReadToEndAsync();
         var receiverOutput = receiver.StandardOutput.ReadToEndAsync();
+        using var proxy = delayedReceiver ? new DelayedReceiver(port) : null;
         EncoderSession? encoder = null;
         try
         {
             Thread.Sleep(500); // FFmpeg must bind before the publisher connects.
-            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder, Executable = executable };
+            var options = new StreamOptions { Url = proxy == null ? url : $"rtmp://127.0.0.1:{proxy.Port}/live/test", Width = width, Height = height, Fps = fps, BitrateKbps = 500, VideoEncoder = videoEncoder, Executable = executable };
             encoder = new EncoderSession(options);
-            byte[] frame = new byte[320 * 180 * 4];
+            byte[] frame = new byte[width * height * 4];
             float[] audio = new float[1920];
             var clock = Stopwatch.StartNew();
             // A simultaneous white flash and tone at t=2s test mux synchronization.
@@ -149,13 +152,13 @@ internal static class Program
                 while (clock.Elapsed.TotalMilliseconds < tick * 20) Thread.Sleep(1);
                 for (int i = 0; i < frame.Length; i += 4)
                 {
-                    frame[i] = frame[i + 1] = frame[i + 2] = tick >= 100 ? (byte)255 : (byte)0;
+                    frame[i] = frame[i + 1] = frame[i + 2] = tick >= (delayedReceiver ? 175 : 100) ? (byte)255 : (byte)0;
                     frame[i + 3] = 255;
                 }
                 frame = encoder.SubmitVideo(frame);
                 for (int i = 0; i < 960; i++)
                 {
-                    float value = tick >= 100 ? (float)(0.2 * Math.Sin(2 * Math.PI * 440 * (tick * 960 + i) / 48000)) : 0;
+                    float value = tick >= (delayedReceiver ? 175 : 100) ? (float)(0.2 * Math.Sin(2 * Math.PI * 440 * (tick * 960 + i) / 48000)) : 0;
                     audio[i * 2] = value;
                     audio[i * 2 + 1] = -value; // Preserve distinct left/right channels.
                 }
@@ -163,7 +166,7 @@ internal static class Program
                 if (overload) encoder.SubmitAudio(audio, 2);
                 if (encoder.IsStopping)
                 {
-                    if (!overload) throw new Exception("Publisher stopped early: " + encoder.Status);
+                    if (!overload) throw new Exception("Publisher stopped early: " + encoder.FailureDetails);
                     Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "overproduction closes encoder workers");
                     string details = encoder.FailureDetails;
                     var rate = System.Text.RegularExpressions.Regex.Match(details, @"average (\d+) frames/s");
@@ -190,7 +193,7 @@ internal static class Program
                 if (stream.GetProperty("codec_type").GetString() == "video")
                 {
                     videoOrigin = double.Parse(stream.GetProperty("start_time").GetString()!, CultureInfo.InvariantCulture);
-                    video = stream.GetProperty("codec_name").GetString() == "h264" && stream.GetProperty("width").GetInt32() == 320 && stream.GetProperty("height").GetInt32() == 180;
+                    video = stream.GetProperty("codec_name").GetString() == "h264" && stream.GetProperty("width").GetInt32() == width && stream.GetProperty("height").GetInt32() == height;
                 }
                 if (stream.GetProperty("codec_type").GetString() == "audio")
                 {
@@ -213,9 +216,10 @@ internal static class Program
             }
             Check(videoStart >= 0 && rawVideo.Length > 70, "decoded video contains the test flash and sustained footage");
             Check(audioStart >= 0 && energy > 100 && channelDifference > 100, "decoded AAC contains audible stereo tone");
-            double skew = Math.Abs(videoOrigin + videoStart / 20.0 - audioOrigin - audioStart / 48000.0);
+            double skew = Math.Abs(videoOrigin + videoStart / (double)fps - audioOrigin - audioStart / 48000.0);
             Check(skew < 0.25, $"flash/tone synchronization within 250 ms ({skew:F3}s)");
             Console.WriteLine("Loopback recording: " + recording);
+            options.Url = url; // Subsequent recovery tests bypass the single-use delay fixture.
             // A second session must fail promptly when a receiver is absent.
             encoder = new EncoderSession(options);
             Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000), "unavailable receiver terminates encoder without blocking caller");
@@ -267,6 +271,42 @@ internal static class Program
             if (!receiver.HasExited) receiver.Kill(entireProcessTree: true);
             receiver.WaitForExit(5000);
             Console.WriteLine("Receiver diagnostics: " + receiverErrors.GetAwaiter().GetResult());
+        }
+    }
+
+    // Delay the receiver handshake after the publisher has already opened both
+    // raw inputs. This reproduces post-connect startup backpressure, not process startup.
+    private sealed class DelayedReceiver : IDisposable
+    {
+        private readonly TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        private readonly Thread worker;
+        private TcpClient? incoming, outgoing;
+        internal int Port { get; }
+        internal DelayedReceiver(int upstreamPort)
+        {
+            listener.Start(); Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            worker = new Thread(() =>
+            {
+                try
+                {
+                    incoming = listener.AcceptTcpClient(); listener.Stop();
+                    Thread.Sleep(2000);
+                    outgoing = new TcpClient(); outgoing.Connect(IPAddress.Loopback, upstreamPort);
+                    var send = incoming.GetStream().CopyToAsync(outgoing.GetStream());
+                    var receive = outgoing.GetStream().CopyToAsync(incoming.GetStream());
+                    System.Threading.Tasks.Task.WaitAny(send, receive);
+                    incoming.Close(); outgoing.Close();
+                    try { System.Threading.Tasks.Task.WaitAll(send, receive); } catch (AggregateException) { }
+                }
+                catch (Exception error) when (error is SocketException || error is IOException || error is ObjectDisposedException) { }
+                finally { incoming?.Dispose(); outgoing?.Dispose(); }
+            }) { IsBackground = true };
+            worker.Start();
+        }
+        public void Dispose()
+        {
+            listener.Stop(); incoming?.Dispose(); outgoing?.Dispose();
+            if (!worker.Join(5000)) throw new Exception("Delayed receiver did not close");
         }
     }
 
