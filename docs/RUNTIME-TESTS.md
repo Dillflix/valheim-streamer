@@ -18,6 +18,30 @@ dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 
 CI checks this core harness. A separate `plugin` job downloads pinned real game and BepInEx references and executes the normal `dotnet build` pipeline with warnings treated as errors. The current workflow uploads separate client/server artifacts containing only the respective plugin and Core DLLs. The dependency archives and game assembly are checksum-verified by `scripts/fetch-build-references.py`. See the [Actions runs](https://github.com/Dillflix/valheim-streamer/actions) for the result at a particular commit. Green jobs do not establish in-game behavior.
 
+## 0.8.4 player-follow recovery — 2026-11-01
+
+The supplied runtime log showed 21 automatic player-travel requests interleaved with successful following of the same player, with one discovered player and no RTMP failure. It did not identify the exact failing readiness predicate. Inspection found that any failed `CanFrame` result could trigger a trip at only five metres from the carrier and could replace a live moving actor's coordinates with an older discovery position.
+
+This patch starts from 0.8.2. It excludes the failed 0.8.3 A/V startup experiment. It separates local readiness from travel reach, retains short interrupted player shots, preserves useful dwell, prefers live coordinates and records why native travel starts. Protocol 2 and server behavior are unchanged; an existing compatible 0.8.0+ companion does not need upgrading for this client fix.
+
+Local evidence: **117/117 core cases pass**, including 24 two-minute synthetic trajectories at 2/8/12 m/s, two movement directions and four camera azimuths, recurring 200 ms readiness gaps, continuous reach-loss confirmation, local readiness timeout without teleport, disconnect/manual selection, pause/reset and dwell preservation. Client compilation against the real references above passes with warnings treated as errors. Normal `dotnet run` remains blocked here by process introspection; direct Roslyn compilation/execution supplied these local results. These trajectories simulate policy inputs and carrier motion; they do not execute Unity, terrain streaming or actual player replication.
+
+Run this acceptance matrix with two real clients, one authorized broadcaster and one ordinary player. Start with the usual camera settings, then repeat movement at a wider supported camera offset. Record `broadcast diagnostics` before/after and keep the BepInEx log.
+
+| Scenario | Required result |
+| --- | --- |
+| Stationary player, then walk/sprint continuously for 5–10 minutes across region boundaries | Carrier follows camera continuously; no repeated `Automatic Player travel` for a locally reachable target. Distance from the original start may grow without triggering travel. |
+| Reverse direction, climb/descend slopes, pass trees/buildings | Camera obstruction and readiness checks remain active; short gaps recover the same shot without unnecessary scenic cuts or native travel. |
+| Brief readiness gap with reachable player | `Target readiness` reports local loading or absent local character; no trip solely because the actor is over five metres from carrier. Held footage/slate still respects its existing limits. |
+| Player uses a distant portal | After sustained loss of reach, one controlled trip starts with a logged geometry reason, carrier distance and elapsed loss. The destination is immutable in flight; follow resumes after actual loading. |
+| Player moves again while acquisition is in flight | No stacked teleports. Fresh position is reconsidered after completion, within the acquisition deadline and trip cap. |
+| Player disconnects or another player is explicitly selected | Old target grace cannot block the new selection. |
+| Two players with brief gaps | Actual useful footage still advances rotation; gaps neither count as footage nor erase accumulated dwell. |
+| Long local readiness failure | Bounded acquisition timeout/backoff and safe fallback; no five-metre teleport loop. |
+| Broadcast off/on, manual travel/return, world exit/rejoin | No stale grace timer, selection, or travel completion leaks into the next session. |
+
+In-game execution of this matrix remains pending. CI results and downloadable test artifacts belong to the specific commit/run, not to this local compilation record.
+
 ## 0.8.0 autonomous milestone — local checks, 2026-10-31
 
 | Check | Observed result |

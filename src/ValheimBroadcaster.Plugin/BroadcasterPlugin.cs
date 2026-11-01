@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.2";
+    public const string PluginVersion = "0.8.4";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -215,7 +215,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (automatic?.ControlsSelection != true) director.Tick(Time.unscaledDeltaTime, IsReady(current));
             current = CurrentTarget();
             bool readyPlayer = CanShow(current);
-            if (!readyPlayer && observer.RemoteSession && !idle.SceneReady && IdleShots.Ready(Player.m_localPlayer.transform.position))
+            bool preserveShot = coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
+            if (!preserveShot && !readyPlayer && observer.RemoteSession && !idle.SceneReady && IdleShots.Ready(Player.m_localPlayer.transform.position))
                 ResetShot();
             if (Time.unscaledTime >= nextCreatureRefresh)
             {
@@ -224,8 +225,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             coverage.ScenicSeconds = settings.ScenicDwell.Value;
             coverage.CreatureSeconds = settings.CreatureDwell.Value;
-            coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
-                roster.ConnectedOthers, !selfTest && idle.SceneReady, idle.ReadyIds(), director.IsHolding);
+            // Preserve selection/pose through short loading gaps. The camera hook
+            // still requires a ready scene; frame hold/slate handles missing footage.
+            if (!preserveShot)
+                coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
+                    roster.ConnectedOthers, !selfTest && idle.SceneReady, idle.ReadyIds(), director.IsHolding);
             if (coverage.Revision != lastRevision)
             {
                 lastRevision = coverage.Revision;
