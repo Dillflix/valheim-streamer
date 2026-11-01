@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.4";
+    public const string PluginVersion = "0.8.5";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -143,6 +143,14 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         { terminalReported = true; connection?.Reject(remote.Status); CancelIntent(); }
         if (remote.Approved) terminalReported = false;
         connection?.Tick(remote.Isolated && remote.Approved, observer.Active);
+        if (remote.Isolated && remote.Failed)
+        {
+            // A socket disconnect alone leaves Game's pending respawn running.
+            // Leave the rejected world through native no-save shutdown, even if
+            // unattended recovery was never armed. Restrictions stay pinned.
+            connection?.CloseFailedWorld();
+            return;
+        }
         UpdateBackground();
         bool allowedOutput = director.IsEnabled && Player.m_localPlayer && ZNet.instance && activeWorld == ZNet.instance &&
             (!remote.Isolated || remote.Approved);

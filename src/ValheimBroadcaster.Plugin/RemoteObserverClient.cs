@@ -20,6 +20,7 @@ internal sealed class RemoteObserverClient
     private readonly ObserverDiscoveryCache discovery = new ObserverDiscoveryCache();
     internal bool Isolated => requested && world && world == ZNet.instance;
     internal bool Approved { get; private set; }
+    internal bool Failed => failed;
     internal bool TerminalFailure { get; private set; }
     internal ObserverDiscoverySnapshot? Discovery => Isolated && Approved ? discovery.Snapshot : null;
     internal bool DiscoveryFresh => Isolated && Approved && discovery.Fresh(Time.realtimeSinceStartup);
@@ -34,6 +35,9 @@ internal sealed class RemoteObserverClient
     internal RemoteObserverClient(Func<bool> configured, Action<string> log) { this.configured = configured; this.log = log; instance = this; }
     internal void Install(Harmony harmony)
     {
+        // Native respawn allocates a character before indexing the server peer.
+        // Gate the whole transaction while authorization/transport is unavailable.
+        Patch(harmony, typeof(Game), "UpdateRespawn", new[] { typeof(float) }, nameof(BeforeRespawn), false);
         Patch(harmony, typeof(ZNet), "OnNewConnection", new[] { typeof(ZNetPeer) }, nameof(Connection), true);
         MethodInfo sync = AccessTools.Method(typeof(ZDOMan), "CreateSyncList") ?? throw new MissingMethodException("ZDOMan.CreateSyncList");
         harmony.Patch(sync, postfix: new HarmonyMethod(typeof(RemoteObserverClient), nameof(PublishObjects)));
@@ -64,7 +68,10 @@ internal sealed class RemoteObserverClient
     private void Reply(ZRpc rpc, int version, int accepted)
     {
         if (!Isolated || failed || server == null || !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
-        if (version != ObserverProtocol.Version || accepted != 1) { Fail("Server denied the observer role or protocol version"); return; }
+        if (version != ObserverProtocol.Version)
+        { Fail("Observer protocol mismatch: client " + ObserverProtocol.Version + ", server " + version); return; }
+        if (accepted != 1)
+        { Fail("Server denied observer authorization (protocol " + version + " matches). Check the broadcaster SteamID allowlist, Enabled setting and connection reservation on the server."); return; }
         if (!Approved) { Approved = true; Status = "Read-only observer authorized; waiting for the character scene"; log(Status); }
     }
     private void DiscoveryReply(ZRpc rpc, ZPackage package)
@@ -112,6 +119,13 @@ internal sealed class RemoteObserverClient
     internal void Close()
     {
         if (Isolated) Fail("Observer plugin stopped; disconnecting read-only session");
+    }
+    private static bool BeforeRespawn()
+    {
+        RemoteObserverClient? client = instance;
+        if (client?.Isolated != true) return true; // Ordinary clients/offline worlds are unchanged.
+        return !client.failed && client.Approved && client.server != null && client.world &&
+            client.world.GetPeers().Contains(client.server) && client.server.IsReady() && client.server.m_rpc.IsConnected();
     }
     private static void PublishObjects(List<ZDO> __1)
     {

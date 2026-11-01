@@ -18,6 +18,28 @@ dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 
 CI checks this core harness. A separate `plugin` job downloads pinned real game and BepInEx references and executes the normal `dotnet build` pipeline with warnings treated as errors. The current workflow uploads separate client/server artifacts containing only the respective plugin and Core DLLs. The dependency archives and game assembly are checksum-verified by `scripts/fetch-build-references.py`. See the [Actions runs](https://github.com/Dillflix/valheim-streamer/actions) for the result at a particular commit. Green jobs do not establish in-game behavior.
 
+## 0.8.5 rejected observer cleanup — 2026-11-01
+
+A user log from 0.8.4 (Valheim 1.0.21, Jötunn 2.30.2, BepInEx 5.4.23.6) shows observer rejection at 20:00:43, socket disposal, and 304 `ArgumentOutOfRangeException` failures in `ZNet.SetCharacterID -> Game.SpawnPlayer -> Game.UpdateRespawn`. The screenshot shows repeated observer nameplates. Native assembly inspection confirms that `SpawnPlayer` instantiates the character before `SetCharacterID` indexes server peer zero, and `UpdateRespawn` clears its pending flag only after successful spawning. Disconnecting only the socket leaves the failed spawn transaction retrying in a loaded world. The log does not establish why the server denied admission or whether any duplicate object reached another client.
+
+The client now gates the entire respawn transaction while its pinned observer role lacks approval or live transport. Failure triggers the existing native `ContinueLogout(false, true, true)` path from the normal update loop, independently of unattended recovery or prior successful arming. Cleanup attempts once per failed world, preserves restrictions through shutdown, and skips saving temporary carrier state. Terminal denial still halts automatic reconnect. Ordinary/offline sessions are outside the gate. Diagnostics separately report protocol mismatch and matching-protocol authorization denial. No wire or server behavior changes are required.
+
+Local validation: client compilation against the pinned real assemblies passes with warnings as errors; **24/24 structural audits pass**, including the respawn entry signature, sole native spawn call site, allocation-before-peer-access ordering, and no-save logout argument ordering. These audits do not execute Harmony/Unity. Compilation references remain BepInEx 5.4.23.2; the supplied runtime is 5.4.23.6. CI exercises normal project builds and the existing core/streaming suites.
+
+Remaining in-game checks, using a disposable profile/test server where configuration changes are needed:
+
+| Scenario | Expected result |
+| --- | --- |
+| Server rejects observer, unattended recovery on or off | One specific denial, no character/exception storm, native return to menu, no automatic retry. |
+| Delayed authorization or missing companion | No character allocation while authorization is pending; timeout exits safely. |
+| Authorized first spawn and later respawn | Native spawning resumes normally with live transport; director starts after actual scene readiness. |
+| Connection lost during initial spawn | Pending respawn cannot allocate against a missing server; world exits safely even before recovery was armed. |
+| Authorized running observer loses connection | Existing bounded reconnect policy remains responsible for retries; old world exits first. |
+| Explicit rejoin after correcting server configuration | New connection resets admission state; no failed-world latch leaks into the next session. |
+| Ordinary client and offline world | Native spawning remains unaffected. |
+
+The matching-protocol denial message directs the operator to the server's `[Observer] Enabled`, exact broadcaster account `SteamIds`, and pre-authentication role reservation. Confirm these in the actual active server configuration and server log. Do not grant the normal playing account observer status or turn off client isolation to work around a denial. Existing protocol-2 companions remain compatible. Runtime checks above are pending.
+
 ## 0.8.4 player-follow recovery — 2026-11-01
 
 The supplied runtime log showed 21 automatic player-travel requests interleaved with successful following of the same player, with one discovered player and no RTMP failure. It did not identify the exact failing readiness predicate. Inspection found that any failed `CanFrame` result could trigger a trip at only five metres from the carrier and could replace a live moving actor's coordinates with an older discovery position.

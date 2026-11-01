@@ -34,6 +34,8 @@ The role cannot be removed mid-connection. Revocation/timeout disconnects while 
 
 This is a boundary around audited vanilla paths, not a sandbox for arbitrary third-party direct RPCs or conflicting Harmony patches. Other-client visibility, interactions, sleep and ownership handoffs remain runtime checks. Dormant regions are not simulated/generated merely for an observer.
 
+Rejected observer sessions gate `Game.UpdateRespawn` before native character allocation, then leave the failed world through no-save native shutdown on the regular update loop. This cleanup is independent of unattended reconnect being enabled or armed. Approval and a still-connected server peer are required to release the respawn gate; restrictions remain pinned until the world ends. Protocol mismatches and matching-protocol admission denials have separate diagnostics. See the [rejection regression and runtime matrix](RUNTIME-TESTS.md#085-rejected-observer-cleanup--2026-11-01).
+
 ## Authenticated discovery
 
 Discovery is a read-only request/reply protocol available only to confirmed observers. `DiscoveryEnabled` controls delivery; `SharePrivatePlayerPositions` determines whether server-known non-public locations can be sent. This setting is a server policy distinct from the ordinary player's public-map flag. With sharing disabled, a private player remains present without an acquisition coordinate.
