@@ -2,11 +2,15 @@ using System;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
 internal sealed class CameraRig
 {
+    private readonly CinemachinePlayerRig playerCamera = new CinemachinePlayerRig();
+    private bool proceduralActive;
+    internal string Diagnostics => proceduralActive ? playerCamera.Diagnostics : "Camera: fixed framing / scenic path";
     private Camera? camera;
     private Camera? skyCamera;
     private float savedFov;
@@ -25,7 +29,7 @@ internal sealed class CameraRig
     internal string LastFailure { get; private set; } = "none";
     private bool Unready(string reason) { LastFailure = reason; return false; }
 
-    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false)
+    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false)
     {
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
@@ -46,6 +50,21 @@ internal sealed class CameraRig
             skyCamera = nextSky;
             if (skyCamera) savedSkyFov = skyCamera.fieldOfView;
         }
+        if (settings.ProceduralPlayers.Value && playerTarget != null)
+        {
+            proceduralActive = true;
+            playerCamera.NearClipPlane = camera.nearClipPlane;
+            playerCamera.Aspect = camera.aspect;
+            if (!playerCamera.TrySolve(playerTarget, focus, settings, selectionRevision, dt, continuousPlayer, moveCarrier,
+                    out Vector3 playerPosition, out Quaternion playerRotation, out float playerFov))
+                return Unready(playerCamera.LastFailure);
+            camera.transform.SetPositionAndRotation(playerPosition, playerRotation);
+            camera.fieldOfView = playerFov;
+            if (skyCamera) skyCamera.fieldOfView = playerFov;
+            hasPose = false;
+            return true;
+        }
+        if (proceduralActive) { playerCamera.Reset(); proceduralActive = false; }
         float radians = azimuth * Mathf.Deg2Rad;
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
             settings.Height.Value, Mathf.Cos(radians) * settings.Distance.Value);
@@ -98,7 +117,16 @@ internal sealed class CameraRig
         }
     }
 
-    internal void ResetPose() { hasPose = false; }
+    internal double RequiredPlayerCameraMovement(TargetRoster.Target target, Vector3 point, BroadcastSettings settings)
+    {
+        if (settings.ProceduralPlayers.Value) return playerCamera.RequiredCarrierMovement(target, point, settings);
+        if (!Player.m_localPlayer) return double.PositiveInfinity;
+        Vector3 offset = point - Player.m_localPlayer.transform.position;
+        return CameraReachability.RequiredDisplacement(offset.x, offset.y, offset.z,
+            settings.Distance.Value, settings.Height.Value, settings.Azimuth.Value);
+    }
+
+    internal void ResetPose() { hasPose = false; playerCamera.Reset(); }
 
     internal void Restore()
     {
@@ -110,6 +138,7 @@ internal sealed class CameraRig
 
     private void RestoreCamera()
     {
+        playerCamera.Dispose(); proceduralActive = false;
         if (camera)
         {
             camera.fieldOfView = savedFov;

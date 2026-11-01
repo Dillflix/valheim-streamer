@@ -67,6 +67,8 @@ jobs:
             -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
           dotnet tests/ValheimBroadcaster.Hooks.Tests/bin/Release/net8.0/ValheimBroadcaster.Hooks.Tests.dll \
             "$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed/assembly_valheim.dll"
+      - name: Prepare pinned Cinemachine runtime sources
+        run: python3 scripts/fetch-cinemachine.py
       - name: Build plugin against Valheim 1.0.21 and BepInEx 5.4.23.2
         run: >-
           dotnet build src/ValheimBroadcaster.Plugin/ValheimBroadcaster.Plugin.csproj
@@ -79,18 +81,23 @@ jobs:
           --configuration Release -warnaserror
           -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
           -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
-      - name: Stage only our plugin and core DLLs
+      - name: Stage client with its Cinemachine runtime and notices
         run: |
           mkdir -p artifacts/ValheimBroadcaster
           cp src/ValheimBroadcaster.Plugin/bin/Release/net48/ValheimBroadcaster.dll artifacts/ValheimBroadcaster/
           cp src/ValheimBroadcaster.Core/bin/Release/netstandard2.0/ValheimBroadcaster.Core.dll artifacts/ValheimBroadcaster/
+          cp third_party/Cinemachine/bin/Release/net48/ValheimBroadcaster.Cinemachine.dll artifacts/ValheimBroadcaster/
+          mkdir -p artifacts/ValheimBroadcaster/ThirdParty/Cinemachine
+          cp third_party/Cinemachine/obj/upstream/LICENSE.md third_party/Cinemachine/obj/upstream/license.txt \
+            "third_party/Cinemachine/obj/upstream/Third Party Notices.md" \
+            third_party/Cinemachine/obj/upstream/package.json third_party/Cinemachine/obj/upstream/source-record.json \
+            artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/
+          cp third_party/Cinemachine/README.md artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/BUILD.md
       - name: Upload test build (not a validated game release)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: valheim-broadcaster-${{ github.sha }}
-          path: |
-            artifacts/ValheimBroadcaster/ValheimBroadcaster.dll
-            artifacts/ValheimBroadcaster/ValheimBroadcaster.Core.dll
+          path: artifacts/
           if-no-files-found: error
           retention-days: 14
       - name: Stage server companion separately

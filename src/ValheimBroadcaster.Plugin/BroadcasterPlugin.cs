@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.11";
+    public const string PluginVersion = "0.8.12";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -75,7 +75,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         settings = new BroadcastSettings(Config);
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
         observer.RemoteApproved = () => remote.Isolated && remote.Approved;
-        automatic = new AutonomousBroadcast(settings, remote, observer, playerShots, ResetShot, message => Logger.LogInfo(message));
+        automatic = new AutonomousBroadcast(settings, remote, observer, playerShots,
+            (target, point) => rig.RequiredPlayerCameraMovement(target, point, settings), ResetShot, message => Logger.LogInfo(message));
         connection = new ConnectionRecovery(() => WantsUnattended, () => settings.ObserverConnection.Value,
             message => Logger.LogInfo(message), reason => remote.Fail(reason), () => Stop(true));
         connection.ManualStopped += CancelOperatorIntent;
@@ -526,7 +527,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             bool scenic = !plugin.probe.Active && plugin.coverage.Mode == CoverageMode.Scenic &&
                 (!plugin.observer.Active || plugin.observer.Phase == ObserverPhase.Watching);
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
-                plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null, continuousPlayer);
+                plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null, continuousPlayer, playerTarget, plugin.observer.Active);
             if (scenic && plugin.cameraReady && plugin.rig.Position.HasValue &&
                 !plugin.idle.ViewClear(plugin.rig.Position.Value, focus!.Value, plugin.settings.FieldOfView.Value))
             { plugin.cameraReady = false; presentationFailure = plugin.idle.ViewReason; }
@@ -821,7 +822,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + remote.DiscoveryStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void AutomationCommand(string[] args, Terminal context)
@@ -886,7 +887,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|camera procedural|fixed|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -896,6 +897,18 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
+                    case "camera":
+                        if (args.Length != 2) { context?.AddString("broadcast camera procedural|fixed|status"); return; }
+                        switch (args[1].ToLowerInvariant())
+                        {
+                            case "procedural": plugin.settings.ProceduralPlayers.Value = true; break;
+                            case "fixed": plugin.settings.ProceduralPlayers.Value = false; break;
+                            case "status": context?.AddString(plugin.rig.Diagnostics); return;
+                            default: context?.AddString("broadcast camera procedural|fixed|status"); return;
+                        }
+                        plugin.rig.ResetPose(); plugin.playerShots.Reset(); plugin.cameraReady = false;
+                        context?.AddString("Player camera: " + (plugin.settings.ProceduralPlayers.Value ? "Cinemachine procedural" : "fixed framing"));
+                        return;
                     case "framehold":
                         context?.AddString(args.Length == 2 && args[1].Equals("test", StringComparison.OrdinalIgnoreCase)
                             ? plugin.frameHold.Test() : "broadcast framehold test");

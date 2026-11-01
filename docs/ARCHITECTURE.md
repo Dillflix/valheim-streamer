@@ -15,6 +15,8 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `ObserverTravel` / `ObserverController` | Local carrier, camera-relative body/interest, native teleport, protected return/park and restoration |
 | `CoverageDirector` / `IdleShots` | Actual player/scenic/creature shot selection, local terrain paths and nearby eligible actor bindings |
 | `CameraRig` | Wide framing, smoothing, obstruction/readiness checks, HUD and camera-state restoration |
+| `CinemachinePlayerRig` / `FoliageShotQuality` / `PlayerShotVisibility` | Manually solved Cinemachine player candidates, foliage-aware quality, stable selection and validated camera transitions |
+| `ProceduralShotPolicy` | Pure bounded shot selection with persistent improvement and healthy-shot dwell |
 | `ScenicVisibility` | Cached nearby vegetation bounds and multi-ray foreground screening for scenic compositions |
 | `FrameContinuity` / `FrameHold` / `FrameHoldRenderer` | Bounded camera-image hold, final image-effect composition and presentation diagnostics |
 | `FramebufferCapture` | Screen-to-texture normalization with graphics-state restoration for streaming |
@@ -25,13 +27,25 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `OutputRecoveryPolicy` / `StreamRecovery` | Desired output, manual-stop precedence, retry/backoff and blocked-failure handling |
 | `EncoderDiagnostics` | Bounded, redacted FFmpeg failure evidence |
 
-The client plugin targets .NET Framework 4.8; the core targets .NET Standard 2.0. Jötunn 2.30.2 is the pinned compilation dependency. Builds read real matching game/BepInEx references and exclude Jötunn template deployment/publicizing hooks. CI does not launch the game. Game, Unity and dependency DLLs are excluded from project artifacts.
+The client plugin targets .NET Framework 4.8; the core targets .NET Standard 2.0. Jötunn 2.30.2 is the pinned compilation dependency. Builds read real matching game/BepInEx references and exclude Jötunn template deployment/publicizing hooks. CI does not launch the game. Game, Unity, BepInEx and Jötunn DLLs are excluded from project artifacts. The client intentionally includes the isolated `ValheimBroadcaster.Cinemachine.dll` built from pinned Cinemachine 3.1.7 sources, plus upstream notices. The server does not reference or ship Cinemachine.
 
 `FrameHoldRenderer` is appended to the active game camera's existing image effects. Its `OnRenderImage` callback caches the processed camera source only when that same frame's camera/carrier operation passed readiness. Live and Hold both blit that cached texture to the supplied camera destination. The hold never passes through screenshot capture or `GUI.DrawTexture`; GUI adds current status/recovery text only. This uses one cached render texture and GPU copies, without another camera render or CPU readback. Streaming still captures the final framebuffer after camera composition and GUI.
 
 A cached texture matches the source dimensions and graphics format; resizing, lost textures, camera replacement, stop and world cleanup invalidate it. Held/slate outputs never refresh the 0.75-second capture deadline. Hard travel/recovery boundaries clear that deadline immediately, preventing pre-travel footage from reappearing after a quick return to Watching. GUI requires a compositor result in the current frame and otherwise covers the display with a recovery slate. Valheim's built-in pipeline and existing image-effect stack were inspected; conflicting third-party camera effects or replacement render pipelines require separate runtime validation.
 
 `broadcast framehold test` schedules a 0.5-second artificial readiness gap after two seconds, for closing the console. It changes presentation only: camera/carrier/director logic continues normally. Hard failures take precedence, and camera changes/stop cancel the test. It requires a live picture and can run while alone.
+
+## Procedural player cameras
+
+Player framing uses Cinemachine 3.1.7 virtual cameras, solved explicitly from the existing game-camera postfix. No second rendering camera or Cinemachine Brain owns the game camera. An isolated dependency assembly and a small manual-update bridge advance Cinemachine's frame clock and preserve its duplicate-update guard. The adapter validates the resulting position before applying it to Valheim's main camera; the existing carrier/listener and frame compositor then follow their normal sequence.
+
+Candidate poses vary the configured preferred angle, distance and height. The custom `FoliageShotQuality` extension implements Cinemachine's shot-quality interface and combines the resulting camera composition with read-only local visibility estimates. `PlayerShotVisibility` samples head/torso/lower-body sightlines over the full camera-to-player distance and a weighted foreground grid. Solid camera/near-plane overlap makes a candidate physically invalid. Collider-free foliage contributes a bounded quality penalty; an obscured but physically safe image remains available while another angle is sought. It does not turn foliage into a loading or teleport decision.
+
+The vegetation survey keeps up to 512 nearby renderer bounds, deduplicates LODs and refreshes on cadence or movement. Bounds are conservative, not leaf-alpha measurements, and name/component classification can miss custom vegetation. The foliage evaluator does not change world colliders, renderers or shaders. Cinemachine can create a private hidden scratch sphere for penetration queries; its Rigidbody has collisions disabled, and the isolated runtime releases that cache idempotently on teardown. Visibility tests use bounded nonallocating physics buffers. The camera rig validates loaded support geometry and reachable carrier destinations separately from picture quality.
+
+`ProceduralShotPolicy` retains a clear current shot unless another improves quality by at least 0.15 for 0.5 seconds. Healthy shots receive two seconds of minimum dwell; physical invalidation switches immediately and poor shots can escape the dwell. All low foliage scores still leave a physically eligible candidate selectable. Motion prediction and smoothing are reset on binding changes and discontinuities. The interpolated movement is checked before presentation; an unsafe blend can cut to a validated endpoint rather than pass through a wall.
+
+Both autonomous frameability and travel displacement query this same camera adapter's geometry. These queries remain finite and independent of foliage quality for finite known positions. The final applied camera/carrier still obeys the existing 95m/100m movement safeguards. `Camera.ProceduralPlayers=false` restores fixed player framing; scenic/creature, protocol, authorization and streaming behavior are unchanged.
 
 ## Observer connection boundary
 

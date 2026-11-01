@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.12 adds Cinemachine player cameras with foliage-aware shot selection.** Candidate views adapt angle, distance and height, retain stable compositions and respect the existing loaded-geometry/carrier limits. Player-shot foliage is a quality penalty rather than a loading failure. Enabled by default through `Camera.ProceduralPlayers`; use `broadcast camera fixed` / `procedural` for comparison and `broadcast camera status` for diagnostics. This builds directly on 0.8.11 and remains protocol 3. **Install all three client DLLs and the included ThirdParty notices folder.** The existing server and configuration can remain; visual runtime verification is pending.
+
 **0.8.11 replaces GUI screenshot holds with a camera compositor.** Live and held scenes use the same final camera-texture path; travel/recovery invalidate the prior image. `broadcast framehold test` schedules a half-second hold so orientation can be checked without waiting for travel. Includes 0.8.10 continuous following. Replace both client DLLs; keep the deployed protocol-3 server and configuration. In-game visual verification is pending.
 
 **0.8.10 separates player acquisition from continuous following.** An established shot can continue while nearby network objects instantiate, provided the same living character and usable local geometry remain present. Initial acquisition, respawn, significant relocation and travel still require full readiness. Includes 0.8.8 scenery and 0.8.9 held-frame changes. Replace both client DLLs; the deployed protocol-3 server and existing configuration can remain. Runtime retest is pending.
@@ -67,6 +69,14 @@ Run the director tests without game files:
 dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 ```
 
+Before a client build, prepare the pinned Cinemachine 3.1.7 runtime sources (the core/server builds do not need this):
+
+```sh
+python scripts/fetch-cinemachine.py
+```
+
+This fetches verified upstream sources into an ignored build directory. The selected runtime builds as `ValheimBroadcaster.Cinemachine.dll`; it uses the matching game's existing Unity assemblies and does not ship them. See [dependency build notes](third_party/Cinemachine/README.md).
+
 Build the plugin on Windows PowerShell:
 
 ```powershell
@@ -89,27 +99,27 @@ dotnet build src/ValheimBroadcaster.Plugin -c Release \
 
 The build requires real game and loader assemblies. It reads those files, excludes Jötunn's build hooks, and has no automatic installation step. Do not commit or distribute the referenced game/Unity/BepInEx/Jötunn DLLs.
 
-GitHub Actions runs the core tests, real FFmpeg loopback checks on Linux/Windows, game-metadata audits and client/server builds against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide separate `valheim-broadcaster-<commit>` and `valheim-broadcaster-server-<commit>` artifacts, each containing only that role's plugin and Core DLLs. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching assemblies.
+GitHub Actions runs the core tests, real FFmpeg loopback checks on Linux/Windows, game-metadata audits and client/server builds against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide separate `valheim-broadcaster-<commit>` and `valheim-broadcaster-server-<commit>` artifacts. The client contains its plugin, Core, isolated Cinemachine runtime and notices; the server contains its plugin and Core only. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching assemblies.
 
 Expected output directory: `src/ValheimBroadcaster.Plugin/bin/Release/net48/`.
 
 ## Install and try locally
 
 1. Use a separate test profile with BepInEx 5 and Jötunn 2.30.2 available. Close that client before changing plugins.
-2. Copy **only** `ValheimBroadcaster.dll` and `ValheimBroadcaster.Core.dll` from the build output into `BepInEx/plugins/ValheimBroadcaster/` in that profile.
+2. From the client artifact, copy the contents of `ValheimBroadcaster/` into `BepInEx/plugins/ValheimBroadcaster/` in that profile: `ValheimBroadcaster.dll`, `ValheimBroadcaster.Core.dll`, `ValheimBroadcaster.Cinemachine.dll` and the included `ThirdParty/` folder. Replace all three DLLs together; preserve your configuration. The server does not need Cinemachine.
 3. Start Valheim, join the test world, and park the observer character safely near another player. Broadcasting starts disabled.
 4. Press **F8** to start. Use **PageDown** / **PageUp** to cycle and **F9** to hold or resume. Press **F8** again to restore the normal camera.
 5. Check `BepInEx/LogOutput.log` for the plugin startup line, state changes, or errors. Validate restoration before capturing a session.
 
 Hotkeys are ignored while typing in chat/console or using the recognized menu, inventory, and text-input screens. The observer's normal gameplay controls remain active in ordinary F8/F10 modes. Explicit offline observer mode suppresses them; console and broadcast controls remain available.
 
-To remove the prototype, close the client and remove its two DLLs. Keep any existing configuration and test records. Do not remove dependencies used by other mods.
+To remove the prototype, close the client and remove its three DLLs and owned ThirdParty notices. Keep any existing configuration and test records. Do not remove dependencies used by other mods.
 
 ## Solo camera test
 
 No second player or server mod is needed. This works in a local single-player world or while you are alone on your server.
 
-1. Install the two DLLs from the latest test build into your active mod profile. With Thunderstore, open that profile folder and copy both into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
+1. Install the complete client artifact (three DLLs and ThirdParty notices) into your active mod profile. With Thunderstore, open that profile folder and copy it into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
 2. Enter a test world with a living character and press **F10**. Alternatively, with the console enabled, run `broadcast self` and close the console.
 3. Walk, run, jump, and move near walls or trees. The same broadcast camera used for other players now follows you, exercising framing, smoothing, obstruction checks, main/sky FOV, HUD hiding, and direct stream capture.
 4. Press **F8** or run `broadcast off` to stop and restore the normal view. Run `broadcast on` to switch directly back to ordinary player targeting; alone, that mode starts varied scenic/creature coverage.
@@ -135,6 +145,7 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
+| `broadcast camera procedural` / `fixed` / `status` | Select Cinemachine or fixed player framing, or inspect candidate/occlusion diagnostics; mode is saved to `Camera.ProceduralPlayers` |
 | `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
 | `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
 | `broadcast auto on/off/status` | Resume/pause/inspect automatic player acquisition and scenic travel in a read-only session |
@@ -150,10 +161,11 @@ After the first launch, close the game and edit `BepInEx/config/com.dillflix.val
 
 | Section / key | Default | Meaning |
 | --- | --- | --- |
+| `Camera / ProceduralPlayers` | `true` | Cinemachine player framing with custom foliage-aware scoring; false uses the previous fixed-angle player camera |
 | `Camera / Distance` | `18` | Horizontal metres from target |
 | `Camera / Height` | `10` | Metres above the focus point |
 | `Camera / FieldOfView` | `75` | Vertical degrees |
-| `Camera / Azimuth` | `225` | Fixed world-space viewing direction |
+| `Camera / Azimuth` | `225` | Preferred world-space direction; procedural shots can reframe around obstructions |
 | `Camera / Smoothing` | `5` | Follow response per second |
 | `Director / DwellSeconds` | `30` | Ready footage before advancing |
 | `Director / TargetTimeoutSeconds` | `20` | Maximum experimental remote acquisition attempt |

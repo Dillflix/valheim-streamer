@@ -1,5 +1,27 @@
 # Validation and runtime test record
 
+## 0.8.12 Cinemachine player framing
+
+Built directly from 0.8.11 (`9495313`), retaining protocol 3, the camera compositor and continuous-follow readiness. The client now packages a selected runtime built from official Cinemachine 3.1.7 sources. No server/protocol migration or live installation is performed.
+
+Ten virtual cameras use Cinemachine Follow, HardLookAt and Deoccluder. A custom Cinemachine extension evaluates player head/torso/lower-body visibility and foreground vegetation. Selected views update every frame; alternatives are evaluated at 5 Hz or after significant subject movement. A pure selection policy requires persistent improvement and retains healthy shots to avoid oscillation. Filtered movement prediction is capped at 3 m; interiors use tighter candidate offsets. Actual interpolated camera movement, support geometry, near-plane clearance and carrier reach are validated before presentation. Foliage affects picture quality, not scene readiness or travel permission.
+
+The upstream runtime is built in an isolated assembly, without adding a Brain or another rendering camera. Verified source substitutions cover net48 syntax, late-loaded update-manager initialization, and idempotent cleanup of Cinemachine's hidden noninteracting scratch collider. The source archive hash, upstream revision, exact patches and license notices are included with the client package. See [the dependency build record](../third_party/Cinemachine/README.md).
+
+Validation performed locally: **145/145 core cases pass**. Client, core, server and Cinemachine compile against the existing real Valheim 1.0.21 / Unity 6000 / BepInEx 5.4.23.2 / Jötunn 2.30.2 references with warnings as errors. Core policy tests include stable ties, persistent improvement, dwell, immediate physical rejection, low foliage scores, candidate reset and stale evidence. The candidate movement calculation is shared with acquisition/travel and has a large-offset regression fixture. The existing CI pipeline performs normal project builds, core tests, metadata audits and Windows/Linux RTMP loopback checks. No Unity/Valheim session was executed here.
+
+**Client installation changes:** close the broadcaster, then copy all contents of the artifact's `ValheimBroadcaster/` folder into its existing plugin directory. Keep `ValheimBroadcaster.dll`, `ValheimBroadcaster.Core.dll` and **`ValheimBroadcaster.Cinemachine.dll`** together with the included `ThirdParty/` notices. Preserve existing configuration. Do not install these client files on the dedicated server; the deployed protocol-3 server remains compatible.
+
+Runtime cases **not run**:
+
+1. In an ordinary disposable local world, use `broadcast self` or F10, then walk/sprint through trees, stop, turn, and pass near buildings. Compare `broadcast camera fixed` with `broadcast camera procedural`; the mode persists through `Camera.ProceduralPlayers`. The procedural camera should prefer readable alternative views without constantly swapping sides. Inspect `broadcast camera status` for candidate, quality, obstruction and transition information.
+2. Follow another player in the authorized read-only observer. Sustain movement across terrain zones and stop beneath a canopy. Reframing should retain the same player and should not start travel merely because foliage obscures them. Verify other-client invisibility and unchanged observer behavior after installing the new client.
+3. Exercise wide/high camera settings and briefly unavailable camera geometry near a stationary target. Successful camera evidence must not be refreshed by failed attempts; expiry must not force the old fixed-angle displacement calculation or create a self-blocking acquisition loop.
+4. Enter a dungeon, walk through doors and narrow passages, and exit. Physical camera/near-plane collisions must not be hidden by dwell. Transitions must remain outside solids or cut to a validated endpoint. Actual missing scene geometry may still hold/slate.
+5. Teleport/respawn, cycle players, return/park/resume, switch camera mode, exit/rejoin and stop broadcasting. Old candidate state, motion prediction and helper objects must not affect the next scene or normal restored camera. Observe both local rendering and RTMP, including `broadcast framehold test`.
+
+Known limits: renderer bounds approximate vegetation and do not measure leaf transparency; unfamiliar custom vegetation may be missed. Dense-scene cost and actual composition quality need GPU/game profiling and tuning. Pure policy tests and successful compilation do not prove Unity component lifecycle, visual quality or multiplayer runtime behavior.
+
 ## 0.8.11 camera-image composition
 
 Built directly from 0.8.10 (`80c7c04`), retaining protocol-3 opt-in and continuous player following. The user reports a brief upside-down flash just before recovery/travel. The transition audit found explicit travel already forces a slate; the preceding bounded Live → Hold interval still switched from the camera image to GUI screenshot playback. The extra screenshot copy in 0.8.9 did not establish consistent orientation across those routes. This is a source-supported hypothesis, not a captured GPU diagnosis.

@@ -13,6 +13,7 @@ internal sealed class AutonomousBroadcast
     private readonly RemoteObserverClient remote;
     private readonly ObserverController observer;
     private readonly PlayerShotReadiness playerShots;
+    private readonly Func<TargetRoster.Target, Vector3, double> requiredPlayerCameraMovement;
     private readonly Action resetShot;
     private readonly Action<string> log;
     private readonly AutonomousDirector policy = new AutonomousDirector();
@@ -46,8 +47,11 @@ internal sealed class AutonomousBroadcast
         "\nSolo route: " + policy.RouteTestResult + "; marked " + route.Count;
 
     internal AutonomousBroadcast(BroadcastSettings settings, RemoteObserverClient remote, ObserverController observer, PlayerShotReadiness playerShots,
-        Action resetShot, Action<string> log)
-    { this.settings = settings; this.remote = remote; this.observer = observer; this.playerShots = playerShots; this.resetShot = resetShot; this.log = log; }
+        Func<TargetRoster.Target, Vector3, double> requiredPlayerCameraMovement, Action resetShot, Action<string> log)
+    {
+        this.settings = settings; this.remote = remote; this.observer = observer; this.playerShots = playerShots;
+        this.requiredPlayerCameraMovement = requiredPlayerCameraMovement; this.resetShot = resetShot; this.log = log;
+    }
 
     internal void Started()
     {
@@ -79,9 +83,8 @@ internal sealed class AutonomousBroadcast
     {
         Player? player = target?.LoadedPlayer;
         if (!player || !Player.m_localPlayer || !playerShots.TargetReady(target, out _)) return false;
-        Vector3 offset = player.transform.position - Player.m_localPlayer.transform.position;
-        return CameraReachability.Safe(offset.x, offset.y, offset.z,
-            settings.Distance.Value, settings.Height.Value, settings.Azimuth.Value);
+        double movement = requiredPlayerCameraMovement(target!, player.transform.position);
+        return movement >= 0 && movement < CameraReachability.ImmediateLimit;
     }
 
     internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady)
@@ -166,10 +169,11 @@ internal sealed class AutonomousBroadcast
             double? movement = null;
             if (position.HasValue)
             {
-                Vector3 offset = position.Value - Player.m_localPlayer.transform.position;
-                double required = CameraReachability.RequiredDisplacement(offset.x, offset.y, offset.z,
-                    settings.Distance.Value, settings.Height.Value, settings.Azimuth.Value);
-                if (!double.IsNaN(required) && !double.IsInfinity(required)) movement = required;
+                // Share the camera adapter's candidate geometry with CanFrame.
+                // Foliage quality must never increase travel distance or turn a
+                // finite nearby position into a distant-acquisition request.
+                double required = requiredPlayerCameraMovement(target, position.Value);
+                if (required >= 0 && !double.IsNaN(required) && !double.IsInfinity(required)) movement = required;
                 else position = null; // Invalid geometry cannot authorize travel.
             }
             bool areaReady = playerShots.TargetReady(target, out string readinessReason);
