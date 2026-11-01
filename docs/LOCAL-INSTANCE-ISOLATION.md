@@ -1,6 +1,20 @@
 # Local Windows two-client isolation test
 
-Status: prepared; Windows/Sandboxie/Valheim runtime checks **not run** by the agent.
+Status: **first Steam isolation test FAILED on the user's Windows PC**.
+The sandboxed Steam auto-logged into the host account. Logging out closed the host
+Valheim client and logged out host Steam too. Separate process membership did not
+establish independent Steam sessions. The cause is not yet established: inherited
+login/session state and host IPC/file access must be distinguished.
+
+**Do not repeat the original Stage 1 procedure below.** Terminate only this test
+sandbox's processes, restore normal Steam, and inspect the installed Sandboxie
+version, sandbox type, and effective global/box/template settings first. Keep games
+closed during the next account-isolation experiment. Do not delete host Steam
+credentials, broaden IPC permissions, or use logout as an isolation test.
+A fresh independently initialized Steam environment is a candidate next experiment,
+not a verified fix. The later client/streaming tests remain not run.
+
+The original Stage 1 steps are retained below as a record of the failed procedure.
 This is an experimental compatibility test, not a guarantee that current Steam,
 Sandboxie, Doorstop and NVENC work together. No production-server change is required.
 Use the already installed 0.8.2 client for this isolation test; the 0.8.3 candidate
@@ -203,3 +217,4 @@ Sources checked 2026-10-31:
 - [Sandboxie Steam compatibility limitations](https://sandboxie-plus.github.io/sandboxie-docs/Content/KnownConflicts/)
 - [r2modman launch-argument troubleshooting](https://github.com/ebkr/r2modmanPlus/issues/1932)
 - [Steam Families simultaneous copy requirements](https://help.steampowered.com/en/faqs/view/054C-3167-DD7F-49D4)
+
