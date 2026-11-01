@@ -16,8 +16,8 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `CoverageDirector` / `IdleShots` | Actual player/scenic/creature shot selection, local terrain paths and nearby eligible actor bindings |
 | `CameraRig` | Wide framing, smoothing, obstruction/readiness checks, HUD and camera-state restoration |
 | `ScenicVisibility` | Cached nearby vegetation bounds and multi-ray foreground screening for scenic compositions |
-| `FrameContinuity` / `FrameHold` | Bounded hold of a recent valid frame and presentation diagnostics |
-| `FramebufferCapture` | Shared screen-to-texture normalization with graphics-state restoration for held frames and streaming |
+| `FrameContinuity` / `FrameHold` / `FrameHoldRenderer` | Bounded camera-image hold, final image-effect composition and presentation diagnostics |
+| `FramebufferCapture` | Screen-to-texture normalization with graphics-state restoration for streaming |
 | `PlayerFollowContinuity` / `PlayerShotReadiness` | Acquired-player binding, recent presentation evidence and local geometry checks for uninterrupted following |
 | `ConnectionRecoveryPolicy` / `ConnectionRecovery` | Opt-in same-session recovery with cancellation, bounded retry and fresh authorization |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback and non-mutating audio capture |
@@ -27,7 +27,11 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 
 The client plugin targets .NET Framework 4.8; the core targets .NET Standard 2.0. Jötunn 2.30.2 is the pinned compilation dependency. Builds read real matching game/BepInEx references and exclude Jötunn template deployment/publicizing hooks. CI does not launch the game. Game, Unity and dependency DLLs are excluded from project artifacts.
 
-Held frames are captured only after a Live GUI repaint in the same rendered frame, while the existing readiness/menu conditions also pass. A raw screen texture is copied with `Graphics.Blit` into the display texture; the raw screen copy is never directly drawn by GUI. The same helper is used by streaming and restores the prior render target and sRGB write state in `finally`. This addresses differing screen/texture conventions and prevents one capture coroutine leaving its destination bound for the other. It adds one screen-sized texture and GPU copy to frame hold, without another camera render or CPU readback. Held/slate composites cannot refresh the 0.75-second hold deadline.
+`FrameHoldRenderer` is appended to the active game camera's existing image effects. Its `OnRenderImage` callback caches the processed camera source only when that same frame's camera/carrier operation passed readiness. Live and Hold both blit that cached texture to the supplied camera destination. The hold never passes through screenshot capture or `GUI.DrawTexture`; GUI adds current status/recovery text only. This uses one cached render texture and GPU copies, without another camera render or CPU readback. Streaming still captures the final framebuffer after camera composition and GUI.
+
+A cached texture matches the source dimensions and graphics format; resizing, lost textures, camera replacement, stop and world cleanup invalidate it. Held/slate outputs never refresh the 0.75-second capture deadline. Hard travel/recovery boundaries clear that deadline immediately, preventing pre-travel footage from reappearing after a quick return to Watching. GUI requires a compositor result in the current frame and otherwise covers the display with a recovery slate. Valheim's built-in pipeline and existing image-effect stack were inspected; conflicting third-party camera effects or replacement render pipelines require separate runtime validation.
+
+`broadcast framehold test` schedules a 0.5-second artificial readiness gap after two seconds, for closing the console. It changes presentation only: camera/carrier/director logic continues normally. Hard failures take precedence, and camera changes/stop cancel the test. It requires a live picture and can run while alone.
 
 ## Observer connection boundary
 
@@ -89,7 +93,7 @@ The adapter additionally binds the actual Player instance, ZDO ID, world, local 
 
 Full readiness remains the default for initial acquisition, scenery, creatures, probes, travel and return. Continued following still requires finite coordinates, local actor availability, loaded support geometry and the existing immediate carrier movement limits. Actual missing geometry can still produce a held frame or slate. The main and sky camera settings and normal HUD state are restored on stop. Child renderer/light/audio masking affects the local carrier; server publication guards provide the network visibility boundary.
 
-`FrameHold` keeps one completed valid framebuffer on the GPU. Readiness gaps can display it for less than 0.75 seconds after its actual capture. Travel and explicit fault states bypass the hold for an honest slate. Resize, stop and world changes discard the texture. Capture failures disable the hold for that activation and retain the slate fallback. Diagnostics distinguish held frames from slate frames and retain the last readiness reason.
+`FrameHold` keeps one validated camera image on the GPU. Readiness gaps can display it for less than 0.75 seconds after its actual capture. Travel and explicit fault states bypass the hold for an honest slate. Resize, stop and world changes discard the texture. Capture failures disable the hold for that activation and retain the slate fallback. Diagnostics distinguish held frames from slate frames and retain the last readiness reason.
 
 Observer lifecycle (`Watching`, `Travelling`, `Returning`, `Parked`, `Suspended`) is reported separately from programming (`Following`, `Acquiring`, `Scenic`, `Waiting`, route exercise), discovery freshness and recovery. Seeing `Watching` alone is not evidence of a human target.
 

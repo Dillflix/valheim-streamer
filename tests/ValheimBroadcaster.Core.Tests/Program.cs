@@ -57,6 +57,7 @@ internal static class Program
             ("Observer travel rejects invalid time without changing state", ObserverTiming),
             ("Short loading gaps hold only recently captured footage", FrameHoldWindow),
             ("Forced travel or failure slate cannot be hidden by a good frame", FrameHardFailure),
+            ("Quick recovery cannot revive footage from before travel", FrameTravelBoundary),
             ("Frame reset and clock rollback cannot replay another session", FrameReset),
             ("Presentation clock rejects invalid values", FrameClock),
             ("Observer identity configuration accepts exact bounded Steam IDs", ObserverAllowlist),
@@ -575,6 +576,19 @@ internal static class Program
         var f = new FrameContinuity(); f.Captured(1);
         Equal(FramePresentation.Slate, f.Select(1.01, true, true));
         Equal(FramePresentation.Slate, f.Select(1.01, false, true));
+    }
+    private static void FrameTravelBoundary()
+    {
+        var f = new FrameContinuity(); f.Captured(1);
+        Equal(FramePresentation.Hold, f.Select(1.01, false, false));
+        Equal(FramePresentation.Slate, f.Select(1.02, false, true));
+        // Travel may finish before the old hold expires. It must not return.
+        Equal(FramePresentation.Slate, f.Select(1.03, false, false));
+        Equal(FramePresentation.Live, f.Select(1.04, true, false));
+        Equal(FramePresentation.Slate, f.Select(1.05, false, false));
+        // Only a newly captured live image can restore short-gap continuity.
+        f.Captured(1.06);
+        Equal(FramePresentation.Hold, f.Select(1.07, false, false));
     }
     private static void FrameReset()
     {

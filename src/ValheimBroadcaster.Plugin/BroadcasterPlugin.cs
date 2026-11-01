@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.10";
+    public const string PluginVersion = "0.8.11";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -122,7 +122,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 harmony.Patch(openServer, prefix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(BeforeOpenServer)));
                 observerHooksAvailable = true;
             }
-            StartCoroutine(frameHold.Capture(() => director.IsEnabled, () => cameraReady && !IsTextOrMenuOpen(), message => Logger.LogWarning(message)));
+            frameHold.Configure(() => director.IsEnabled, () => cameraReady && presentedFrame == Time.frameCount,
+                PresentationHardFailure, message => Logger.LogWarning(message));
             CommandManager.Instance.AddConsoleCommand(new BroadcastCommand());
             Logger.LogInfo($"{PluginName} {PluginVersion} ready; observer protocol {ObserverProtocol.Version}, explicit pre-admission opt-in. F8 toggles; F10 starts self-follow; broadcast help lists commands. Starts disabled.");
         }
@@ -486,6 +487,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         {
             if (plugin.remote.Isolated) plugin.observerVisuals.Apply(Player.m_localPlayer, true, true);
             if (!plugin.director.IsEnabled) return;
+            Camera outputCamera = __instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>();
+            if (outputCamera) plugin.frameHold.Attach(outputCamera);
             Vector3? focus = null;
             TargetRoster.Target? playerTarget = null;
             bool continuousPlayer = false;
@@ -581,6 +584,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         return camera ? ListenerField?.GetValue(camera) as AudioListener : null;
     }
 
+    private bool PresentationHardFailure() => (probe.Active && probe.State != ProbeState.Viewing) ||
+        (observer.Active && observer.Phase != ObserverPhase.Watching);
+
     private void OnGUI()
     {
         if (settings == null) return;
@@ -596,8 +602,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 observer.Phase == ObserverPhase.Parked ? "Read-only observer parked. F8 resumes coverage; disconnect to leave the observer role." : remote.Status);
             return;
         }
-        bool hardFailure = (probe.Active && probe.State != ProbeState.Viewing) || (observer.Active && observer.Phase != ObserverPhase.Watching);
-        FramePresentation presentation = frameHold.Present(cameraReady, hardFailure);
+        FramePresentation presentation = frameHold.Present();
         if (presentation == FramePresentation.Hold) return;
         Color old = GUI.color;
         if (presentation == FramePresentation.Slate)
@@ -881,7 +886,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -891,6 +896,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
+                    case "framehold":
+                        context?.AddString(args.Length == 2 && args[1].Equals("test", StringComparison.OrdinalIgnoreCase)
+                            ? plugin.frameHold.Test() : "broadcast framehold test");
+                        return;
                     case "auto": plugin.AutomationCommand(args, context); return;
                     case "route":
                         try { plugin.RouteCommand(args, context); }

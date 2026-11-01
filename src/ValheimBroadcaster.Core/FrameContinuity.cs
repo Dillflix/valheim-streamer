@@ -13,7 +13,13 @@ namespace ValheimBroadcaster.Core
         public FramePresentation Select(double now, bool ready, bool hardFailure)
         {
             Validate(now);
-            if (hardFailure) return FramePresentation.Slate;
+            if (hardFailure)
+            {
+                // A travel/recovery boundary invalidates the previous scene,
+                // even if it becomes ready again within the brief hold window.
+                capturedAt = null;
+                return FramePresentation.Slate;
+            }
             if (ready) return FramePresentation.Live;
             return capturedAt.HasValue && now >= capturedAt.Value && now - capturedAt.Value < MaximumHoldSeconds
                 ? FramePresentation.Hold : FramePresentation.Slate;

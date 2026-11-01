@@ -2,9 +2,11 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.11 replaces GUI screenshot holds with a camera compositor.** Live and held scenes use the same final camera-texture path; travel/recovery invalidate the prior image. `broadcast framehold test` schedules a half-second hold so orientation can be checked without waiting for travel. Includes 0.8.10 continuous following. Replace both client DLLs; keep the deployed protocol-3 server and configuration. In-game visual verification is pending.
+
 **0.8.10 separates player acquisition from continuous following.** An established shot can continue while nearby network objects instantiate, provided the same living character and usable local geometry remain present. Initial acquisition, respawn, significant relocation and travel still require full readiness. Includes 0.8.8 scenery and 0.8.9 held-frame changes. Replace both client DLLs; the deployed protocol-3 server and existing configuration can remain. Runtime retest is pending.
 
-**0.8.9 repairs the held-frame display path implicated in brief upside-down flashes.** Saved frames now use the same GPU normalization path as streaming, capture restores graphics state, and only an actually presented live frame can refresh the hold. The reported inversion still requires an in-game retest. Includes the 0.8.8 scenery improvements and remains compatible with the deployed protocol-3 server; replace both client DLLs together.
+**0.8.9 changed the held-frame display path implicated in brief upside-down flashes (superseded by 0.8.11).** Saved frames now use the same GPU normalization path as streaming, capture restores graphics state, and only an actually presented live frame can refresh the hold. The reported inversion still requires an in-game retest. Includes the 0.8.8 scenery improvements and remains compatible with the deployed protocol-3 server; replace both client DLLs together.
 
 **0.8.8 improves scenic composition.** It tries alternate angles and heights, screens the camera path against solid geometry and nearby foliage, and replaces persistently obstructed shots. This continues from the corrected protocol-3 0.8.7 build; the deployed protocol-3 0.8.4 server can remain installed. Replace both client DLLs together. Visual results in Valheim remain pending; see [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md).
 
@@ -133,6 +135,7 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
+| `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
 | `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
 | `broadcast auto on/off/status` | Resume/pause/inspect automatic player acquisition and scenic travel in a read-only session |
 | `broadcast route add [x y z]/start/stop/clear/status` | Run a world-session solo acquisition route through the same travel path |

@@ -1,5 +1,22 @@
 # Validation and runtime test record
 
+## 0.8.11 camera-image composition
+
+Built directly from 0.8.10 (`80c7c04`), retaining protocol-3 opt-in and continuous player following. The user reports a brief upside-down flash just before recovery/travel. The transition audit found explicit travel already forces a slate; the preceding bounded Live → Hold interval still switched from the camera image to GUI screenshot playback. The extra screenshot copy in 0.8.9 did not establish consistent orientation across those routes. This is a source-supported hypothesis, not a captured GPU diagnosis.
+
+The active game camera now receives an appended `OnRenderImage` component. A ready live camera source is copied to one matching render texture; both Live and Hold draw that same texture through the camera destination. No held image is drawn through GUI or captured after GUI. A same-frame camera readiness stamp is required; missing compositor callbacks fall back to the opaque slate. Hard transitions invalidate prior footage, including when Watching resumes before the old hold would expire. Source-size/format changes, lost textures and camera lifetime changes also invalidate it. Every compositor path writes its destination and preserves the sRGB write flag. The final camera output remains bound for Unity's image-effect chain.
+
+Local validation: **132/132 core cases pass**, including quick travel/recovery without resurrection of a pre-travel frame. Client and server compile against the existing real Valheim 1.0.21 / Unity 6000 / BepInEx 5.4.23.2 / Jötunn 2.30.2 references with warnings as errors. Normal project builds and the existing streaming/metadata checks run in CI. No Valheim/GPU session is available here; the visual cases below are **not run**.
+
+1. With a live broadcast picture, run `broadcast framehold test`, close the console, and wait two seconds. The scene should hold for half a second, upright and with unchanged color, then resume. Repeat on scenic footage or `broadcast self`; no second player is required.
+2. Repeat while watching the local display and RTMP receiver. Keep the existing `Streaming.FlipVertical` setting; this change does not alter encoder orientation.
+3. Observe an actual readiness gap followed by travel/recovery. Brief gaps may hold for less than 0.75 seconds; travel must show the slate and must not resurrect the old frame on arrival. Confirm that new live footage resumes without a flash.
+4. Exercise resize/fullscreen, off/on, observer return/resume and world exit/rejoin. No stale held scene should survive those boundaries. Confirm the ordinary camera restores on shutdown. Verify on the user's graphics backend and active post-processing configuration.
+
+Replace both client DLLs together after closing the broadcaster. Preserve configuration and the deployed protocol-3 server. The server artifact's version label changes only; no server upgrade, admission change or live installation is required.
+
+API references: [OnRenderImage ordering and pipeline support](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/MonoBehaviour.OnRenderImage.html), [Graphics.Blit state and color handling](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Graphics.Blit.html). Actual game inspection confirms built-in `OnRenderImage` effects on the game camera; this does not validate third-party effects appended afterward.
+
 ## 0.8.10 continuous player following
 
 Built from 0.8.9 (`52e3435`), preserving the corrected protocol-3 admission, movement, scenery and held-image changes. Actual Valheim 1.0.21 inspection established that `ZNetScene.IsAreaReady` waits for the queried zone plus instances for known network objects in a 3×3 zone neighbourhood. Using it as a per-frame presentation veto causes unnecessary freezes when otherwise usable footage exists.
