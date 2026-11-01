@@ -115,8 +115,7 @@ internal sealed class StreamCapture : MonoBehaviour
         }
         // Copy the already-rendered framebuffer, including slate/overlay. No second
         // camera render, ReadPixels main-thread stall, or desktop capture.
-        ScreenCapture.CaptureScreenshotIntoRenderTexture(screen);
-        Graphics.Blit(screen, output);
+        FramebufferCapture.Copy(screen, output!);
         pending = true;
         try { AsyncGPUReadback.Request(output, 0, TextureFormat.RGBA32, ReadbackFinished); }
         catch { pending = false; throw; }

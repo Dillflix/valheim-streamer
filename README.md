@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.9 repairs the held-frame display path implicated in brief upside-down flashes.** Saved frames now use the same GPU normalization path as streaming, capture restores graphics state, and only an actually presented live frame can refresh the hold. The reported inversion still requires an in-game retest. Includes the 0.8.8 scenery improvements and remains compatible with the deployed protocol-3 server; replace both client DLLs together.
+
 **0.8.8 improves scenic composition.** It tries alternate angles and heights, screens the camera path against solid geometry and nearby foliage, and replaces persistently obstructed shots. This continues from the corrected protocol-3 0.8.7 build; the deployed protocol-3 0.8.4 server can remain installed. Replace both client DLLs together. Visual results in Valheim remain pending; see [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md).
 
 **0.8.4 makes observer mode optional per connection.** The server's `Observer.SteamIds` list grants permission to request the role; it does not force those accounts into it. Vanilla clients and modded clients with `Multiplayer.ObserverConnection=false` join as normal players, including allowlisted accounts. Set that client option to `true` **before joining** to request read-only observation. Use matching 0.8.4 client/server builds (observer protocol 3); disconnect before changing roles. Multiplayer runtime verification of this change is still pending.

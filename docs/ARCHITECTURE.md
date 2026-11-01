@@ -17,6 +17,7 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `CameraRig` | Wide framing, smoothing, obstruction/readiness checks, HUD and camera-state restoration |
 | `ScenicVisibility` | Cached nearby vegetation bounds and multi-ray foreground screening for scenic compositions |
 | `FrameContinuity` / `FrameHold` | Bounded hold of a recent valid frame and presentation diagnostics |
+| `FramebufferCapture` | Shared screen-to-texture normalization with graphics-state restoration for held frames and streaming |
 | `ConnectionRecoveryPolicy` / `ConnectionRecovery` | Opt-in same-session recovery with cancellation, bounded retry and fresh authorization |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback and non-mutating audio capture |
 | `EncoderSession` / media buffers | Paced video/audio workers, bounded transfer, FFmpeg lifetime and watchdogs |
@@ -24,6 +25,8 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `EncoderDiagnostics` | Bounded, redacted FFmpeg failure evidence |
 
 The client plugin targets .NET Framework 4.8; the core targets .NET Standard 2.0. Jötunn 2.30.2 is the pinned compilation dependency. Builds read real matching game/BepInEx references and exclude Jötunn template deployment/publicizing hooks. CI does not launch the game. Game, Unity and dependency DLLs are excluded from project artifacts.
+
+Held frames are captured only after a Live GUI repaint in the same rendered frame, while the existing readiness/menu conditions also pass. A raw screen texture is copied with `Graphics.Blit` into the display texture; the raw screen copy is never directly drawn by GUI. The same helper is used by streaming and restores the prior render target and sRGB write state in `finally`. This addresses differing screen/texture conventions and prevents one capture coroutine leaving its destination bound for the other. It adds one screen-sized texture and GPU copy to frame hold, without another camera render or CPU readback. Held/slate composites cannot refresh the 0.75-second hold deadline.
 
 ## Observer connection boundary
 

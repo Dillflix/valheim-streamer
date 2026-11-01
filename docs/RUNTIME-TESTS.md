@@ -1,5 +1,17 @@
 # Validation and runtime test record
 
+## 0.8.9 held-frame presentation
+
+The supplied session log loads client **0.8.7**, protocol 3, with Valheim 1.0.21, Unity 6000.0.75, BepInEx 5.4.23.6 and Jötunn 2.30.2. It contains no camera/graphics exceptions, one successful NVENC/AAC startup and no RTMP failure/retry. Five status samples report waiting for a valid shot; thirteen report brief interruptions, mostly target-area loading. Six player travels are distant (approximately 754–2405 metres). These observations do not establish which individual frame inverted.
+
+The strongest source-level hypothesis is held-frame presentation during those loading gaps: 0.8.7/0.8.8 draw a raw screenshot render texture directly through GUI, while streaming normalizes it through `Graphics.Blit`. The actual game's `GameCamera.LateUpdate` calls `UpdateCamera`, then `UpdateListner`, then returns; camera shake is inside `UpdateCamera`, before our postfix. No later native rotation overwrite was found in that path.
+
+0.8.9 routes held and streamed screenshots through the same GPU normalization helper, restores `RenderTexture.active` and `GL.sRGBWrite`, and requires a Live repaint in the same frame before refreshing the held image. It does not change camera geometry, admission, observer protocol, or the encoder's `FlipVertical` setting. The client compiles against real references with warnings as errors; the existing CI pipeline remains the package producer. No GPU/game runtime is available here, so this is not a confirmed runtime fix.
+
+Primary API references: [Unity render-texture conventions](https://docs.unity.cn/Manual/SL-PlatformDifferences.html), [Graphics.Blit state](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Graphics.Blit.html), and [end-of-frame capture ordering](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/WaitForEndOfFrame.html).
+
+Retest continuous walking/sprinting and dungeon/terrain loading while watching both the local client and RTMP receiver. Brief held frames should retain the live image's orientation and color, then return to live motion; longer gaps should still expire to the recovery slate. Check resize/fullscreen changes and broadcast off/on. Keep the existing `Streaming.FlipVertical` setting: a global output flip is not a correction for intermittent held-frame inversion. If the symptom recurs, `broadcast diagnostics` now includes the last presentation mode and graphics backend alongside held/slate counts. All these runtime cases remain pending.
+
 ## 0.8.8 scenic composition
 
 Continues from corrected protocol-3 client 0.8.7 (`4113d7f`). The reported failure is a scenic camera buried in foreground leaf planes. Selection now evaluates alternate headings/heights and five points along the intended path, rejects solid collisions and heavily obscured foreground foliage, and retires a persistently invalid shot after 1.5 seconds. Bounds screening is conservative; it does not measure leaf transparency or promise that every accepted shot is attractive. `broadcast diagnostics` includes the scenic rejection reason, search state and rejected-view count for the current region.
