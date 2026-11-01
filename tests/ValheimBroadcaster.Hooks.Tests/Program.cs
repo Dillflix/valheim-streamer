@@ -35,6 +35,12 @@ internal static class Program
             int auth = Enumerable.Range(0, handshake.Count).First(i => handshake[i].Operand is MethodReference m && m.Name == "VerifySessionTicket");
             int session = Enumerable.Range(0, handshake.Count).First(i => handshake[i].OpCode == OpCodes.Stfld && handshake[i].Operand is FieldReference f && f.DeclaringType.Name == "ZNetPeer" && f.Name == "m_uid");
             Check("Steam ticket verification precedes session publication", auth < session);
+            Check("Pre-admission retry precedes native world peer registration", handshake.Where(i => i.Operand is MethodReference m && m.Name == "AddPeer").All(i => handshake.IndexOf(i) > session) &&
+                Calls(Method("ZNet", "RPC_PeerInfo"), "ZDOMan", "AddPeer") == 1);
+            Check("Native readiness closes on session identity publication", Method("ZNetPeer", "IsReady").Body.Instructions.Count(i => i.OpCode == OpCodes.Ldfld && i.Operand is FieldReference f && f.Name == "m_uid") == 1 &&
+                !Method("ZNetPeer", "IsReady").Body.Instructions.Any(i => i.Operand is MethodReference));
+            Check("Observer reservation reads transport Steam identity", Calls(Method("ZSteamSocket", "GetHostName"), "SteamNetworkingIdentity", "GetSteamID") == 1);
+
             var envelope = game.MainModule.Types.Single(t => t.Name == "ZRoutedRpc").NestedTypes.Single(t => t.Name == "RoutedRPCData").Methods.Single(m => m.Name == "Deserialize");
             string readers = string.Join(",", envelope.Body.Instructions.Where(i => i.Operand is MethodReference m && m.DeclaringType.Name == "ZPackage").Select(i => ((MethodReference)i.Operand).Name));
             Check("Bounded request parser matches the routed envelope", readers == "ReadLong,ReadLong,ReadLong,ReadZDOID,ReadInt,ReadPackage");

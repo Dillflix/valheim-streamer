@@ -12,7 +12,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.5")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.6")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 public sealed class ObserverServerPlugin : BaseUnityPlugin
@@ -25,7 +25,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
     private ObserverDiscoveryService discovery = null!;
     private bool discoveryFailed;
     private HashSet<string> allowed = new HashSet<string>(StringComparer.Ordinal);
-    private readonly HashSet<ZNetPeer> reserved = new HashSet<ZNetPeer>();
+    private readonly Dictionary<ZNetPeer, ObserverReservation> reservations = new Dictionary<ZNetPeer, ObserverReservation>();
     private readonly Dictionary<ZNetPeer, ObserverLease> leases = new Dictionary<ZNetPeer, ObserverLease>();
     private readonly Dictionary<ZNetPeer, float> nextReply = new Dictionary<ZNetPeer, float>();
     private ZNet? world;
@@ -47,7 +47,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
             discovery = new ObserverDiscoveryService();
             harmony = new Harmony("com.dillflix.valheimbroadcaster.server");
             Patch(typeof(ZNet), "OnNewConnection", new[] { typeof(ZNetPeer) }, postfix: nameof(NewConnection));
-            Patch(typeof(ZNet), "RPC_PeerInfo", new[] { typeof(ZRpc), typeof(ZPackage) }, postfix: nameof(PeerReady), transpiler: nameof(PreserveAdmissionCount));
+            Patch(typeof(ZNet), "RPC_PeerInfo", new[] { typeof(ZRpc), typeof(ZPackage) }, prefix: nameof(BeforePeerAdmission), postfix: nameof(PeerReady), transpiler: nameof(PreserveAdmissionCount));
             Patch(typeof(ZNet), "RPC_ServerSyncedPlayerData", new[] { typeof(ZRpc), typeof(ZPackage) }, prefix: nameof(ObserverPosition), postfix: nameof(PlayerMetadataReceived));
             Patch(typeof(RandEventSystem), "RefreshPlayerEventData", Type.EmptyTypes, transpiler: nameof(EventPeerList));
             Patch(typeof(ZoneSystem), "Update", Type.EmptyTypes, transpiler: nameof(EventPeerList));
@@ -62,7 +62,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.5 ready; opt-in dedicated Steam connections only. No ordinary-client mod requirement. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.6 ready; opt-in dedicated Steam connections only. No ordinary-client mod requirement. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {
@@ -88,14 +88,18 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         catch (ArgumentException error) { allowed.Clear(); Logger.LogError(error.Message + " Observer access disabled until corrected."); }
     }
     private bool Authorized(ZNetPeer peer) => allow.Value && peer.m_socket is ZSteamSocket && allowed.Contains(peer.m_socket.GetHostName());
-    private bool Protected(ZNetPeer peer) => reserved.Contains(peer);
+    private bool Protected(ZNetPeer peer) => reservations.TryGetValue(peer, out ObserverReservation role) && role.Reserved;
     private static ZNetPeer? Find(ZRpc rpc) => ZNet.instance ? ZNet.instance.GetPeers().FirstOrDefault(peer => ReferenceEquals(peer.m_rpc, rpc)) : null;
     private static bool ProtectedRpc(ZRpc rpc) => Serving && Find(rpc) is ZNetPeer peer && instance!.Protected(peer);
     private static bool ProtectedUid(long uid) => uid != 0 && Serving && ZNet.instance.GetPeers().Any(peer => peer.m_uid == uid && instance!.Protected(peer));
 
     private void EnsureWorld()
     {
-        if (world != ZNet.instance) { reserved.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); discoveryFailed = false; world = ZNet.instance; }
+        if (world != ZNet.instance)
+        {
+            if (reservations.Count > 0) Logger.LogInfo("Observer admission state cleared for a new network world; tracked connections=" + reservations.Count);
+            reservations.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); discoveryFailed = false; world = ZNet.instance;
+        }
     }
     private void Bind(ZNetPeer peer)
     {
@@ -111,15 +115,36 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         ObserverServerPlugin plugin = instance!;
         plugin.EnsureWorld();
         if (plugin.configured != plugin.identities.Value) plugin.ReloadAllowlist();
-        // Pin the role before authentication completes. Later allowlist additions
-        // must not convert a live ordinary player with already-published objects.
-        if (plugin.Authorized(__0)) plugin.reserved.Add(__0);
+        plugin.AssessReservation(__0, "new-connection");
         __0.m_rpc.Register<int>(ObserverProtocol.Hello, plugin.Hello);
         __0.m_rpc.Register<int>(ObserverDiscoveryProtocol.Request, plugin.DiscoveryRequest);
     }
+    private void AssessReservation(ZNetPeer peer, string stage)
+    {
+        EnsureWorld();
+        if (configured != identities.Value) ReloadAllowlist();
+        if (!reservations.TryGetValue(peer, out ObserverReservation role))
+        { role = new ObserverReservation(); reservations.Add(peer, role); }
+        bool steam = peer.m_socket is ZSteamSocket;
+        string identity = steam ? peer.m_socket.GetHostName() : "";
+        bool allowlisted = steam && allowed.Contains(identity);
+        bool changed = role.Observe(peer.IsReady(), allow.Value, steam, allowlisted);
+        // Log only bounded transport identity, never names or RPC-supplied identity.
+        string safeIdentity = identity.Length == 17 && identity.All(c => c >= '0' && c <= '9') ? identity : "unavailable";
+        Logger.LogInfo("Observer admission " + stage + ": SteamID=" + safeIdentity + "; enabled=" + allow.Value +
+            "; allowlisted=" + allowlisted + "; ready=" + peer.IsReady() + "; reserved=" + role.Reserved +
+            "; newly-reserved=" + changed + "; " + role.Reason);
+    }
+    private static void BeforePeerAdmission(ZRpc __0)
+    {
+        // Last safe retry when the transport identity was unavailable at socket
+        // registration. No payload parsing and no bypass of native authentication.
+        if (Serving && Find(__0) is ZNetPeer peer) instance!.AssessReservation(peer, "before-peer-info");
+    }
     private static void PeerReady(ZRpc __0)
     {
-        if (Serving && Find(__0) is ZNetPeer peer) instance!.Bind(peer);
+        if (Serving && Find(__0) is ZNetPeer peer)
+        { instance!.AssessReservation(peer, "after-peer-info"); instance.Bind(peer); }
     }
     private void Hello(ZRpc rpc, int version)
     {
@@ -128,7 +153,12 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         nextReply[peer] = Time.realtimeSinceStartup + 1;
         Bind(peer);
         if (!Authorized(peer) || !leases.TryGetValue(peer, out ObserverLease lease))
-        { rpc.Invoke(ObserverProtocol.Reply, ObserverProtocol.Version, 0); return; }
+        {
+            string reservation = reservations.TryGetValue(peer, out ObserverReservation role) ? role.Reason : "No reservation record for this peer";
+            Logger.LogWarning("Observer hello denied: authorized=" + Authorized(peer) + "; reserved=" + Protected(peer) +
+                "; lease=" + leases.ContainsKey(peer) + "; client protocol=" + version + "; server protocol=" + ObserverProtocol.Version + "; " + reservation);
+            rpc.Invoke(ObserverProtocol.Reply, ObserverProtocol.Version, 0); return;
+        }
         if (!lease.Confirm(version, Time.realtimeSinceStartup))
         { ZNet.instance.Disconnect(peer); return; }
         rpc.Invoke(ObserverProtocol.Reply, ObserverProtocol.Version, 1);
@@ -243,7 +273,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         }
         if (replacements != 1) throw new InvalidOperationException("Unsupported gameplay peer query; observer isolation disabled.");
     }
-    private static int AdmissionCount(ZNet net) => Serving && (instance!.allow.Value || instance.reserved.Count > 0) ? net.GetPeerConnections() : net.GetNrOfPlayers();
+    private static int AdmissionCount(ZNet net) => Serving && (instance!.allow.Value || instance.reservations.Values.Any(role => role.Reserved)) ? net.GetPeerConnections() : net.GetNrOfPlayers();
     private static IEnumerable<CodeInstruction> PreserveAdmissionCount(IEnumerable<CodeInstruction> instructions)
     {
         MethodInfo method = AccessTools.Method(typeof(ZNet), nameof(ZNet.GetNrOfPlayers));
@@ -276,7 +306,11 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 // Keep the role pinned until the peer is removed, including cleanup callbacks.
             }
         }
-        reserved.RemoveWhere(peer => !ZNet.instance.GetPeers().Contains(peer));
+        foreach (ZNetPeer gone in reservations.Keys.Where(peer => !ZNet.instance.GetPeers().Contains(peer)).ToArray())
+        {
+            if (reservations[gone].Reserved) Logger.LogInfo("Observer reservation removed after peer left the native connection list.");
+            reservations.Remove(gone);
+        }
         if (!discoveryFailed)
         {
             try
