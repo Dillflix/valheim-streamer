@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
@@ -11,6 +12,8 @@ internal sealed class CameraRig
     private readonly CinemachinePlayerRig playerCamera = new CinemachinePlayerRig();
     private bool proceduralActive;
     internal string Diagnostics => proceduralActive ? playerCamera.Diagnostics : "Camera: fixed framing / scenic path";
+    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive ? playerCamera.VisiblePlayerIds : Array.Empty<string>();
+    internal RemoteObserverClient? RemoteContext { set => playerCamera.RemoteContext = value; }
     private Camera? camera;
     private Camera? skyCamera;
     private float savedFov;
@@ -53,6 +56,7 @@ internal sealed class CameraRig
         if (settings.ProceduralPlayers.Value && playerTarget != null)
         {
             proceduralActive = true;
+            playerCamera.RenderingCamera = camera;
             playerCamera.NearClipPlane = camera.nearClipPlane;
             playerCamera.Aspect = camera.aspect;
             if (!playerCamera.TrySolve(playerTarget, focus, settings, selectionRevision, dt, continuousPlayer, moveCarrier,

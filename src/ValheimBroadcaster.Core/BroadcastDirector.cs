@@ -26,6 +26,9 @@ namespace ValheimBroadcaster.Core
         private double _targetTimeoutSeconds;
         private double _dwellElapsed;
         private double _waitingElapsed;
+        private readonly PlayerCoverageHistory _coverage = new PlayerCoverageHistory();
+        private double _coverageNow;
+        private bool _coverageRecorded;
 
         public BroadcastDirector(double dwellSeconds = 30, double targetTimeoutSeconds = 15)
         {
@@ -86,6 +89,7 @@ namespace ValheimBroadcaster.Core
             }
 
             _roster = Array.AsReadOnly(unique.Values.OrderBy(player => player.Id, StringComparer.Ordinal).ToArray());
+            if (_roster.Count == 0) _coverage.Reset();
             if (_currentId != null && unique.ContainsKey(_currentId)) return;
 
             PlayerTarget? next = _roster.FirstOrDefault(player =>
@@ -97,6 +101,7 @@ namespace ValheimBroadcaster.Core
         {
             if (IsEnabled == enabled) return;
             IsEnabled = enabled;
+            _coverage.Reset(); _coverageNow = 0; _coverageRecorded = false;
             ResetTiming();
             State = InitialState();
         }
@@ -115,6 +120,14 @@ namespace ValheimBroadcaster.Core
         public bool Next() => Move(1);
         public bool Previous() => Move(-1);
 
+        /// <summary>Report readable, rendered players, including companions, before Tick.</summary>
+        public void RecordCoverage(double now, double dt, IReadOnlyList<string> visibleIds)
+        {
+            if (!IsEnabled) return;
+            _coverage.Record(now, dt, visibleIds);
+            _coverageNow = now; _coverageRecorded = true;
+        }
+
         /// <summary>
         /// Advances by a finite nonnegative interval. At most one target switch occurs per
         /// call; excess time is discarded so a stalled frame cannot skip an entire roster.
@@ -125,6 +138,10 @@ namespace ValheimBroadcaster.Core
             if (double.IsNaN(deltaSeconds) || double.IsInfinity(deltaSeconds) || deltaSeconds < 0)
                 throw new ArgumentOutOfRangeException(nameof(deltaSeconds), "Elapsed time must be finite and nonnegative.");
             if (!IsEnabled) return;
+            // A reported absolute timestamp already includes this frame's dt.
+            // Only extrapolate when the adapter supplied no observation at all.
+            if (!_coverageRecorded) _coverageNow = Math.Min(double.MaxValue, _coverageNow + deltaSeconds);
+            _coverageRecorded = false;
             if (_currentId == null)
             {
                 State = BroadcastState.WaitingForPlayers;
@@ -147,7 +164,21 @@ namespace ValheimBroadcaster.Core
             if (IsHolding) return;
 
             _dwellElapsed = Math.Min(DwellSeconds, _dwellElapsed + deltaSeconds);
-            if (_dwellElapsed >= DwellSeconds && _roster.Count > 1) Next();
+            if (_dwellElapsed >= DwellSeconds && _roster.Count > 1) MoveUncovered();
+        }
+
+        private void MoveUncovered()
+        {
+            int index = -1;
+            for (int i = 0; i < _roster.Count; i++) if (_roster[i].Id == _currentId) { index = i; break; }
+            for (int step = 1; step < _roster.Count; step++)
+            {
+                PlayerTarget candidate = _roster[(index + step + _roster.Count) % _roster.Count];
+                if (_coverage.RecentlyCovered(candidate.Id, _coverageNow, DwellSeconds)) continue;
+                ChangeSelection(candidate.Id); return;
+            }
+            // The entire group is already on screen. Preserve this selection and
+            // let its shot director introduce variety without a target reset.
         }
 
         private bool Move(int direction)

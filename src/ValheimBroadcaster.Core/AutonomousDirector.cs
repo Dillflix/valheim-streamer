@@ -78,6 +78,7 @@ namespace ValheimBroadcaster.Core
         private const int HistoryLimit = 128;
         private readonly Dictionary<string, double> visited = new Dictionary<string, double>(StringComparer.Ordinal);
         private readonly Dictionary<string, Failure> failures = new Dictionary<string, Failure>(StringComparer.Ordinal);
+        private readonly PlayerCoverageHistory coverage = new PlayerCoverageHistory();
         private string? targetId, lastPlayer, requestedSelection;
         private int requestedStep;
         private bool paused, started, idleActive;
@@ -140,6 +141,7 @@ namespace ValheimBroadcaster.Core
         {
             if (Enabled == enabled) return;
             Enabled = enabled;
+            coverage.Reset();
             paused = false; PendingTravel = ActiveTravel = null; route = null;
             SetTarget(null, 0); started = false; idleActive = false; idleDwell = 0; idleUnreadyBegan = -1;
             requestedSelection = null; requestedStep = 0;
@@ -162,6 +164,12 @@ namespace ValheimBroadcaster.Core
             requestedStep = direction; requestedSelection = null;
         }
         public void Select(string id) { requestedSelection = Label(id, nameof(id)); requestedStep = 0; }
+
+        /// <summary>Report readable, rendered player IDs; discovery/group membership is insufficient.</summary>
+        public void RecordCoverage(double now, double dt, IReadOnlyList<string> visibleIds)
+        {
+            if (Enabled && !paused) coverage.Record(now, dt, visibleIds);
+        }
 
         public void Tick(double now, double dt, IReadOnlyList<AutonomyPlayer> players, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false)
@@ -243,7 +251,7 @@ namespace ValheimBroadcaster.Core
                         if (!Held) dwell = Math.Min(DwellSeconds, dwell + footage);
                         if (dwell >= DwellSeconds && !Held)
                         {
-                            AutonomyPlayer? next = ChoosePlayer(players, now, selected.Id, 1);
+                            AutonomyPlayer? next = ChoosePlayer(players, now, selected.Id, 1, true);
                             if (next != null && next.Id != selected.Id) SetTarget(next, now);
                         }
                         return;
@@ -413,6 +421,7 @@ namespace ValheimBroadcaster.Core
         public void Reset()
         {
             SetEnabled(false); PendingTravel = ActiveTravel = null; visited.Clear(); failures.Clear();
+            coverage.Reset();
             targetId = lastPlayer = requestedSelection = null; requestedStep = 0;
             Held = paused = started = idleActive = false; idleUnreadyBegan = -1; idleDwell = dwell = 0;
             acquisitionTrips = 0; lastPlayerDestination = null; lastTravelAt = double.NegativeInfinity;
@@ -438,12 +447,13 @@ namespace ValheimBroadcaster.Core
             foreach (AutonomyPlayer player in players) if (player.Id == id) return player;
             return null;
         }
-        private AutonomyPlayer? ChoosePlayer(IReadOnlyList<AutonomyPlayer> players, double now, string? after, int direction)
+        private AutonomyPlayer? ChoosePlayer(IReadOnlyList<AutonomyPlayer> players, double now, string? after, int direction, bool respectCoverage = false)
         {
             AutonomyPlayer? first = null, next = null;
             foreach (AutonomyPlayer player in players)
             {
                 if ((!player.SceneReady && !player.HasFreshPosition(now)) || Blocked("p:" + player.Id, now)) continue;
+                if (respectCoverage && (player.Id == after || coverage.RecentlyCovered(player.Id, now, DwellSeconds))) continue;
                 if (first == null || StringComparer.Ordinal.Compare(player.Id, first.Id) * direction < 0) first = player;
                 if (after == null || StringComparer.Ordinal.Compare(player.Id, after) * direction > 0)
                     if (next == null || StringComparer.Ordinal.Compare(player.Id, next.Id) * direction < 0) next = player;

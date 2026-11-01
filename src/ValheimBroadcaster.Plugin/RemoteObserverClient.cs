@@ -18,6 +18,25 @@ internal sealed class RemoteObserverClient
     private bool requested, requestSent, failed, spawned;
     private float readySince = -1, nextHello, nextDiscovery;
     private readonly ObserverDiscoveryCache discovery = new ObserverDiscoveryCache();
+    private readonly ObserverContextCache context = new ObserverContextCache();
+    private float contextProbeAt = -1, nextContext;
+    private bool contextSupported, contextUnavailable, contextRejected;
+    internal ObserverContextSnapshot? Context => Isolated && Approved ? context.Snapshot : null;
+    internal double ContextAge => context.Age(Time.realtimeSinceStartup);
+    internal string ContextStatus => contextUnavailable ? "Context: local observations (optional server context unavailable)" :
+        !contextSupported ? "Context: probing optional server support" : Context?.Enabled != true ? "Context: server telemetry disabled" :
+        ContextAge >= ObserverContextProtocol.FreshSeconds ? "Context: server observations stale; using local scene" :
+        "Context: server observations available; age " + ContextAge.ToString("F1") + "s";
+    internal ObserverPlayerContext? GetPlayerContext(string id, string characterId)
+    {
+        if (!Isolated || !Approved || contextUnavailable) return null;
+        ObserverPlayerContext? item = context.Find(id, characterId, Time.realtimeSinceStartup);
+        if (item == null) return null;
+        float elapsed = (float)ContextAge;
+        return new ObserverPlayerContext(item.Id, item.CharacterId, item.Position, item.Velocity,
+            item.StateAgeSeconds + elapsed, item.MetadataAgeSeconds + elapsed,
+            item.HealthLossAgeSeconds.HasValue ? (float?)Math.Min(ObserverContextProtocol.MaximumAgeSeconds, item.HealthLossAgeSeconds.Value + elapsed) : null);
+    }
     internal bool Isolated => requested && world && world == ZNet.instance;
     internal bool Approved { get; private set; }
     internal bool Failed => failed;
@@ -59,11 +78,14 @@ internal sealed class RemoteObserverClient
         client.world = ZNet.instance; client.server = __0;
         client.requested = client.configured(); client.requestSent = client.Approved = client.failed = client.spawned = client.TerminalFailure = false;
         client.readySince = -1; client.nextHello = client.nextDiscovery = 0; client.discovery.Reset();
+        client.context.Reset(); client.contextProbeAt = -1; client.nextContext = 0;
+        client.contextSupported = client.contextUnavailable = client.contextRejected = false;
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
         if (client.requested)
         {
             __0.m_rpc.Register<int, int>(ObserverProtocol.Reply, client.Reply);
             __0.m_rpc.Register<ZPackage>(ObserverDiscoveryProtocol.Reply, client.DiscoveryReply);
+            __0.m_rpc.Register<ZPackage>(ObserverContextProtocol.Reply, client.ContextReply);
         }
     }
     private static bool RequestBeforeAdmission(ZRpc __0)
@@ -107,6 +129,43 @@ internal sealed class RemoteObserverClient
         }
         catch (Exception error) { Fail("Invalid observer discovery snapshot: " + error.GetType().Name); }
     }
+    private void ContextReply(ZRpc rpc, ZPackage package)
+    {
+        if (!Isolated || !Approved || failed || contextRejected || server == null ||
+            !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
+        try
+        {
+            if (package.Size() > ObserverContextProtocol.MaxPacketBytes) throw new ArgumentException("Observer context packet too large.");
+            ObserverContextSnapshot snapshot = ObserverContextProtocol.Decode(package.GetArray());
+            if (snapshot.WorldId != world!.GetWorldUID()) throw new ArgumentException("Observer context world mismatch.");
+            // A legitimate delayed first reply can recover optional support after
+            // a loading stall, without sending repeated probes to old servers.
+            context.Accept(snapshot, Time.realtimeSinceStartup); contextSupported = true; contextUnavailable = false;
+        }
+        catch (Exception error)
+        {
+            contextUnavailable = contextRejected = true; context.Reset();
+            log("Optional server context rejected after " + error.GetType().Name + "; using local scene observations.");
+        }
+    }
+    private void TickContext(float now)
+    {
+        if (!Approved || contextUnavailable || server == null) return;
+        // Probe once. Old protocol-3 servers need no upgrade to continue camera
+        // operation and are not repeatedly sent an RPC they do not implement.
+        if (!contextSupported && contextProbeAt >= 0)
+        {
+            if (now - contextProbeAt >= ObserverContextProtocol.ProbeSeconds)
+            { contextUnavailable = true; log("Optional server context unavailable; local scene observations remain active."); }
+            return;
+        }
+        if (now < nextContext) return;
+        nextContext = now + 2;
+        if (contextProbeAt < 0) contextProbeAt = now;
+        try { server.m_rpc.Invoke(ObserverContextProtocol.Request, ObserverContextProtocol.Version); }
+        catch (Exception error)
+        { contextUnavailable = true; context.Reset(); log("Optional server context request unavailable: " + error.GetType().Name); }
+    }
     internal void Tick()
     {
         if (!Isolated) return;
@@ -129,12 +188,13 @@ internal sealed class RemoteObserverClient
             nextDiscovery = Time.realtimeSinceStartup + 2;
             server.m_rpc.Invoke(ObserverDiscoveryProtocol.Request, ObserverDiscoveryProtocol.Version);
         }
+        TickContext(Time.realtimeSinceStartup);
     }
     internal void Spawned() { spawned = true; Status = "Read-only observer connection active"; }
     internal void Fail(string reason, bool terminal = true)
     {
         if (failed) return;
-        failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); Status = reason; log(reason);
+        failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); context.Reset(); contextUnavailable = true; Status = reason; log(reason);
         if (world && world == ZNet.instance && server != null && world.GetPeers().Contains(server)) world.Disconnect(server);
         // Do not unpin input/network restrictions inside a still-loaded world.
     }

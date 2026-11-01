@@ -2,6 +2,8 @@
 
 The broadcaster is an authenticated Valheim client using the existing main camera, game AudioListener and an owned FFmpeg process. Ordinary players need no broadcaster mod. The optional dedicated-server companion establishes a read-only connection and supplies discovery to that authorized observer. The 0.8.0 autonomous layer uses the same protected character/interest carrier that the user exercised in 0.7.0; the separate bodyless-spectator branch is not integrated here.
 
+The 0.8.13 player-camera director uses Cinemachine OrbitalFollow, RotationComposer, TargetGroup, GroupFraming and Deoccluder. Aim dead zones and independent position/rotation damping allow movement within the frame. Deliberate bounded movement and shot history sit above the physical camera solver; neither novelty nor group spread authorizes observer travel. See [CAMERA-DIRECTOR.md](CAMERA-DIRECTOR.md) for composition, cooperative coverage, optional server context and runtime validation.
+
 ## Components
 
 | Component | Responsibility |
@@ -16,6 +18,10 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `CoverageDirector` / `IdleShots` | Actual player/scenic/creature shot selection, local terrain paths and nearby eligible actor bindings |
 | `CameraRig` | Wide framing, smoothing, obstruction/readiness checks, HUD and camera-state restoration |
 | `CinemachinePlayerRig` / `FoliageShotQuality` / `PlayerShotVisibility` | Manually solved Cinemachine player candidates, foliage-aware quality, stable selection and validated camera transitions |
+| `PlayerSceneContext` / `CompanionGroupPolicy` | Persistent nearby cooperative groups, relevant opponents and confidence-qualified activity evidence |
+| `CinematicShotDirector` | Usable-footage pacing, recent shot/movement history and constrained-space settling |
+| `PlayerCoverageHistory` | Sustained readable group coverage shared by player scheduling policies |
+| `ObserverContextService` / `ObserverContextProtocol` | Optional authenticated observation freshness and replicated health-loss hints, independent of admission |
 | `ProceduralShotPolicy` | Pure bounded shot selection with persistent improvement and healthy-shot dwell |
 | `ScenicVisibility` | Cached nearby vegetation bounds and multi-ray foreground screening for scenic compositions |
 | `FrameContinuity` / `FrameHold` / `FrameHoldRenderer` | Bounded camera-image hold, final image-effect composition and presentation diagnostics |

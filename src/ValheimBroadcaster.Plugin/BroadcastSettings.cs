@@ -9,6 +9,8 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
     internal readonly ConfigEntry<float> ScenicDwell, CreatureDwell, CreatureRadius, AcquisitionCooldown;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
+    internal readonly ConfigEntry<bool> DynamicShots, GroupFraming;
+    internal readonly ConfigEntry<float> PositionDamping, AimDamping, DeadZone, ShotMotion;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
@@ -48,6 +50,12 @@ internal sealed class BroadcastSettings
         CreatureRadius = config.Bind("Idle", "CreatureRadius", 50f, Range("Loaded-creature search radius around the survey origin in metres.", 5f, 100f));
         AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use Cinemachine player-follow candidates with foliage-aware scoring and stable view selection. False restores the fixed-angle player camera; scenery is unchanged.");
+        DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
+        GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
+        PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Procedural camera position damping in seconds; larger values follow more gently.", 0.1f, 3f));
+        AimDamping = config.Bind("Camera", "AimDamping", 1f, Range("Procedural camera aim damping in seconds; larger values react more gently to subject movement.", 0.1f, 3f));
+        DeadZone = config.Bind("Camera", "DeadZone", 0.12f, Range("Screen fraction in which subjects can move without the camera immediately recentering them.", 0f, 0.3f));
+        ShotMotion = config.Bind("Camera", "ShotMotion", 1f, Range("Strength of deliberate shot movement. Zero disables decorative movement while retaining tracking, damping and shot selection.", 0f, 1.5f));
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));
         Height = config.Bind("Camera", "Height", 10f, Range("Height above target in metres.", 1f, 60f));
         FieldOfView = config.Bind("Camera", "FieldOfView", 75f, Range("Vertical camera field of view in degrees.", 30f, 110f));

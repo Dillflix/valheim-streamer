@@ -12,7 +12,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.12")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.13")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 public sealed class ObserverServerPlugin : BaseUnityPlugin
@@ -23,7 +23,9 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
     private ConfigEntry<string> identities = null!;
     private ConfigEntry<bool> discoveryEnabled = null!, sharePrivatePositions = null!;
     private ObserverDiscoveryService discovery = null!;
-    private bool discoveryFailed;
+    private bool discoveryFailed, contextFailed;
+    private ConfigEntry<bool> contextEnabled = null!;
+    private readonly ObserverContextService context = new ObserverContextService();
     private HashSet<string> allowed = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<ZNetPeer> reserved = new HashSet<ZNetPeer>();
     private readonly Dictionary<ZNetPeer, ObserverAdmission> admissions = new Dictionary<ZNetPeer, ObserverAdmission>();
@@ -41,6 +43,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         identities = Config.Bind("Observer", "SteamIds", "", "Comma-separated Steam64 identities permitted to request observer mode before joining. Vanilla clients and clients with ObserverConnection=false play normally, including these identities. An accepted observer role remains read-only until disconnect.");
         discoveryEnabled = Config.Bind("Observer", "DiscoveryEnabled", true, "Supply connected-player and already-generated scenic destinations only to authenticated, allowlisted observer connections. Requires Enabled.");
         sharePrivatePositions = Config.Bind("Observer", "SharePrivatePlayerPositions", true, "Allow authorized observers to acquire player characters even when their map position is private. False limits destination coordinates to public-map players; presence remains visible. Requires Enabled and DiscoveryEnabled.");
+        contextEnabled = Config.Bind("Observer", "ContextEnabled", true, "Optional timestamped character observations and replicated health-loss hints for authorized broadcasters. Does not change observer admission, activate regions, or require mods on ordinary players.");
         instance = this;
         try
         {
@@ -63,7 +66,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.12 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.13 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {
@@ -96,7 +99,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
 
     private void EnsureWorld()
     {
-        if (world != ZNet.instance) { reserved.Clear(); admissions.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); discoveryFailed = false; world = ZNet.instance; }
+        if (world != ZNet.instance) { reserved.Clear(); admissions.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); context.Reset(); discoveryFailed = contextFailed = false; world = ZNet.instance; }
     }
     private void Bind(ZNetPeer peer)
     {
@@ -120,6 +123,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         __0.m_rpc.Register<int>(ObserverProtocol.Request, plugin.Request);
         __0.m_rpc.Register<int>(ObserverProtocol.Hello, plugin.Hello);
         __0.m_rpc.Register<int>(ObserverDiscoveryProtocol.Request, plugin.DiscoveryRequest);
+        __0.m_rpc.Register<int>(ObserverContextProtocol.Request, plugin.ContextRequest);
     }
     private void Request(ZRpc rpc, int version)
     {
@@ -177,10 +181,33 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
             ZNet.instance.Disconnect(peer);
         }
     }
+    private void ContextRequest(ZRpc rpc, int version)
+    {
+        if (!Serving || version != ObserverContextProtocol.Version || Find(rpc) is not ZNetPeer peer ||
+            !peer.IsReady() || !Authorized(peer) || !leases.TryGetValue(peer, out ObserverLease lease) ||
+            !lease.Confirmed || !context.MayReply(peer, Time.realtimeSinceStartup)) return;
+        try
+        {
+            ObserverContextSnapshot snapshot = context.Build(ZNet.instance.GetPeers(), Protected, ZNet.instance.GetWorldUID(),
+                Time.realtimeSinceStartup, contextEnabled.Value && discoveryEnabled.Value && !contextFailed, sharePrivatePositions.Value);
+            rpc.Invoke(ObserverContextProtocol.Reply, new ZPackage(ObserverContextProtocol.Encode(snapshot)));
+        }
+        catch (Exception error)
+        {
+            // Context is an optional camera hint. Failure must not affect a healthy
+            // observer lease, discovery stream, or rendered footage.
+            contextFailed = true; context.Suspend();
+            Logger.LogWarning("Optional observer context suspended after " + error.GetType().Name + "; ordinary discovery and read-only guards remain active.");
+        }
+    }
     private static void PlayerMetadataReceived(ZRpc __0)
     {
         if (Serving && Find(__0) is ZNetPeer peer && peer.IsReady() && !instance!.Protected(peer))
+        {
             instance.discovery.ReceivedMetadata(peer, Time.realtimeSinceStartup);
+            if (!instance.contextFailed && instance.contextEnabled.Value)
+                instance.context.ReceivedMetadata(peer, Time.realtimeSinceStartup);
+        }
     }
     private static bool ObserverPosition(ZRpc __0, ZPackage __1)
     {
@@ -305,6 +332,18 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         }
         reserved.RemoveWhere(peer => !ZNet.instance.GetPeers().Contains(peer));
         foreach (ZNetPeer gone in admissions.Keys.Where(peer => !ZNet.instance.GetPeers().Contains(peer)).ToArray()) admissions.Remove(gone);
+        try
+        {
+            // Prune disconnected requesters even after optional sampling fails.
+            context.Tick(ZNet.instance.GetPeers(), Protected, Time.realtimeSinceStartup,
+                !contextFailed && allow.Value && discoveryEnabled.Value && contextEnabled.Value && leases.Values.Any(lease => lease.Confirmed));
+        }
+        catch (Exception error)
+        {
+            if (!contextFailed)
+                Logger.LogWarning("Optional observer context suspended after " + error.GetType().Name + "; discovery remains available.");
+            contextFailed = true; context.Suspend();
+        }
         if (!discoveryFailed)
         {
             try

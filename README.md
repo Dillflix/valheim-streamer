@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.13 adds damped, activity-aware player direction and cooperative framing.** Players can move within the frame; readable shots develop through bounded movements and fresh compositions, with quieter behavior in confined spaces or after obstruction corrections. Persistent nearby companions and relevant opponents can share a shot, and sustained visible coverage informs automatic player rotation. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for controls, evidence limits and pending runtime tests. Built on 0.8.12, retaining protocol 3; the existing server remains compatible. A companion update optionally adds fresh observation/health-loss hints. Replace the three client DLLs and included notices together, preserving configuration.
+
 **0.8.12 adds Cinemachine player cameras with foliage-aware shot selection.** Candidate views adapt angle, distance and height, retain stable compositions and respect the existing loaded-geometry/carrier limits. Player-shot foliage is a quality penalty rather than a loading failure. Enabled by default through `Camera.ProceduralPlayers`; use `broadcast camera fixed` / `procedural` for comparison and `broadcast camera status` for diagnostics. This builds directly on 0.8.11 and remains protocol 3. **Install all three client DLLs and the included ThirdParty notices folder.** The existing server and configuration can remain; visual runtime verification is pending.
 
 **0.8.11 replaces GUI screenshot holds with a camera compositor.** Live and held scenes use the same final camera-texture path; travel/recovery invalidate the prior image. `broadcast framehold test` schedules a half-second hold so orientation can be checked without waiting for travel. Includes 0.8.10 continuous following. Replace both client DLLs; keep the deployed protocol-3 server and configuration. In-game visual verification is pending.
@@ -49,8 +51,8 @@ Offline activation rejects dedicated-server connections and hosted worlds, even 
 
 ## Implemented behavior
 
-- Configurable camera distance, height, FOV, world-space azimuth, and follow smoothing.
-- Obstruction checks between the target and camera.
+- Configurable camera distance, height, FOV, preferred azimuth, independent procedural position/aim damping and a screen-space dead zone.
+- Cinemachine obstacle correction and foliage-aware visibility selection, with bounded deliberate movement, activity-aware pacing and persistent cooperative framing.
 - Stable-ID target selection, next/previous, timed rotation, hold, and disconnect fallback.
 - Continuous coverage: player acquisition takes priority; idle uses changing scenic paths and eligible nearby creatures, with autonomous generated-region travel in the configured read-only mode. A recovery slate appears when no ready shot can be rendered or controlled travel is in progress.
 - Separate connected-player presence and scene readiness, with bounded experimental remote acquisition attempts.
@@ -128,6 +130,8 @@ Self-follow is session-only and always shows a `SELF-FOLLOW TEST` status label, 
 
 Your normal movement controls remain active. This mode tests actual camera rendering with your own character; it does not validate remote-player replication, multi-target shots, or distant world loading.
 
+For the new director, compare `broadcast camera dynamic` with `broadcast camera steady`; use `broadcast camera motion 0` to isolate tracking/damping from decorative movement. Restore `dynamic` and `motion 1` afterward. See the [camera runtime matrix](docs/CAMERA-DIRECTOR.md#runtime-validation) for open terrain, sustained movement, forests, interiors and cooperative sessions.
+
 ## Controls and console
 
 Use Valheim's `-console` launch option to make the F5 console available. Commands are also useful when hotkeys conflict with another mod.
@@ -146,6 +150,10 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
 | `broadcast camera procedural` / `fixed` / `status` | Select Cinemachine or fixed player framing, or inspect candidate/occlusion diagnostics; mode is saved to `Camera.ProceduralPlayers` |
+| `broadcast camera dynamic` / `steady` | Enable/disable deliberate movement and timed composition changes; steady retains procedural visibility, damping and groups |
+| `broadcast camera groups on` / `off` | Enable/disable cooperative and opponent group framing |
+| `broadcast camera motion <0-1.5>` | Set decorative movement strength; zero retains tracking and shot selection |
+| `broadcast camera damping <position> <aim>` | Set independent damping in seconds, each 0.1–3 |
 | `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
 | `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
 | `broadcast auto on/off/status` | Resume/pause/inspect automatic player acquisition and scenic travel in a read-only session |
@@ -159,15 +167,22 @@ Names are labels. Ordinary loaded targets use character ZDO IDs; the discovery-b
 
 After the first launch, close the game and edit `BepInEx/config/com.dillflix.valheimbroadcaster.cfg` in the active profile. Restart to apply the edited file.
 
+Camera commands also update their settings while running. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for how damping, dead zones, movement and constrained-space behavior interact.
+
 | Section / key | Default | Meaning |
 | --- | --- | --- |
 | `Camera / ProceduralPlayers` | `true` | Cinemachine player framing with custom foliage-aware scoring; false uses the previous fixed-angle player camera |
+| `Camera / DynamicShots` | `true` | Activity/space-aware shot duration and deliberate movement |
+| `Camera / GroupFraming` | `true` | Persistent nearby companions and relevant opponents when a readable composition is available |
+| `Camera / PositionDamping`, `AimDamping` | `0.8`, `1` | Procedural damping in seconds; larger values soften response, range 0.1–3 |
+| `Camera / DeadZone` | `0.12` | Screen fraction allowing movement before recentering, range 0–0.3 |
+| `Camera / ShotMotion` | `1` | Decorative movement strength, range 0–1.5 |
 | `Camera / Distance` | `18` | Horizontal metres from target |
 | `Camera / Height` | `10` | Metres above the focus point |
 | `Camera / FieldOfView` | `75` | Vertical degrees |
 | `Camera / Azimuth` | `225` | Preferred world-space direction; procedural shots can reframe around obstructions |
-| `Camera / Smoothing` | `5` | Follow response per second |
-| `Director / DwellSeconds` | `30` | Ready footage before advancing |
+| `Camera / Smoothing` | `5` | Legacy fixed/scenic camera response per second |
+| `Director / DwellSeconds` | `30` | Ready player footage before rotating targets; separate from composition duration |
 | `Director / TargetTimeoutSeconds` | `20` | Maximum experimental remote acquisition attempt |
 | `Director / AcquisitionCooldownSeconds` | `30` | Local-interest interval between remote attempts |
 | `Idle / ScenicSeconds` | `45` | Scenic dwell before trying a creature |

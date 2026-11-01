@@ -1,5 +1,17 @@
 # Validation and runtime test record
 
+## 0.8.13 cooperative cinematic director
+
+Built directly from 0.8.12 (`6dd447f`), retaining observer admission protocol 3, discovery protocol 2, the existing camera compositor and continuous-follow acquisition geometry. The optional context extension has its own protocol 1 and falls back locally with an older compatible server; it does not change admission or require mods on ordinary players.
+
+The player camera now uses Cinemachine OrbitalFollow, RotationComposer dead zones and independent position/aim damping, TargetGroup/GroupFraming and composition-aware blends. A bounded director adds activity-sensitive movement, shot/movement history, usable-footage pacing, predictive foliage/physical screening and settling after corrections. Group membership is persistent and primary-anchored; companions earn scheduling credit only after sustained readable live footage. Repeated camera corrections reduce decorative movement. Spacious interiors allow slower variety; restricted rooms retain the readable view. Optional authenticated server context reports replicated state/heartbeat ages and recent observed health loss, with bounded identity/world/freshness validation. Activity classifications remain evidence-qualified.
+
+Local validation: **183/183 core cases pass**; combined client and server sources compile with warnings as errors against the matching real Valheim 1.0.21 / Unity 6000 / BepInEx 5.4.23.2 / Jötunn 2.30.2 references and isolated Cinemachine 3.1.7 runtime. New cases cover constrained versus spacious interiors, correction settling, deliberate variety, motion bounds/strength, cooperative membership, readable-coverage fairness, off-center projection and optional-context freshness/identity/packet limits. Local compilation used the SDK compiler because this environment's MSBuild process metadata lookup fails; the existing CI pipeline runs normal project builds and Windows/Linux RTMP checks.
+
+No Unity/Valheim runtime session was executed for 0.8.13. The user's positive procedural-visibility feedback concerns 0.8.12 and does not validate new damping, group framing, visual transitions or runtime cost. Follow the [camera-director runtime matrix](CAMERA-DIRECTOR.md#runtime-validation), including sustained walking/sprinting, open idle, constrained interiors/forests, group merge/split, combat/resource hints, held-frame orientation and old-server fallback. These cases remain **pending**.
+
+Client package: replace the broadcaster's three DLLs together with the included third-party notices, preserving configuration. Server package: optional for richer context; update its server/core pair together during the operator's normal restart. Existing protocol-3 servers remain usable without this update. No live installation or public release is performed.
+
 ## 0.8.12 Cinemachine player framing
 
 Built directly from 0.8.11 (`9495313`), retaining protocol 3, the camera compositor and continuous-follow readiness. The client now packages a selected runtime built from official Cinemachine 3.1.7 sources. No server/protocol migration or live installation is performed.

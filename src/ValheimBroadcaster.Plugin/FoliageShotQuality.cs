@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Cinemachine;
 using UnityEngine;
 
@@ -9,6 +10,7 @@ internal sealed class FoliageShotQuality : CinemachineExtension, IShotQualityEva
 {
     internal PlayerShotVisibility? Visibility;
     internal Vector3 Focus;
+    internal IReadOnlyList<PlayerShotVisibility.Subject>? Subjects = null;
     internal float Aspect = 16f / 9f, NearClipPlane = 0.3f, PreferredDistance = 18f;
     internal PlayerShotVisibility.Result Result;
 
@@ -17,7 +19,10 @@ internal sealed class FoliageShotQuality : CinemachineExtension, IShotQualityEva
     {
         if (stage != CinemachineCore.Stage.Finalize || Visibility == null) return;
         Vector3 position = state.GetFinalPosition();
-        Result = Visibility.Evaluate(position, Focus, state.Lens.FieldOfView, Aspect, NearClipPlane);
+        Quaternion rotation = state.GetFinalOrientation();
+        Result = Subjects == null || Subjects.Count == 0
+            ? Visibility.Evaluate(position, rotation, Focus, state.Lens.FieldOfView, Aspect, NearClipPlane)
+            : Visibility.Evaluate(position, rotation, Subjects, state.Lens.FieldOfView, Aspect, NearClipPlane);
         // A shortened but readable forest shot is useful. Penalize severe
         // compression without making wide framing mandatory under a canopy.
         float distance = Vector3.Distance(position, Focus);

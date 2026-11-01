@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -9,6 +10,8 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class PlayerShotVisibility
 {
     private const int Capacity = 512;
+    internal const int MaximumSubjects = 6;
+    private readonly Subject[] singleSubject = new Subject[1];
     private const float SurveyRadius = 100f, ForegroundRange = 6f;
     private const float RefreshSeconds = 3f, RefreshMovement = 20f;
     private readonly List<FoliageEntry> foliage = new List<FoliageEntry>(Capacity);
@@ -22,17 +25,39 @@ internal sealed class PlayerShotVisibility
     private int obstructionMask, furthest;
     private float furthestDistance;
 
+    internal readonly struct Subject
+    {
+        internal readonly Vector3 Focus;
+        internal readonly float Weight, Radius;
+        internal readonly bool Primary;
+        internal Subject(Vector3 focus, float weight, float radius, bool primary)
+        { Focus = focus; Weight = weight; Radius = radius; Primary = primary; }
+    }
+
     internal readonly struct Result
     {
         internal readonly float Score, SolidOcclusion, FoliageOcclusion, ForegroundOcclusion;
-        internal readonly bool CameraClear, SurveyComplete;
+        internal readonly float PrimaryVisibility, GroupVisibility;
+        internal readonly bool CameraClear, SurveyComplete, PrimaryInFrame;
+        // Input subject indexes that are clearly represented in this actual pose.
+        internal readonly int VisibleMask;
         internal readonly string Reason;
-        internal Result(float score, bool clear, float solid, float foliage, float foreground, bool complete, string reason)
+        internal Result(float score, bool clear, float solid, float foliage, float foreground,
+            bool complete, string reason, bool primaryInFrame = false, float primaryVisibility = 0,
+            float groupVisibility = 0, int visibleMask = 0)
         {
             Score = score; CameraClear = clear; SolidOcclusion = solid;
             FoliageOcclusion = foliage; ForegroundOcclusion = foreground;
-            SurveyComplete = complete; Reason = reason;
+            SurveyComplete = complete; Reason = reason; PrimaryInFrame = primaryInFrame;
+            PrimaryVisibility = primaryVisibility; GroupVisibility = groupVisibility; VisibleMask = visibleMask;
         }
+    }
+
+    private readonly struct SubjectMeasure
+    {
+        internal readonly float Screen, Solid, Leaves, Visibility, Quality, Readability;
+        internal SubjectMeasure(float screen, float solid, float leaves, float visibility, float quality, float readability)
+        { Screen = screen; Solid = solid; Leaves = leaves; Visibility = visibility; Quality = quality; Readability = readability; }
     }
 
     private readonly struct FoliageEntry
@@ -87,36 +112,45 @@ internal sealed class PlayerShotVisibility
         }
     }
 
-    // focus is the standing player's position + 1.5m, matching the camera adapter.
-    // Geometry readiness and carrier reachability are deliberately owned by it.
+    // Compatibility overload for the fixed center-aimed camera. Procedural views
+    // must pass their actual orientation, including during blends and prediction.
     internal Result Evaluate(Vector3 camera, Vector3 focus, float fov, float aspect, float nearClip = 0.3f)
     {
-        if (!TargetRoster.Finite(camera) || !TargetRoster.Finite(focus) || !Finite(fov) ||
-            !Finite(aspect) || !Finite(nearClip) || fov < 1f || fov > 170f || aspect <= 0 || nearClip <= 0)
-            return Invalid("Invalid camera geometry");
         Vector3 view = focus - camera;
-        float distance = view.magnitude;
-        if (!Finite(distance) || distance < 0.5f) return Invalid("Camera too close to subject focus or distance invalid");
-        Refresh(focus);
-        if (checkedFrame != Time.frameCount)
-        {
-            checkedFrame = Time.frameCount;
-            for (int i = 0; i < foliage.Count; i++)
-            {
-                Renderer renderer = foliage[i].Renderer;
-                activeFoliage[i] = renderer && renderer.enabled && renderer.gameObject.activeInHierarchy;
-            }
-        }
-        Vector3 forward = view / distance;
-        Vector3 right = Vector3.Cross(Vector3.up, forward);
-        if (right.sqrMagnitude < 0.001f) right = Vector3.right;
-        right.Normalize();
-        Vector3 up = Vector3.Cross(forward, right).normalized;
-        Quaternion rotation = Quaternion.LookRotation(forward, up);
-        float tangent = Mathf.Tan(fov * Mathf.Deg2Rad * 0.5f);
+        if (!TargetRoster.Finite(view) || view.sqrMagnitude < 0.25f) return Invalid("Invalid camera direction");
+        return Evaluate(camera, Quaternion.LookRotation(view, Vector3.up), focus, fov, aspect, nearClip);
+    }
 
-        // The near-plane rectangle can clip a branch even with a clear central
-        // ray. Check it and the camera origin separately, ignoring characters.
+    internal Result Evaluate(Vector3 camera, Quaternion rotation, Vector3 focus, float fov, float aspect, float nearClip = 0.3f)
+    {
+        singleSubject[0] = new Subject(focus, 1f, 0.6f, true);
+        return Evaluate(camera, rotation, singleSubject, fov, aspect, nearClip);
+    }
+
+    // All projection, foreground and near-plane measurements use the rendered
+    // pose. The first marked primary must remain represented; nearby friends
+    // cannot make a shot that loses its primary score highly.
+    internal Result Evaluate(Vector3 camera, Quaternion rotation, IReadOnlyList<Subject> subjects,
+        float fov, float aspect, float nearClip = 0.3f)
+    {
+        if (!ValidPose(camera, rotation, fov, aspect, nearClip) || subjects == null ||
+            subjects.Count == 0 || subjects.Count > MaximumSubjects) return Invalid("Invalid camera or subject geometry");
+        int primary = 0;
+        bool marked = false;
+        for (int i = 0; i < subjects.Count; i++)
+        {
+            Subject subject = subjects[i];
+            if (!TargetRoster.Finite(subject.Focus) || !Finite(subject.Weight) || subject.Weight < 0 ||
+                !Finite(subject.Radius) || subject.Radius <= 0) return Invalid("Invalid subject bounds");
+            if (!marked && subject.Primary) { primary = i; marked = true; }
+        }
+        rotation = rotation.normalized;
+        Vector3 focus = subjects[primary].Focus;
+        Refresh(focus); RefreshActive();
+        Vector3 forward = rotation * Vector3.forward, right = rotation * Vector3.right, up = rotation * Vector3.up;
+        float tangent = Mathf.Tan(fov * Mathf.Deg2Rad * 0.5f);
+        // Physical clearance remains separate from readable composition and
+        // leaf coverage. An offscreen player does not mean the world unloaded.
         int count = Physics.OverlapSphereNonAlloc(camera, 0.25f, overlaps, obstructionMask, QueryTriggerInteraction.Ignore);
         if (SolidOverlap(count)) return Invalid("Camera intersects solid geometry");
         count = Physics.OverlapBoxNonAlloc(camera + forward * nearClip,
@@ -124,11 +158,26 @@ internal sealed class PlayerShotVisibility
             rotation, obstructionMask, QueryTriggerInteraction.Ignore);
         if (SolidOverlap(count)) return Invalid("Camera near plane intersects solid geometry");
 
-        float solid = 0, leaves = 0;
-        Sample(camera, focus + Vector3.up * 0.25f, 0.3f, ref solid, ref leaves);
-        Sample(camera, focus + Vector3.down * 0.55f, 0.5f, ref solid, ref leaves);
-        Sample(camera, focus + Vector3.down * 1.2f, 0.2f, ref solid, ref leaves);
+        Quaternion inverse = Quaternion.Inverse(rotation);
+        SubjectMeasure main = default;
+        float groupQuality = 0, groupVisibility = 0, weight = 0, solid = 0, leaves = 0;
+        bool complete = Vector3.Distance(camera, origin) + ForegroundRange < coveredRadius;
+        int visibleMask = 0;
+        for (int i = 0; i < subjects.Count; i++)
+        {
+            Subject subject = subjects[i];
+            SubjectMeasure value = MeasureSubject(camera, inverse, subject, fov, aspect, nearClip);
+            if (i == primary) main = value;
+            float importance = i == primary ? Mathf.Max(1f, subject.Weight) : Mathf.Clamp(subject.Weight, 0, 2f);
+            groupQuality += value.Quality * importance; groupVisibility += value.Visibility * importance;
+            solid += value.Solid * importance; leaves += value.Leaves * importance; weight += importance;
+            if (value.Screen >= 0.75f && value.Visibility >= 0.6f && value.Readability >= 0.8f)
+                visibleMask |= 1 << i;
+            complete &= Vector3.Distance(subject.Focus, origin) + subject.Radius * 2f < coveredRadius;
+        }
+        groupQuality /= weight; groupVisibility /= weight; solid /= weight; leaves /= weight;
         float foreground = 0;
+        float distance = Mathf.Max(nearClip, Vector3.Distance(camera, focus));
         for (int y = -1; y <= 1; y++)
         for (int x = -1; x <= 1; x++)
         {
@@ -136,17 +185,74 @@ internal sealed class PlayerShotVisibility
             if (FoliageAlong(camera, direction, Mathf.Min(ForegroundRange, distance)))
                 foreground += x == 0 && y == 0 ? 4f / 12f : 1f / 12f;
         }
-        bool complete = Vector3.Distance(camera, origin) + ForegroundRange < coveredRadius &&
-            Vector3.Distance(focus, origin) + 1.5f < coveredRadius;
-        // Leaves without colliders must affect ranking, but broad canopy bounds
-        // must not make every otherwise usable forest shot unavailable.
-        float quality = 1f - 0.7f * solid - 0.45f * leaves * (1f - solid) - 0.35f * foreground;
+        bool primaryInFrame = main.Screen >= 0.6f;
+        float quality = (0.65f * main.Quality + 0.35f * groupQuality) * (1f - 0.35f * foreground);
         if (!complete) quality *= 0.75f;
-        string reason = solid > 0.2f ? "Subject obscured by solid geometry" :
-            leaves > 0.2f || foreground > 0.3f ? "Foliage obscures player shot" :
-            !complete ? "Foliage survey incomplete" : "Clear player shot";
-        return new Result(Mathf.Clamp(quality, 0.03f, 1f), true, solid, leaves,
-            Mathf.Clamp01(foreground), complete, reason);
+        // Positive quality for any physically safe, in-frame view preserves a
+        // fallback under broad canopy bounds. Lost primaries cannot win on group size.
+        quality = primaryInFrame ? Mathf.Clamp(quality, 0.03f, 1f) : 0;
+        string reason = !primaryInFrame ? "Primary player outside camera framing" :
+            main.Solid > 0.2f ? "Primary player obscured by solid geometry" :
+            main.Leaves > 0.2f || foreground > 0.3f ? "Foliage obscures player shot" :
+            !complete ? "Foliage survey incomplete" : "Clear player composition";
+        return new Result(quality, true, solid, leaves, Mathf.Clamp01(foreground), complete,
+            reason, primaryInFrame, main.Visibility, groupVisibility, visibleMask);
+    }
+
+    internal float SubjectVisibility(Vector3 camera, Quaternion rotation, Subject subject,
+        float fov, float aspect, float nearClip = 0.3f)
+    {
+        if (!ValidPose(camera, rotation, fov, aspect, nearClip) || !TargetRoster.Finite(subject.Focus) ||
+            !Finite(subject.Radius) || subject.Radius <= 0) return 0;
+        Refresh(subject.Focus); RefreshActive();
+        return MeasureSubject(camera, Quaternion.Inverse(rotation.normalized), subject, fov, aspect, nearClip).Visibility;
+    }
+
+    private SubjectMeasure MeasureSubject(Vector3 camera, Quaternion inverse, Subject subject,
+        float fov, float aspect, float nearClip)
+    {
+        // Focus follows the standing-player +1.5m convention. Scale for larger
+        // actors; width and projection are bounded rather than collider-dependent.
+        float scale = Mathf.Clamp(subject.Radius / 0.6f, 0.5f, 4f);
+        float solid = 0, leaves = 0, screen = 0, relativeHeight = 0;
+        MeasurePoint(camera, inverse, subject.Focus + Vector3.up * (0.25f * scale), 0.3f, scale,
+            fov, aspect, nearClip, ref solid, ref leaves, ref screen, ref relativeHeight);
+        MeasurePoint(camera, inverse, subject.Focus + Vector3.down * (0.55f * scale), 0.5f, scale,
+            fov, aspect, nearClip, ref solid, ref leaves, ref screen, ref relativeHeight);
+        MeasurePoint(camera, inverse, subject.Focus + Vector3.down * (1.2f * scale), 0.2f, scale,
+            fov, aspect, nearClip, ref solid, ref leaves, ref screen, ref relativeHeight);
+        float readability = Mathf.Clamp01(relativeHeight / 0.02f);
+        float visible = screen * (1f - solid) * (1f - 0.65f * leaves) * readability;
+        float quality = screen * (1f - 0.7f * solid - 0.45f * leaves * (1f - solid)) * Mathf.Lerp(0.7f, 1f, readability);
+        return new SubjectMeasure(screen, solid, leaves, visible, quality, readability);
+    }
+
+    private void MeasurePoint(Vector3 camera, Quaternion inverse, Vector3 target, float weight, float scale,
+        float fov, float aspect, float nearClip, ref float solid, ref float leaves, ref float screen, ref float relativeHeight)
+    {
+        Vector3 local = inverse * (target - camera);
+        ShotProjection.Result projection = ShotProjection.Measure(local.x, local.y, local.z, 0.25f * scale, fov, aspect, nearClip);
+        screen += (float)projection.VisibleFraction * weight;
+        relativeHeight = Mathf.Max(relativeHeight, (float)projection.RelativeHeight * 3f);
+        if (projection.VisibleFraction > 0) Sample(camera, target, weight, ref solid, ref leaves);
+    }
+
+    private void RefreshActive()
+    {
+        if (checkedFrame == Time.frameCount) return;
+        checkedFrame = Time.frameCount;
+        for (int i = 0; i < foliage.Count; i++)
+        {
+            Renderer renderer = foliage[i].Renderer;
+            activeFoliage[i] = renderer && renderer.enabled && renderer.gameObject.activeInHierarchy;
+        }
+    }
+
+    private static bool ValidPose(Vector3 camera, Quaternion rotation, float fov, float aspect, float nearClip)
+    {
+        float magnitude = rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w;
+        return TargetRoster.Finite(camera) && Finite(magnitude) && magnitude > 0.0001f && Finite(fov) &&
+            Finite(aspect) && Finite(nearClip) && fov >= 1f && fov <= 170f && aspect > 0 && nearClip > 0;
     }
 
     // Reused by the adapter when validating the actual interpolated movement.

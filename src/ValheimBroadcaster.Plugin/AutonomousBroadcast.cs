@@ -75,6 +75,7 @@ internal sealed class AutonomousBroadcast
         policy.SetPaused(true);
     }
     internal void SetHolding(bool held) => policy.SetHolding(held);
+    internal void RecordCoverage(double now, double dt, IReadOnlyList<string> visibleIds) => policy.RecordCoverage(now, dt, visibleIds);
     internal void Next(int direction) => policy.Next(direction);
     internal void Select(string id) { policy.Select(id); policy.SetHolding(true); }
     internal string? TakeReconnectReason() { string? value = reconnectReason; reconnectReason = null; return value; }

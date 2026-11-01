@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using BepInEx;
 using HarmonyLib;
@@ -20,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.12";
+    public const string PluginVersion = "0.8.13";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -54,6 +55,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private float nextScenicSearch;
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
+    private readonly List<string> visibleCoverageIds = new List<string>(6);
+    private int coverageFrame = -1;
     private readonly FrameHold frameHold = new FrameHold();
     private readonly PlayerShotReadiness playerShots = new PlayerShotReadiness();
     private float nextRosterRefresh;
@@ -74,6 +77,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (GUIManager.IsHeadless()) { enabled = false; return; }
         settings = new BroadcastSettings(Config);
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
+        rig.RemoteContext = remote;
         observer.RemoteApproved = () => remote.Isolated && remote.Approved;
         automatic = new AutonomousBroadcast(settings, remote, observer, playerShots,
             (target, point) => rig.RequiredPlayerCameraMovement(target, point, settings), ResetShot, message => Logger.LogInfo(message));
@@ -203,6 +207,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             { RefreshRoster(); nextRosterRefresh = Time.unscaledTime + 0.5f; }
             if (probe.Active || observer.Active && observer.Phase != ObserverPhase.Watching) playerShots.Reset();
             bool recentPicture = cameraReady && Time.frameCount - presentedFrame <= 2;
+            RecordVisibleCoverage(recentPicture);
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
                 recentPicture && (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature));
             string? reconnect = automatic?.TakeReconnectReason();
@@ -307,6 +312,27 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null;
         nextCreatureRefresh = nextScenicSearch = 0;
+    }
+    private void RecordVisibleCoverage(bool recentPicture)
+    {
+        visibleCoverageIds.Clear();
+        // Count only fresh camera footage once. A held frame or failed pose may
+        // not keep earning coverage for a companion who is no longer visible.
+        if (recentPicture && frameHold.HasRecentLiveFrame && presentedFrame != coverageFrame && presentedPlayerId != null)
+        {
+            coverageFrame = presentedFrame;
+            if (!settings.ProceduralPlayers.Value) visibleCoverageIds.Add(presentedPlayerId);
+            else foreach (string id in rig.VisiblePlayerIds)
+                foreach (TargetRoster.Target target in roster.Targets.Values)
+                    if (target.Identity.Id == id || target.LoadedPlayer && target.LoadedPlayer.GetZDOID().ToString() == id)
+                    {
+                        if (!visibleCoverageIds.Contains(target.Identity.Id)) visibleCoverageIds.Add(target.Identity.Id);
+                        break;
+                    }
+        }
+        double now = Time.realtimeSinceStartup;
+        director.RecordCoverage(now, Time.unscaledDeltaTime, visibleCoverageIds);
+        automatic?.RecordCoverage(now, Time.unscaledDeltaTime, visibleCoverageIds);
     }
     private void MoveTarget(int direction)
     {
@@ -823,7 +849,40 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + remote.DiscoveryStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+
+    private void CameraCommand(string[] args, Terminal context)
+    {
+        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | groups on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
+        if (args.Length < 2) { context?.AddString(usage); return; }
+        string mode = args[1].ToLowerInvariant();
+        if (mode == "status" && args.Length == 2)
+        {
+            context?.AddString(rig.Diagnostics);
+            context?.AddString($"Camera settings: dynamic {settings.DynamicShots.Value}; groups {settings.GroupFraming.Value}; motion {settings.ShotMotion.Value:F2}; position damping {settings.PositionDamping.Value:F2}s; aim damping {settings.AimDamping.Value:F2}s; dead zone {settings.DeadZone.Value:F2}");
+            return;
+        }
+        if ((mode == "procedural" || mode == "fixed") && args.Length == 2)
+        {
+            settings.ProceduralPlayers.Value = mode == "procedural";
+            rig.ResetPose(); playerShots.Reset(); cameraReady = false;
+        }
+        else if ((mode == "dynamic" || mode == "steady") && args.Length == 2)
+            settings.DynamicShots.Value = mode == "dynamic";
+        else if (mode == "groups" && args.Length == 3 && (args[2] == "on" || args[2] == "off"))
+            settings.GroupFraming.Value = args[2] == "on";
+        else if (mode == "motion" && args.Length == 3 && CameraNumber(args[2], 0, 1.5f, out float motion))
+            settings.ShotMotion.Value = motion;
+        else if (mode == "damping" && args.Length == 4 && CameraNumber(args[2], 0.1f, 3f, out float position) &&
+                 CameraNumber(args[3], 0.1f, 3f, out float aim))
+        { settings.PositionDamping.Value = position; settings.AimDamping.Value = aim; }
+        else { context?.AddString(usage); return; }
+        CameraCommand(new[] { "camera", "status" }, context);
+    }
+
+    private static bool CameraNumber(string text, float minimum, float maximum, out float value) =>
+        float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) &&
+        !float.IsNaN(value) && !float.IsInfinity(value) && value >= minimum && value <= maximum;
 
     private void AutomationCommand(string[] args, Terminal context)
     {
@@ -887,7 +946,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|camera procedural|fixed|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|camera procedural|fixed|dynamic|steady|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -897,18 +956,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
-                    case "camera":
-                        if (args.Length != 2) { context?.AddString("broadcast camera procedural|fixed|status"); return; }
-                        switch (args[1].ToLowerInvariant())
-                        {
-                            case "procedural": plugin.settings.ProceduralPlayers.Value = true; break;
-                            case "fixed": plugin.settings.ProceduralPlayers.Value = false; break;
-                            case "status": context?.AddString(plugin.rig.Diagnostics); return;
-                            default: context?.AddString("broadcast camera procedural|fixed|status"); return;
-                        }
-                        plugin.rig.ResetPose(); plugin.playerShots.Reset(); plugin.cameraReady = false;
-                        context?.AddString("Player camera: " + (plugin.settings.ProceduralPlayers.Value ? "Cinemachine procedural" : "fixed framing"));
-                        return;
+                    case "camera": plugin.CameraCommand(args, context); return;
                     case "framehold":
                         context?.AddString(args.Length == 2 && args[1].Equals("test", StringComparison.OrdinalIgnoreCase)
                             ? plugin.frameHold.Test() : "broadcast framehold test");

@@ -73,7 +73,12 @@ internal static class Program
             .Concat(CameraReachabilityTests.Cases())
             .Concat(PlayerFollowContinuityTests.Cases())
             .Concat(ProceduralShotPolicyTests.Cases())
-            .Concat(ProceduralCameraGeometryTests.Cases()).ToArray();
+            .Concat(ProceduralCameraGeometryTests.Cases())
+            .Concat(CinematicShotDirectorTests.Cases())
+            .Concat(CompanionGroupPolicyTests.Cases())
+            .Concat(PlayerCoverageTests.Cases())
+            .Concat(ShotProjectionTests.Cases())
+            .Concat(ObserverContextTests.Cases()).ToArray();
 
         int failed = 0;
         foreach (var test in cases)

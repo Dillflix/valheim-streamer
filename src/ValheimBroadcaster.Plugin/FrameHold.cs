@@ -17,6 +17,7 @@ internal sealed class FrameHold
     private FramePresentation renderedPresentation = FramePresentation.Slate, lastPresentation = FramePresentation.Slate;
     private long holds, slates;
     private float testAt = -1;
+    internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
     internal string LastFailure { get; set; } = "none";
     internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}.";
 
