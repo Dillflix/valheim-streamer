@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.7";
+    public const string PluginVersion = "0.8.8";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -245,8 +245,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 if (coverage.Mode == CoverageMode.Scenic) idle.BeginScenicPath();
                 // Presentation readiness belongs to the camera hook, not a provisional director cut.
             }
-            if (coverage.Mode == CoverageMode.Scenic && !idle.HasScenicPath && Time.unscaledTime >= nextScenicSearch)
-            { idle.BeginScenicPath(); nextScenicSearch = Time.unscaledTime + 5f; }
+            if (coverage.Mode == CoverageMode.Scenic)
+            {
+                if (!idle.HasScenicPath && !idle.Searching && Time.unscaledTime >= nextScenicSearch)
+                { idle.BeginScenicPath(); nextScenicSearch = Time.unscaledTime + 5f; }
+                if (idle.Search(settings)) { coverage.ScenicPresentationStarted(); rig.ResetPose(); }
+            }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
                 !observer.Active && !selfTest && !readyPlayer && settings.RemoteTargets.Value && remotePatchAvailable && acquisition.Roster.Count > 0,
@@ -506,8 +510,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             {
                 focus = plugin.idle.ScenicFocus((float)(plugin.coverage.ShotElapsed / plugin.coverage.ScenicSeconds));
             }
+            bool scenic = !plugin.probe.Active && plugin.coverage.Mode == CoverageMode.Scenic &&
+                (!plugin.observer.Active || plugin.observer.Phase == ObserverPhase.Watching);
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
-                plugin.settings, plugin.coverage.Revision, __0);
+                plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null);
+            if (scenic && plugin.cameraReady && plugin.rig.Position.HasValue &&
+                !plugin.idle.ViewClear(plugin.rig.Position.Value, focus!.Value, plugin.settings.FieldOfView.Value))
+            { plugin.cameraReady = false; presentationFailure = plugin.idle.ViewReason; }
             if (plugin.cameraReady && plugin.observer.Active)
             {
                 Camera camera = __instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>();
@@ -519,6 +528,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 { plugin.rig.ResetPose(); presentationFailure = "Camera carrier destination is outside immediate range or still loading"; }
             }
             if (!plugin.cameraReady) plugin.frameHold.LastFailure = presentationFailure ?? (focus.HasValue ? plugin.rig.LastFailure : "No ready shot: " + plugin.coverage.Mode + " / observer " + plugin.observer.Phase);
+            if (scenic && plugin.idle.ReportPresentation(plugin.cameraReady, plugin.frameHold.LastFailure))
+                plugin.nextScenicSearch = Time.unscaledTime;
             plugin.presentedPlayerId = plugin.cameraReady && plugin.coverage.Mode == CoverageMode.Player ? plugin.coverage.SubjectId : null;
             plugin.presentedFrame = Time.frameCount;
             plugin.rig.HideHud(plugin.settings.HideHud.Value);
@@ -794,7 +805,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + remote.DiscoveryStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void AutomationCommand(string[] args, Terminal context)

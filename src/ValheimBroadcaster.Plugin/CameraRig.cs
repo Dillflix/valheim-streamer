@@ -21,10 +21,11 @@ internal sealed class CameraRig
     private static readonly FieldInfo? HudRoot = AccessTools.Field(typeof(Hud), "m_rootObject");
     private static readonly FieldInfo? SkyCamera = AccessTools.Field(typeof(GameCamera), "m_skyCamera");
     private int? obstructionMask;
+    internal Vector3? Position => camera ? camera.transform.position : (Vector3?)null;
     internal string LastFailure { get; private set; } = "none";
     private bool Unready(string reason) { LastFailure = reason; return false; }
 
-    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt)
+    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null)
     {
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
@@ -48,7 +49,7 @@ internal sealed class CameraRig
         float radians = azimuth * Mathf.Deg2Rad;
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
             settings.Height.Value, Mathf.Cos(radians) * settings.Distance.Value);
-        Vector3 desired = focus + offset;
+        Vector3 desired = focus + (scenicOffset ?? offset);
         if (!IdleShots.Ready(focus)) return Unready("Shot focus area loading");
         if (!IdleShots.Ready(desired)) return Unready("Desired camera area loading");
         if (!hasPose || revision != selectionRevision)
@@ -67,7 +68,12 @@ internal sealed class CameraRig
         Vector3 visiblePosition = smoothedPosition;
         if (ray.sqrMagnitude > 0.01f && Physics.SphereCast(focus, 0.3f, ray.normalized,
                 out RaycastHit hit, ray.magnitude, obstructionMask.Value, QueryTriggerInteraction.Ignore))
+        {
+            // A scenic obstruction is a rejected composition, not a reason to
+            // collapse a landscape camera into a branch beside its focus.
+            if (scenicOffset.HasValue) return Unready("Scenic sightline obstructed");
             visiblePosition = focus + ray.normalized * Mathf.Max(0.1f, hit.distance - 0.1f);
+        }
         if (!IdleShots.Ready(visiblePosition)) return Unready("Smoothed camera area loading");
         camera.transform.SetPositionAndRotation(visiblePosition, Quaternion.LookRotation(focus - visiblePosition, Vector3.up));
         camera.fieldOfView = settings.FieldOfView.Value;

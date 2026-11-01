@@ -27,6 +27,7 @@ internal static class Program
             ("Solo target remains stable through cycling, readiness, and refresh", SelfTestLifetime),
             ("Zero players alternates scenery and creatures", IdleAlternation),
             ("No creatures maintains scenic coverage", ScenicFallback),
+            ("Replacement scenery receives a fresh dwell without delaying ready players", ScenicReplacement),
             ("Creature loss immediately returns to scenery", CreatureLoss),
             ("Ready player preempts idle and scene recovery", PlayerPriority),
             ("Connected but unloaded player keeps idle footage", PendingPlayer),
@@ -304,6 +305,20 @@ internal static class Program
         long revision = c.Revision;
         c.Tick(86400, null, 0, true, None); Equal(CoverageMode.Scenic, c.Mode); Equal(revision + 1, c.Revision);
         c.Tick(10, null, 0, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
+    }
+    private static void ScenicReplacement()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, None);
+        c.Tick(9, null, 0, true, None);
+        long revision = c.Revision;
+        c.ScenicPresentationStarted(); // Replace an obstructed shot near the end of its dwell.
+        Equal(0d, c.ShotElapsed); Equal(revision, c.Revision);
+        c.Tick(9, null, 0, true, None);
+        Equal(CoverageMode.Scenic, c.Mode); Equal(9d, c.ShotElapsed); Equal(revision, c.Revision);
+        c.Tick(1, null, 0, true, None); Equal(revision + 1, c.Revision);
+        c.ScenicPresentationStarted();
+        c.Tick(0, "ready", 1, true, None);
+        Equal(CoverageMode.Player, c.Mode); Equal("ready", c.SubjectId);
     }
     private static void CreatureLoss()
     {

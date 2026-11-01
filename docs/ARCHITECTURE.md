@@ -15,6 +15,7 @@ The broadcaster is an authenticated Valheim client using the existing main camer
 | `ObserverTravel` / `ObserverController` | Local carrier, camera-relative body/interest, native teleport, protected return/park and restoration |
 | `CoverageDirector` / `IdleShots` | Actual player/scenic/creature shot selection, local terrain paths and nearby eligible actor bindings |
 | `CameraRig` | Wide framing, smoothing, obstruction/readiness checks, HUD and camera-state restoration |
+| `ScenicVisibility` | Cached nearby vegetation bounds and multi-ray foreground screening for scenic compositions |
 | `FrameContinuity` / `FrameHold` | Bounded hold of a recent valid frame and presentation diagnostics |
 | `ConnectionRecoveryPolicy` / `ConnectionRecovery` | Opt-in same-session recovery with cancellation, bounded retry and fresh authorization |
 | `StreamCapture` / `GameAudioTap` | End-of-frame asynchronous GPU readback and non-mutating audio capture |
@@ -57,6 +58,12 @@ Without a usable player, ready idle footage accumulates toward the 120-second re
 The solo route exercise accepts 1–32 explicit marks and uses the same tokenized travel callbacks. Each destination must produce three seconds of ready scenic footage after arrival. A failed destination stops the route with a retained result. This is an acquisition/travel test, not a fake player, replication test or server mutation.
 
 ## Carrier and scene lifetime
+
+Scenic selection samples six angle/height variants per terrain path, checks five positions along each path, and limits evaluation to three variants per update. Terrain-only grounding avoids selecting a tree or building collider as landscape ground. Solid-clearance checks match the camera rig; scenic shots reject obstruction rather than moving the camera toward the obstructing branch. Player and creature framing retain their existing behavior.
+
+`ScenicVisibility` caches up to 512 nearby vegetation renderer bounds, refreshed at most every five seconds or after moving 40 metres. LODs are deduplicated. Cameras inside those bounds or with a heavily blocked weighted 3×3 foreground view are rejected. Cache truncation reduces the surveyed radius rather than declaring unseen positions clear. This is conservative bounds geometry, not pixel/alpha analysis; open gaps inside a tree's bounds can be rejected and unrecognized custom vegetation can be missed. No world renderer or simulation object is changed.
+
+Active scenic views are rechecked four times per second. A continuous 1.5-second presentation failure retires the path and starts a fresh search; the existing bounded frame hold/recovery slate covers invalid footage. Accepted replacement paths restart scenic dwell without forcing another selection revision. Recent-location exclusion and autonomous region travel still apply, including the existing unready-region timeout when no clear local shot is available.
 
 The camera-relative carrier is a live local player kept two metres below a ready broadcast camera. Input/player update paths are suppressed only for that carrier; local god/ghost flags and Rigidbody gravity/collision/constraints are enforced. Body, character ZDO position and network interest move together. World objects remain outside observer ownership.
 

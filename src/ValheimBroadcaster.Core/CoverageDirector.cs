@@ -23,6 +23,13 @@ namespace ValheimBroadcaster.Core
         public double ScenicSeconds { get => scenicSeconds; set => scenicSeconds = Duration(value); }
         public double CreatureSeconds { get => creatureSeconds; set => creatureSeconds = Duration(value); }
 
+        /// <summary>Give an accepted replacement path its full presentation time without
+        /// requesting another path through a revision change.</summary>
+        public void ScenicPresentationStarted()
+        {
+            if (Mode == CoverageMode.Scenic) elapsed = 0;
+        }
+
         public void Reset()
         {
             Change(CoverageMode.Disabled, null);

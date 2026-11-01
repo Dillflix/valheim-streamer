@@ -1,5 +1,19 @@
 # Validation and runtime test record
 
+## 0.8.8 scenic composition
+
+Continues from corrected protocol-3 client 0.8.7 (`4113d7f`). The reported failure is a scenic camera buried in foreground leaf planes. Selection now evaluates alternate headings/heights and five points along the intended path, rejects solid collisions and heavily obscured foreground foliage, and retires a persistently invalid shot after 1.5 seconds. Bounds screening is conservative; it does not measure leaf transparency or promise that every accepted shot is attractive. `broadcast diagnostics` includes the scenic rejection reason, search state and rejected-view count for the current region.
+
+Both plugins compile against the pinned real game references with warnings as errors, and **126/126 core cases pass**, including replacement-shot dwell and immediate player preemption. The normal local `dotnet run` command remains blocked by this container's process-introspection failure; these local results use direct Roslyn compilation, with the normal project build left to the existing CI workflow. No game runtime is available here. Server admission, protocol and streaming code are unchanged.
+
+Retest with the new client plugin and Core DLL together, keeping the deployed protocol-3 server and existing configuration:
+
+- Let solo scenic coverage run in a forest canopy and an open meadow through multiple shot changes. A camera inside vegetation or facing a close wall of leaves should be rejected, while open landscapes should still produce usable shots.
+- Check that a newly obstructed path recovers to a different composition rather than repeatedly collapsing into the same branch. If no local shot passes, the existing unready-region timeout should initiate autonomous region travel when available.
+- Exercise hold/resume and allow a real player to join; player acquisition should still preempt scenery. Check `broadcast diagnostics` if recovery slates persist, and note scene/region plus rejection reason.
+
+These in-game cases remain pending; no live installation was performed.
+
 ## 0.8.3 optional observer admission — 2026-10-31
 
 The allowlist now grants permission to request observer mode, rather than forcing a Steam account into that role. The client sends protocol-3 intent before native admission; no request means ordinary gameplay. The entire accepted observer connection remains read-only until disconnect.
