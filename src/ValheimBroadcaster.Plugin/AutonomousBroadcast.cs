@@ -12,6 +12,7 @@ internal sealed class AutonomousBroadcast
     private readonly BroadcastSettings settings;
     private readonly RemoteObserverClient remote;
     private readonly ObserverController observer;
+    private readonly PlayerShotReadiness playerShots;
     private readonly Action resetShot;
     private readonly Action<string> log;
     private readonly AutonomousDirector policy = new AutonomousDirector();
@@ -44,9 +45,9 @@ internal sealed class AutonomousBroadcast
         "\nLast travel failure: " + (policy.LastFailure ?? "none") + "; protected returns " + recoveries + "/3" +
         "\nSolo route: " + policy.RouteTestResult + "; marked " + route.Count;
 
-    internal AutonomousBroadcast(BroadcastSettings settings, RemoteObserverClient remote, ObserverController observer,
+    internal AutonomousBroadcast(BroadcastSettings settings, RemoteObserverClient remote, ObserverController observer, PlayerShotReadiness playerShots,
         Action resetShot, Action<string> log)
-    { this.settings = settings; this.remote = remote; this.observer = observer; this.resetShot = resetShot; this.log = log; }
+    { this.settings = settings; this.remote = remote; this.observer = observer; this.playerShots = playerShots; this.resetShot = resetShot; this.log = log; }
 
     internal void Started()
     {
@@ -77,7 +78,7 @@ internal sealed class AutonomousBroadcast
     internal bool CanFrame(TargetRoster.Target? target)
     {
         Player? player = target?.LoadedPlayer;
-        if (!player || player.IsDead() || !Player.m_localPlayer || !IdleShots.Ready(player.transform.position)) return false;
+        if (!player || !Player.m_localPlayer || !playerShots.TargetReady(target, out _)) return false;
         Vector3 offset = player.transform.position - Player.m_localPlayer.transform.position;
         return CameraReachability.Safe(offset.x, offset.y, offset.z,
             settings.Distance.Value, settings.Height.Value, settings.Azimuth.Value);
@@ -171,11 +172,11 @@ internal sealed class AutonomousBroadcast
                 if (!double.IsNaN(required) && !double.IsInfinity(required)) movement = required;
                 else position = null; // Invalid geometry cannot authorize travel.
             }
-            bool areaReady = live && IdleShots.Ready(actor!.transform.position);
+            bool areaReady = playerShots.TargetReady(target, out string readinessReason);
             bool reachable = movement.HasValue && movement.Value < CameraReachability.ImmediateLimit;
             string reason = dead ? "Character dead; waiting for respawn" : !position.HasValue ? "No fresh coordinates" :
                 !reachable ? "Outside immediate camera reach" : !live ? "Character not loaded locally" :
-                !areaReady ? "Target area loading locally" : "Locally frameable";
+                readinessReason;
             players.Add(new AutonomyPlayer(target.Identity.Id, string.IsNullOrWhiteSpace(target.Identity.Name) ? "Player " + target.Identity.Id : target.Identity.Name,
                 position.HasValue ? Convert(position.Value) : (AutonomyPosition?)null,
                 position.HasValue ? now + (live ? ObserverDiscoveryProtocol.FreshSeconds : Math.Max(0, ObserverDiscoveryProtocol.FreshSeconds - remote.DiscoveryAge)) : now,

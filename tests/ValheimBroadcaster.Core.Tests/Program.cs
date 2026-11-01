@@ -69,7 +69,8 @@ internal static class Program
             .Concat(ObserverAdmissionTests.Cases())
             .Concat(ObserverDiscoveryTests.Cases())
             .Concat(ConnectionRecoveryTests.Cases())
-            .Concat(CameraReachabilityTests.Cases()).ToArray();
+            .Concat(CameraReachabilityTests.Cases())
+            .Concat(PlayerFollowContinuityTests.Cases()).ToArray();
 
         int failed = 0;
         foreach (var test in cases)

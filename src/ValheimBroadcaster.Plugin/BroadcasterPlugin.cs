@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.9";
+    public const string PluginVersion = "0.8.10";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -55,6 +55,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
     private readonly FrameHold frameHold = new FrameHold();
+    private readonly PlayerShotReadiness playerShots = new PlayerShotReadiness();
     private float nextRosterRefresh;
     private bool remotePatchAvailable;
     private bool cameraReady;
@@ -74,7 +75,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         settings = new BroadcastSettings(Config);
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
         observer.RemoteApproved = () => remote.Isolated && remote.Approved;
-        automatic = new AutonomousBroadcast(settings, remote, observer, ResetShot, message => Logger.LogInfo(message));
+        automatic = new AutonomousBroadcast(settings, remote, observer, playerShots, ResetShot, message => Logger.LogInfo(message));
         connection = new ConnectionRecovery(() => WantsUnattended, () => settings.ObserverConnection.Value,
             message => Logger.LogInfo(message), reason => remote.Fail(reason), () => Stop(true));
         connection.ManualStopped += CancelOperatorIntent;
@@ -198,6 +199,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             if (Time.unscaledTime >= nextRosterRefresh)
             { RefreshRoster(); nextRosterRefresh = Time.unscaledTime + 0.5f; }
+            if (probe.Active || observer.Active && observer.Phase != ObserverPhase.Watching) playerShots.Reset();
             bool recentPicture = cameraReady && Time.frameCount - presentedFrame <= 2;
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
                 recentPicture && (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature));
@@ -241,6 +243,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (coverage.Revision != lastRevision)
             {
                 lastRevision = coverage.Revision;
+                playerShots.Reset();
                 rig.ResetPose();
                 if (coverage.Mode == CoverageMode.Scenic) idle.BeginScenicPath();
                 // Presentation readiness belongs to the camera hook, not a provisional director cut.
@@ -298,6 +301,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private bool CanShow(TargetRoster.Target? target) => IsReady(target) && (!observer.RemoteSession || automatic?.CanFrame(target) == true);
     private void ResetShot()
     {
+        playerShots.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null;
         nextCreatureRefresh = nextScenicSearch = 0;
@@ -328,12 +332,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         CancelIntent(); connection?.OnManualStop(); Stop(); UpdateBackground();
     }
 
-    private static bool IsReady(TargetRoster.Target? target)
-    {
-        if (target?.LoadedPlayer == null || !target.LoadedPlayer || target.LoadedPlayer.IsDead()) return false;
-        return ZNetScene.instance && TargetRoster.Finite(target.LoadedPlayer.transform.position) &&
-               ZNetScene.instance.IsAreaReady(target.LoadedPlayer.transform.position);
-    }
+    private bool IsReady(TargetRoster.Target? target) => playerShots.TargetReady(target, out _);
 
     private bool StartBroadcast(bool testSelf = false)
     {
@@ -370,6 +369,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop(bool force = false, bool parked = false)
     {
+        playerShots.Reset();
         if (observer.Active && !force)
         {
             if (observer.RemoteSession) output?.Suspend();
@@ -487,9 +487,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (plugin.remote.Isolated) plugin.observerVisuals.Apply(Player.m_localPlayer, true, true);
             if (!plugin.director.IsEnabled) return;
             Vector3? focus = null;
+            TargetRoster.Target? playerTarget = null;
+            bool continuousPlayer = false;
             string? presentationFailure = null;
             float azimuth = plugin.settings.Azimuth.Value;
             plugin.observerVisuals.Apply(Player.m_localPlayer, !plugin.selfTest, plugin.observer.Active);
+            if (plugin.probe.Active || plugin.coverage.Mode != CoverageMode.Player ||
+                plugin.observer.Active && plugin.observer.Phase != ObserverPhase.Watching) plugin.playerShots.Reset();
             if (plugin.observer.Active && plugin.observer.Phase != ObserverPhase.Watching) { }
             else if (plugin.probe.Active)
             {
@@ -499,7 +503,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             else if (plugin.coverage.Mode == CoverageMode.Player)
             {
                 TargetRoster.Target? target = plugin.roster.Find(plugin.coverage.SubjectId);
-                if (plugin.CanShow(target)) focus = target!.LoadedPlayer!.transform.position + Vector3.up * 1.5f;
+                if (plugin.CanShow(target))
+                {
+                    playerTarget = target;
+                    continuousPlayer = plugin.playerShots.CanContinue(target);
+                    focus = target!.LoadedPlayer!.transform.position + Vector3.up * 1.5f;
+                }
+                else if (!plugin.playerShots.TargetReady(target, out string reason)) presentationFailure = reason;
             }
             else if (plugin.coverage.Mode == CoverageMode.Creature)
             {
@@ -513,7 +523,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             bool scenic = !plugin.probe.Active && plugin.coverage.Mode == CoverageMode.Scenic &&
                 (!plugin.observer.Active || plugin.observer.Phase == ObserverPhase.Watching);
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
-                plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null);
+                plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null, continuousPlayer);
             if (scenic && plugin.cameraReady && plugin.rig.Position.HasValue &&
                 !plugin.idle.ViewClear(plugin.rig.Position.Value, focus!.Value, plugin.settings.FieldOfView.Value))
             { plugin.cameraReady = false; presentationFailure = plugin.idle.ViewReason; }
@@ -522,14 +532,15 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 Camera camera = __instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>();
                 Vector3 carrier = camera ? camera.transform.position + Vector3.down * 2f : Vector3.zero;
                 bool reachable = camera && Player.m_localPlayer && TargetRoster.Finite(carrier) &&
-                    Vector3.Distance(Player.m_localPlayer.transform.position, carrier) < 95f && IdleShots.Ready(carrier);
-                plugin.cameraReady = reachable && plugin.observer.FollowCamera(camera!.transform.position);
+                    Vector3.Distance(Player.m_localPlayer.transform.position, carrier) < 95f && PlayerShotReadiness.PositionReady(carrier, continuousPlayer);
+                plugin.cameraReady = reachable && plugin.observer.FollowCamera(camera!.transform.position, continuousPlayer);
                 if (!reachable)
-                { plugin.rig.ResetPose(); presentationFailure = "Camera carrier destination is outside immediate range or still loading"; }
+                { plugin.rig.ResetPose(); presentationFailure = continuousPlayer ? "Camera carrier destination is out of range or has no loaded geometry" : "Acquiring camera carrier destination: out of range or awaiting area objects"; }
             }
             if (!plugin.cameraReady) plugin.frameHold.LastFailure = presentationFailure ?? (focus.HasValue ? plugin.rig.LastFailure : "No ready shot: " + plugin.coverage.Mode + " / observer " + plugin.observer.Phase);
             if (scenic && plugin.idle.ReportPresentation(plugin.cameraReady, plugin.frameHold.LastFailure))
                 plugin.nextScenicSearch = Time.unscaledTime;
+            if (plugin.cameraReady && playerTarget != null) plugin.playerShots.Presented(playerTarget, continuousPlayer);
             plugin.presentedPlayerId = plugin.cameraReady && plugin.coverage.Mode == CoverageMode.Player ? plugin.coverage.SubjectId : null;
             plugin.presentedFrame = Time.frameCount;
             plugin.rig.HideHud(plugin.settings.HideHud.Value);
@@ -805,7 +816,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + remote.DiscoveryStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void AutomationCommand(string[] args, Terminal context)

@@ -145,11 +145,12 @@ internal sealed class ObserverController
         return false;
     }
 
-    internal bool FollowCamera(Vector3 cameraPosition)
+    internal bool FollowCamera(Vector3 cameraPosition, bool continuousPlayer = false)
     {
         if (Phase != ObserverPhase.Watching || !owner || !body || !CanOperate) return false;
         Vector3 position = cameraPosition + Vector3.down * 2f;
-        if (!TargetRoster.Finite(position) || (owner.transform.position - position).sqrMagnitude > 10000f || !IdleShots.Ready(position))
+        if (!TargetRoster.Finite(position) || (owner.transform.position - position).sqrMagnitude > 10000f ||
+            !PlayerShotReadiness.PositionReady(position, continuousPlayer))
         { Suspend("Camera destination requires controlled travel; use broadcast observer return."); return false; }
         owner.transform.position = position;
         body.position = position;

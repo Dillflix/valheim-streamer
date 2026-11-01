@@ -25,7 +25,7 @@ internal sealed class CameraRig
     internal string LastFailure { get; private set; } = "none";
     private bool Unready(string reason) { LastFailure = reason; return false; }
 
-    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null)
+    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false)
     {
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
@@ -50,8 +50,13 @@ internal sealed class CameraRig
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
             settings.Height.Value, Mathf.Cos(radians) * settings.Distance.Value);
         Vector3 desired = focus + (scenicOffset ?? offset);
-        if (!IdleShots.Ready(focus)) return Unready("Shot focus area loading");
-        if (!IdleShots.Ready(desired)) return Unready("Desired camera area loading");
+        if (!TargetRoster.Finite(desired)) return Unready("Invalid camera destination");
+        if (!PlayerShotReadiness.PositionReady(focus, continuousPlayer))
+            return Unready(continuousPlayer ? "Shot focus geometry unavailable" : "Acquiring shot focus area");
+        // Continuation validates the actual smoothed/clipped camera below. Its
+        // unrealized desired offset can cross a tile edge or lie outside a small
+        // room while the current picture remains fully supported.
+        if (!continuousPlayer && !IdleShots.Ready(desired)) return Unready("Acquiring desired camera area");
         if (!hasPose || revision != selectionRevision)
         {
             smoothedPosition = desired;
@@ -74,7 +79,8 @@ internal sealed class CameraRig
             if (scenicOffset.HasValue) return Unready("Scenic sightline obstructed");
             visiblePosition = focus + ray.normalized * Mathf.Max(0.1f, hit.distance - 0.1f);
         }
-        if (!IdleShots.Ready(visiblePosition)) return Unready("Smoothed camera area loading");
+        if (!PlayerShotReadiness.PositionReady(visiblePosition, continuousPlayer))
+            return Unready(continuousPlayer ? "Visible camera geometry unavailable" : "Acquiring visible camera area");
         camera.transform.SetPositionAndRotation(visiblePosition, Quaternion.LookRotation(focus - visiblePosition, Vector3.up));
         camera.fieldOfView = settings.FieldOfView.Value;
         if (skyCamera) skyCamera.fieldOfView = settings.FieldOfView.Value;

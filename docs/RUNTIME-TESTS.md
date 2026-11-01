@@ -1,5 +1,21 @@
 # Validation and runtime test record
 
+## 0.8.10 continuous player following
+
+Built from 0.8.9 (`52e3435`), preserving the corrected protocol-3 admission, movement, scenery and held-image changes. Actual Valheim 1.0.21 inspection established that `ZNetScene.IsAreaReady` waits for the queried zone plus instances for known network objects in a 3×3 zone neighbourhood. Using it as a per-frame presentation veto causes unnecessary freezes when otherwise usable footage exists.
+
+Full readiness now establishes each player shot. A recently presented shot then uses the exact live character/world binding, bounded incremental target movement and existing local geometry at the target, camera and carrier. Outdoors this requires active generated terrain meshes/collider; interiors require nearby static geometry at interior height. Interior camera offsets are clipped before checking camera support, so an offset beyond a small room is not automatically treated as an unloaded shot. Character changes, death, scene/world changes, expired footage and substantial 3D relocation return to acquisition. Travel/return/probe/scenic/creature readiness and the server protocol remain unchanged.
+
+Local validation: **131/131 core cases pass**, including roughly 3.9 km of sustained walking/sprinting, subsequent stationary following, same-binding selection, reset/respawn identity, horizontal/vertical teleport rejection and expiry that readiness probes cannot extend. Client compilation against actual matching game references passes with warnings as errors. Normal MSBuild/test execution remains assigned to the existing CI pipeline because the local CLI cannot inspect process start times. No new protocol audit framework was added.
+
+Runtime retest remains pending:
+
+- Follow a stationary player while nearby objects appear, then follow sustained walking/sprinting across terrain-zone boundaries. Background object queues should not freeze established footage; diagnostics should report continuous follow with local geometry ready.
+- Enter and move through a dungeon. Entry still requires acquisition; once established, room-object loading outside the shot should not veto it. Verify the actual clipped camera retains valid geometry and ordinary objects/characters under it do not invalidate floor support.
+- Exercise distant portal travel, death/respawn, target cycling, off/on and return/rejoin. These must establish a new shot; unavailable actors or geometry must still hold/slate rather than allow unsupported carrier movement.
+
+Install both client DLLs together after closing the broadcaster. Keep the deployed protocol-3 server and existing configuration. No live installation or in-game validation was performed here.
+
 ## 0.8.9 held-frame presentation
 
 The supplied session log loads client **0.8.7**, protocol 3, with Valheim 1.0.21, Unity 6000.0.75, BepInEx 5.4.23.6 and Jötunn 2.30.2. It contains no camera/graphics exceptions, one successful NVENC/AAC startup and no RTMP failure/retry. Five status samples report waiting for a valid shot; thirteen report brief interruptions, mostly target-area loading. Six player travels are distant (approximately 754–2405 metres). These observations do not establish which individual frame inverted.
