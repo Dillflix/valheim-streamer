@@ -20,7 +20,7 @@ internal sealed class ConnectionRecovery
     private ServerJoinData destination;
     private string? password, profile;
     private FileHelpers.FileSource profileSource;
-    private ZNet? owner;
+    private ZNet? owner, failedExitWorld;
     private FejdStartup? readyMenu;
     private double menuReadyAt;
     private bool haveDestination, manualStopped, internalJoin, internalExit, installed, wasConfigured, passwordRequired, cancelPendingJoin;
@@ -222,6 +222,17 @@ internal sealed class ConnectionRecovery
         catch (Exception error) { Reject("Reconnect cleanup failed: " + error.GetType().Name); return false; }
         return true;
     }
+    // Failure cleanup is mandatory even before recovery is armed, or when the
+    // operator disabled unattended reconnect. It never grants retry permission.
+    internal void CloseFailedWorld()
+    {
+        ZNet? net = ZNet.instance;
+        if (!net || net.IsServer() || !Game.instance || Game.instance.IsShuttingDown() || failedExitWorld == net) return;
+        failedExitWorld = net; // One attempt per world, including a failing native adapter.
+        try { ReturnToMenu(); }
+        catch (Exception error) { Reject("Failed observer world could not close: " + error.GetType().Name + "; exit the game manually"); }
+    }
+
     private void ReturnToMenu()
     {
         if (!Game.instance || Game.instance.IsShuttingDown()) return;

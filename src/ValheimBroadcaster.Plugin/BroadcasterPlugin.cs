@@ -20,7 +20,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.4";
+    public const string PluginVersion = "0.8.7";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -123,7 +123,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             StartCoroutine(frameHold.Capture(() => director.IsEnabled, () => cameraReady && !IsTextOrMenuOpen(), message => Logger.LogWarning(message)));
             CommandManager.Instance.AddConsoleCommand(new BroadcastCommand());
-            Logger.LogInfo($"{PluginName} {PluginVersion} ready. F8 toggles; F10 starts self-follow; broadcast help lists commands. Starts disabled.");
+            Logger.LogInfo($"{PluginName} {PluginVersion} ready; observer protocol {ObserverProtocol.Version}, explicit pre-admission opt-in. F8 toggles; F10 starts self-follow; broadcast help lists commands. Starts disabled.");
         }
         catch (Exception error)
         {
@@ -143,6 +143,14 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         { terminalReported = true; connection?.Reject(remote.Status); CancelIntent(); }
         if (remote.Approved) terminalReported = false;
         connection?.Tick(remote.Isolated && remote.Approved, observer.Active);
+        if (remote.Isolated && remote.Failed)
+        {
+            // A socket disconnect alone leaves Game's pending respawn running.
+            // Leave the rejected world through native no-save shutdown, even if
+            // unattended recovery was never armed. Restrictions stay pinned.
+            connection?.CloseFailedWorld();
+            return;
+        }
         UpdateBackground();
         bool allowedOutput = director.IsEnabled && Player.m_localPlayer && ZNet.instance && activeWorld == ZNet.instance &&
             (!remote.Isolated || remote.Approved);
@@ -215,7 +223,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (automatic?.ControlsSelection != true) director.Tick(Time.unscaledDeltaTime, IsReady(current));
             current = CurrentTarget();
             bool readyPlayer = CanShow(current);
-            if (!readyPlayer && observer.RemoteSession && !idle.SceneReady && IdleShots.Ready(Player.m_localPlayer.transform.position))
+            bool preserveShot = coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
+            if (!preserveShot && !readyPlayer && observer.RemoteSession && !idle.SceneReady && IdleShots.Ready(Player.m_localPlayer.transform.position))
                 ResetShot();
             if (Time.unscaledTime >= nextCreatureRefresh)
             {
@@ -224,8 +233,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             coverage.ScenicSeconds = settings.ScenicDwell.Value;
             coverage.CreatureSeconds = settings.CreatureDwell.Value;
-            coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
-                roster.ConnectedOthers, !selfTest && idle.SceneReady, idle.ReadyIds(), director.IsHolding);
+            // Preserve selection/pose through short loading gaps. The camera hook
+            // still requires a ready scene; frame hold/slate handles missing footage.
+            if (!preserveShot)
+                coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
+                    roster.ConnectedOthers, !selfTest && idle.SceneReady, idle.ReadyIds(), director.IsHolding);
             if (coverage.Revision != lastRevision)
             {
                 lastRevision = coverage.Revision;

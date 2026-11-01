@@ -12,6 +12,16 @@ The allowlist now grants permission to request observer mode, rather than forcin
 
 **Still required:** a vanilla join using an allowlisted identity lasting beyond the former 15-second deadline; the same account joining with the mod installed but observer mode off; an explicit observer join with matching 0.8.3 endpoints; unauthorized/mismatched/late requests; and the visibility, interactions, sleep and ownership matrix in [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md). Startup and policy tests do not prove those runtime behaviors.
 
+## 0.8.7 corrected protocol-3 build
+
+Based directly on main commit `0348013737799f8131b589bddc1edd84319ca15b`, which contains the deployed protocol-3 opt-in implementation (`8625cd3`, labelled 0.8.4). Carries the movement/reacquisition fix and rejected-world client cleanup onto that baseline. The protocol definition and server admission implementation are preserved; server source changes only its version label/startup banner. No account-based automatic reservation or 0.8.6 reservation policy is included.
+
+The `fix-player-reacquisition` builds labelled 0.8.4 (`b0de64e`), 0.8.5 (`a2af65f`) and 0.8.6 (`31f7c53`) were incorrectly based on protocol 2. Do not deploy those builds or their server companion to replace a protocol-3 installation. A protocol-2 client omits the explicit `Observer.Request3` message and is incompatible with the deployed opt-in server. The rejected-world spawn storm was a separate cleanup defect.
+
+Local results: 125/125 existing/carried core cases pass, and both plugins compile against the real reference assemblies with warnings treated as errors. The existing CI pipeline builds and packages the commit. No extra protocol/artifact check framework was added. In-game authorization, continuous following and rejection cleanup still require runtime validation.
+
+Installation: fully exit the broadcaster client and replace its plugin plus Core DLL together with the 0.8.7 client artifact. Keep the verified protocol-3 server 0.8.4 and existing configuration. If the protocol-2 0.8.6 server was installed, restore the prior protocol-3 pair or install the 0.8.7 server plugin/Core pair after a normal stop. Ordinary players need no mods. Client startup reports protocol 3, and an opted-in join logs its request before native admission. Test joining first, then sustained walking/sprinting and a distant portal. A rejected session should return to the menu without repeated local character allocation.
+
 ## Evidence available
 
 - The **0.7.0** director's **55 automated cases passed**, including observer exclusion, identity ordering, manual selection, wrapping, dwell, hold, target loss, readiness timeout, lone-target behavior, invalid time inputs, isolated self-target selection, return to normal observer exclusion, idle alternation/fallback, player preemption, pending-player presence, scene recovery, stable creature rotation, hold/reset, bounded acquisition, and a 24-hour simulated idle schedule. This simulated policy test is not a Valheim soak test.

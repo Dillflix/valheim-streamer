@@ -5,12 +5,20 @@ namespace ValheimBroadcaster.Core
     /// <summary>Bound the actual carrier destinations for a new player-camera shot.</summary>
     public static class CameraReachability
     {
+        public const double ImmediateLimit = 91;
         public static bool Safe(double targetOffsetX, double targetOffsetY, double targetOffsetZ,
+            double cameraHorizontal, double cameraHeight, double azimuthDegrees)
+            => RequiredDisplacement(targetOffsetX, targetOffsetY, targetOffsetZ,
+                cameraHorizontal, cameraHeight, azimuthDegrees) < ImmediateLimit;
+
+        // Conservative maximum carrier movement across the obstruction-clipped shot.
+        // This is geometry only: scene loading is not evidence of distant travel.
+        public static double RequiredDisplacement(double targetOffsetX, double targetOffsetY, double targetOffsetZ,
             double cameraHorizontal, double cameraHeight, double azimuthDegrees)
         {
             if (!Finite(targetOffsetX) || !Finite(targetOffsetY) || !Finite(targetOffsetZ) ||
                 !Nonnegative(cameraHorizontal) || !Nonnegative(cameraHeight) ||
-                !Nonnegative(azimuthDegrees) || azimuthDegrees > 360) return false;
+                !Nonnegative(azimuthDegrees) || azimuthDegrees > 360) return double.PositiveInfinity;
 
             // Match CameraRig's world-space offset, the player's +1.5m focus and
             // ObserverController's carrier position 2m below the rendered camera.
@@ -23,10 +31,10 @@ namespace ValheimBroadcaster.Core
             // Obstruction clipping places the camera on the focus-to-desired
             // segment. Bounding both endpoints bounds every clipped destination.
             // Actual smoothed camera displacement is checked again by the adapter.
-            return WithinMargin(targetOffsetX, focusY, targetOffsetZ) && WithinMargin(desiredX, desiredY, desiredZ);
+            return Math.Max(Length(targetOffsetX, focusY, targetOffsetZ), Length(desiredX, desiredY, desiredZ));
         }
 
-        private static bool WithinMargin(double x, double y, double z) => Math.Sqrt(x * x + y * y + z * z) + 4 < 95;
+        private static double Length(double x, double y, double z) => Math.Sqrt(x * x + y * y + z * z);
         private static bool Nonnegative(double value) => value >= 0 && Finite(value);
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
     }

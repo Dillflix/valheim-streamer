@@ -26,13 +26,22 @@ namespace ValheimBroadcaster.Core
         public AutonomyPosition? Position { get; }
         public double PositionFreshUntil { get; }
         public bool SceneReady { get; }
-        public AutonomyPlayer(string id, string name, AutonomyPosition? position, double positionFreshUntil, bool sceneReady)
+        public double? CameraDisplacement { get; }
+        public string ReadinessReason { get; }
+        public AutonomyPlayer(string id, string name, AutonomyPosition? position, double positionFreshUntil, bool sceneReady,
+            double? cameraDisplacement = null, string readinessReason = "Scene not ready")
         {
             Id = AutonomousDirector.Label(id, nameof(id)); Name = AutonomousDirector.Label(name, nameof(name));
             AutonomousDirector.Time(positionFreshUntil, nameof(positionFreshUntil));
             Position = position; PositionFreshUntil = positionFreshUntil; SceneReady = sceneReady;
+            if (cameraDisplacement.HasValue) AutonomousDirector.Time(cameraDisplacement.Value, nameof(cameraDisplacement));
+            CameraDisplacement = cameraDisplacement;
+            ReadinessReason = AutonomousDirector.Label(readinessReason, nameof(readinessReason));
         }
         public bool HasFreshPosition(double now) => Position.HasValue && now < PositionFreshUntil;
+        public bool NeedsTravel(AutonomyPosition current, double minimumDistance) => CameraDisplacement.HasValue
+            ? CameraDisplacement.Value >= CameraReachability.ImmediateLimit
+            : Position.HasValue && current.Distance(Position.Value) >= minimumDistance;
     }
 
     /// <summary>A previously generated, read-only destination supplied by the companion or an explicit solo route.</summary>
@@ -54,8 +63,9 @@ namespace ValheimBroadcaster.Core
         public string TargetId { get; }
         public string Name { get; }
         public AutonomyPosition Position { get; }
-        internal AutonomyTravelRequest(long token, AutonomyTravelKind kind, string targetId, string name, AutonomyPosition position)
-        { Token = token; Kind = kind; TargetId = targetId; Name = name; Position = position; }
+        public string Reason { get; }
+        internal AutonomyTravelRequest(long token, AutonomyTravelKind kind, string targetId, string name, AutonomyPosition position, string reason)
+        { Token = token; Kind = kind; TargetId = targetId; Name = name; Position = position; Reason = reason; }
     }
 
     /// <summary>
@@ -75,6 +85,8 @@ namespace ValheimBroadcaster.Core
         private double pendingAt, lastTravelAt = double.NegativeInfinity;
         private long token;
         private int acquisitionTrips;
+        private bool hasPresentedTarget;
+        private double shotLostAt = -1, outOfReachSince = -1;
         private AutonomyPosition? lastPlayerDestination;
         private IReadOnlyList<ScenicRegion>? route;
         private int routeIndex;
@@ -110,6 +122,8 @@ namespace ValheimBroadcaster.Core
         public int RouteIndex => routeIndex;
         public int RouteCount => route?.Count ?? 0;
         public double ReadyDwellSeconds => dwell;
+        public bool PresentationGraceActive { get; private set; }
+        public double ReacquisitionGraceSeconds { get; set; } = 3;
         public double DwellSeconds { get => dwellSeconds; set => dwellSeconds = Positive(value, nameof(DwellSeconds)); }
         public double AcquisitionSeconds { get => acquisitionSeconds; set => acquisitionSeconds = Positive(value, nameof(AcquisitionSeconds)); }
         public double RegionSeconds { get => regionSeconds; set => regionSeconds = Positive(value, nameof(RegionSeconds)); }
@@ -137,6 +151,7 @@ namespace ValheimBroadcaster.Core
         {
             if (paused == value) return;
             paused = value;
+            PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
             if (value) { PendingTravel = ActiveTravel = null; State = AutonomyState.Paused; Reason = "Automatic direction paused"; }
             else { acquisitionBegan = lastNow; idleUnreadyBegan = -1; }
         }
@@ -157,6 +172,7 @@ namespace ValheimBroadcaster.Core
             if (players.Count > 128 || regions.Count > 1024) throw new ArgumentException("Discovery inputs exceed the bounded policy capacity.");
             if (started && now < lastNow) throw new ArgumentOutOfRangeException(nameof(now), "Reset the director before changing clocks/worlds.");
             Positive(MinimumPlayerTravelDistance, nameof(MinimumPlayerTravelDistance));
+            Positive(ReacquisitionGraceSeconds, nameof(ReacquisitionGraceSeconds));
             Positive(MinimumScenicTravelDistance, nameof(MinimumScenicTravelDistance));
             Positive(MaximumScenicTravelDistance, nameof(MaximumScenicTravelDistance));
             if (MaximumScenicTravelDistance < MinimumScenicTravelDistance) throw new ArgumentOutOfRangeException(nameof(MaximumScenicTravelDistance));
@@ -200,10 +216,11 @@ namespace ValheimBroadcaster.Core
                 selected = ChoosePlayer(players, now, lastPlayer, 1);
                 SetTarget(selected, now);
             }
-            if (selected != null && !selected.SceneReady && !selected.HasFreshPosition(now))
+            ObservePresentation(selected, now, presentedPlayerId);
+            if (selected != null && !PresentationGraceActive && !selected.SceneReady && !selected.HasFreshPosition(now))
             {
                 AutonomyPlayer? alternative = ChoosePlayer(players, now, selected.Id, 1);
-                if (alternative != null) { selected = alternative; SetTarget(selected, now); }
+                if (alternative != null) { selected = alternative; SetTarget(selected, now); ObservePresentation(selected, now, presentedPlayerId); }
             }
             if (selected != null && !(selected.SceneReady && string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal)) &&
                 now - acquisitionBegan >= AcquisitionSeconds)
@@ -216,6 +233,7 @@ namespace ValheimBroadcaster.Core
                 TargetName = selected.Name;
                 if (selected.SceneReady)
                 {
+                    outOfReachSince = -1;
                     idleActive = false;
                     if (string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal))
                     {
@@ -230,22 +248,31 @@ namespace ValheimBroadcaster.Core
                         }
                         return;
                     }
-                    dwell = 0; State = AutonomyState.Acquiring; Reason = "Waiting for a valid camera shot of " + selected.Name;
+                    State = AutonomyState.Acquiring; Reason = "Waiting for a valid camera shot of " + selected.Name;
                 }
                 else
                 {
-                    dwell = 0;
                     State = AutonomyState.Acquiring;
-                    Reason = selected.HasFreshPosition(now) ? "Acquiring " + selected.Name : "Waiting for fresh coordinates for " + selected.Name;
-                    if (selected.HasFreshPosition(now) && currentPosition.Distance(selected.Position!.Value) >= MinimumPlayerTravelDistance &&
+                    bool needsTravel = selected.HasFreshPosition(now) && selected.NeedsTravel(currentPosition, MinimumPlayerTravelDistance);
+                    if (!needsTravel) outOfReachSince = -1;
+                    else if (outOfReachSince < 0) outOfReachSince = now;
+                    bool travelConfirmed = !hasPresentedTarget || outOfReachSince >= 0 && now - outOfReachSince >= ReacquisitionGraceSeconds;
+                    Reason = PresentationGraceActive ? "Brief shot interruption for " + selected.Name + ": " + selected.ReadinessReason :
+                        !selected.HasFreshPosition(now) ? "Waiting for fresh coordinates for " + selected.Name :
+                        !needsTravel ? "Waiting for local scene of " + selected.Name + ": " + selected.ReadinessReason :
+                        "Acquiring " + selected.Name + ": " + selected.ReadinessReason;
+                    if (!PresentationGraceActive && travelConfirmed && selected.Position.HasValue && selected.HasFreshPosition(now) && needsTravel &&
                         now - lastTravelAt >= MinimumTravelSeconds && acquisitionTrips < 3 &&
                         (!lastPlayerDestination.HasValue || lastPlayerDestination.Value.Distance(selected.Position.Value) >= 24))
                     {
-                        Request(AutonomyTravelKind.Player, selected.Id, selected.Name, selected.Position.Value, now);
+                        Request(AutonomyTravelKind.Player, selected.Id, selected.Name, selected.Position.Value, now,
+                            selected.ReadinessReason + "; carrier-to-target " + currentPosition.Distance(selected.Position.Value).ToString("F1") +
+                            "m; required camera movement " + (selected.CameraDisplacement?.ToString("F1") ?? "unknown") +
+                            "m; continuously out of reach " + (outOfReachSince < 0 ? 0 : now - outOfReachSince).ToString("F1") + "s; shot unavailable " + (shotLostAt < 0 ? 0 : now - shotLostAt).ToString("F1") + "s");
                         return;
                     }
                 }
-                if (selected.SceneReady || selected.HasFreshPosition(now)) return;
+                if (PresentationGraceActive || selected.SceneReady || selected.HasFreshPosition(now)) return;
                 // A connected player without a usable position does not freeze idle coverage.
             }
             TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady);
@@ -389,6 +416,7 @@ namespace ValheimBroadcaster.Core
             targetId = lastPlayer = requestedSelection = null; requestedStep = 0;
             Held = paused = started = idleActive = false; idleUnreadyBegan = -1; idleDwell = dwell = 0;
             acquisitionTrips = 0; lastPlayerDestination = null; lastTravelAt = double.NegativeInfinity;
+            hasPresentedTarget = PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
             CurrentRegionId = CurrentRegionName = TargetName = LastFailure = null;
             CompletedTravels = FailedTravels = 0; route = null; routeIndex = 0; RouteTestResult = "No solo route run";
             State = AutonomyState.Disabled; Reason = "Automatic direction disabled";
@@ -400,6 +428,7 @@ namespace ValheimBroadcaster.Core
             string? id = player?.Id;
             if (string.Equals(targetId, id, StringComparison.Ordinal)) return;
             targetId = id; TargetName = player?.Name; acquisitionBegan = now; dwell = 0; acquisitionTrips = 0; lastPlayerDestination = null;
+            hasPresentedTarget = PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
             Revision++;
             if (id != null) { lastPlayer = id; State = AutonomyState.Acquiring; Reason = "Acquiring " + player!.Name; }
         }
@@ -421,9 +450,19 @@ namespace ValheimBroadcaster.Core
             }
             return next ?? first;
         }
-        private void Request(AutonomyTravelKind kind, string id, string name, AutonomyPosition position, double now)
+        private void ObservePresentation(AutonomyPlayer? player, double now, string? presentedId)
         {
-            PendingTravel = new AutonomyTravelRequest(++token, kind, id, name, position); pendingAt = now;
+            PresentationGraceActive = false;
+            if (player == null) return;
+            if (player.SceneReady && string.Equals(player.Id, presentedId, StringComparison.Ordinal))
+            { hasPresentedTarget = true; shotLostAt = outOfReachSince = -1; return; }
+            if (shotLostAt < 0) shotLostAt = now;
+            PresentationGraceActive = hasPresentedTarget && now - shotLostAt < ReacquisitionGraceSeconds;
+        }
+
+        private void Request(AutonomyTravelKind kind, string id, string name, AutonomyPosition position, double now, string? reason = null)
+        {
+            PendingTravel = new AutonomyTravelRequest(++token, kind, id, name, position, reason ?? (kind + " destination selected")); pendingAt = now;
             State = AutonomyState.Acquiring; Reason = "Preparing travel to " + name;
         }
         private bool Blocked(string id, double now) => failures.TryGetValue(id, out Failure failure) && now < failure.Until;
