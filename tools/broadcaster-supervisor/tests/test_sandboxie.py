@@ -243,6 +243,22 @@ class AclPolicyTests(unittest.TestCase):
             sandboxie.verify_private_path(private)
             credential = private / 'token-fixture.txt'
             credential.write_text('not a credential', encoding='utf-8')
+            # An elevated CI token can assign Administrators as a new file's
+            # owner; ownership is not inherited from its private parent. Match
+            # the documented non-elevated setup explicitly for this fixture,
+            # keeping the product's current-user ownership check unchanged.
+            advapi, kernel = sandboxie._security_api()
+            owner, descriptor = ctypes.c_void_p(), ctypes.c_void_p()
+            self.assertEqual(advapi.GetNamedSecurityInfoW(
+                str(private), 1, 0x00000001, ctypes.byref(owner), None,
+                None, None, ctypes.byref(descriptor)), 0)
+            try:
+                self.assertEqual(sandboxie._sid_text(advapi, kernel, owner),
+                                 sandboxie._current_sid(advapi, kernel))
+                self.assertEqual(advapi.SetNamedSecurityInfoW(
+                    str(credential), 1, 0x00000001, owner, None, None, None), 0)
+            finally:
+                kernel.LocalFree(descriptor)
             sandboxie.verify_private_path(credential)
 
 

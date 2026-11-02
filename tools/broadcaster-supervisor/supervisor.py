@@ -483,7 +483,9 @@ def verify_inventory(directory: Path, expected: dict) -> None:
 def flush_tree(directory: Path) -> None:
     for root, dirs, files in os.walk(directory, topdown=False):
         for name in files:
-            with (Path(root) / name).open("rb") as stream:
+            # Windows _commit/FlushFileBuffers requires a writable file handle.
+            # This operates only on our new backup/restore copies, never live saves.
+            with (Path(root) / name).open("r+b") as stream:
                 os.fsync(stream.fileno())
         fsync_dir(Path(root))
 
