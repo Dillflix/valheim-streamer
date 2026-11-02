@@ -128,6 +128,8 @@ internal sealed class CinemachineShotRig : IDisposable
         internal readonly NativeFreeLookProfiles Elevation;
         internal readonly ShotCompositionPolicy Placement = new ShotCompositionPolicy();
         internal readonly ShotTrajectoryPolicy Trajectory = new ShotTrajectoryPolicy();
+        internal readonly ActorSpatialPlanner Spatial = new ActorSpatialPlanner();
+        internal Vector3 PresentedSpatialOffset;
         internal readonly Transform TrackingPoint, AimPoint;
         internal readonly List<PlayerShotVisibility.Subject> Subjects = new List<PlayerShotVisibility.Subject>(6);
         internal ShotScale Scale = ShotScale.Full;
@@ -446,8 +448,7 @@ internal sealed class CinemachineShotRig : IDisposable
                     candidate.AnchorVelocity = Vector3.zero;
                     if (!IsScenic && !candidate.Observational && !candidate.PassBy)
                     {
-                        candidate.Trajectory.Synchronize(ToCore(lastPresentedAnchor), true);
-                        candidate.TrajectoryState = candidate.Trajectory.Preview(0);
+                        SynchronizeActorTrajectory(candidate, lastPresentedAnchor, candidate.PresentedSpatialOffset);
                     }
                     candidate.Camera.ForceCameraPosition(position, rotation);
                     candidate.TrajectoryReason = "retaining a readable live viewpoint";
@@ -574,7 +575,11 @@ internal sealed class CinemachineShotRig : IDisposable
         else renderedVelocity = Vector3.zero;
         if (retainedReadablePose) lastAimAnchor += focus - lastPoseFocus;
         lastPosition = position; lastPoseFocus = focus; lastPoseAt = now;
-        if (!retainedReadablePose) lastPresentedAnchor = candidate.TrackingPoint.position;
+        if (!retainedReadablePose)
+        {
+            lastPresentedAnchor = candidate.TrackingPoint.position;
+            candidate.PresentedSpatialOffset = candidate.Spatial.Offset;
+        }
         lastAnchorVelocity = retainedReadablePose ? Vector3.zero : candidate.AnchorVelocity;
         lastAimAnchor = retainedReadablePose ? lastAimAnchor : chosen.ReferenceLookAt;
         if (!retainedReadablePose && (pictureCut || lastScale != candidate.Scale || choice != previousChoice || lastRole != director.Intent.Role)) pictureRevision++;
@@ -604,6 +609,7 @@ internal sealed class CinemachineShotRig : IDisposable
             $"readable {LastPictureUsable}; recovery search {(recoverySearch ? "expanded" : "normal")}; {lastView.Picture(IsScenic).Reason}; " +
             $"trajectory {(candidate.PassBy ? "world-fixed pass-by" : candidate.Observational ? "native screen/depth body" : IsScenic ? "authored world path" : candidate.TrajectoryState.Mode.ToString())}; anchor lag {(IsScenic || candidate.Observational || candidate.PassBy ? 0 : candidate.TrajectoryState.Lag):F1}m / speed {lastAnchorVelocity.magnitude:F1}m/s; " +
             $"rendered camera {renderedVelocity.magnitude:F1}m/s / subject {velocity.magnitude:F1}m/s; {candidate.TrajectoryReason}; " +
+            (IsScenic || candidate.Observational || candidate.PassBy ? "" : candidate.Spatial.Diagnostics + "; ") +
             $"aim damping {settings.AimDamping.Value:F1}s / dead zone {settings.DeadZone.Value:F2}; " +
             $"placement requested ({candidate.Composition.DesiredX:F2},{candidate.Composition.DesiredY:F2}), applied ({candidate.PresentedScreen.x:F2},{candidate.PresentedScreen.y:F2}), " +
             (IsScenic ? $"environmental focus visible {lastView.PrimaryInFrame}; foreground {lastView.ForegroundOcclusion:F2}; survey complete {lastView.SurveyComplete}; " :
@@ -794,6 +800,7 @@ internal sealed class CinemachineShotRig : IDisposable
         bool moveCarrier, string failure, out Vector3 position, out Quaternion rotation, out float fov)
     {
         position = lastPosition; rotation = lastRotation; fov = lastFov;
+        RollBackActorGuidance();
         if (!hasPose || fallbackSince >= 0 && now - fallbackSince > 0.75f ||
             !PositionSupported(position, focus, continuous, moveCarrier)) return Fail(failure);
         var viewed = previousChoice >= 0 ? candidates[previousChoice].Subjects : primaryOnly;
@@ -853,7 +860,8 @@ internal sealed class CinemachineShotRig : IDisposable
         candidate.BodySeedPosition = displayed ? lastPosition : candidate.Camera.PreviousStateIsValid
             ? candidate.Camera.State.GetFinalPosition() : focus + Offset(PassByIndex, NeutralMotion(), settings, confined);
         candidate.OrbitNeedsSeed = !candidate.PassBy;
-        candidate.Trajectory.Reset(); candidate.Placement.Reset(); candidate.Elevation.Reset(); candidate.Framing.ResetFraming();
+        candidate.Trajectory.Reset(); candidate.Spatial.Reset(); candidate.PresentedSpatialOffset = Vector3.zero;
+        candidate.Placement.Reset(); candidate.Elevation.Reset(); candidate.Framing.ResetFraming();
         candidate.TrajectoryFrame = -1; candidate.TrajectoryAt = -1;
         candidate.Camera.PreviousStateIsValid = false;
         candidate.RelaxUntil = candidate.RecoveryFovUntil = 0;
@@ -917,8 +925,15 @@ internal sealed class CinemachineShotRig : IDisposable
             candidate.TrajectoryState = candidate.Trajectory.Preview(0);
             candidate.OrbitNeedsSeed = false;
         }
-        candidate.TrackingPoint.position = FromCore(candidate.TrajectoryState.Anchor);
-        candidate.AnchorVelocity = FromCore(candidate.TrajectoryState.Velocity);
+        if (candidate.TrajectoryState.WasReset) candidate.Spatial.Reset();
+        if (index == previousChoice && hasPose)
+            candidate.Spatial.Update(now, elapsed, context, candidate.Subjects, candidate.Trajectory,
+                lastPosition, lastRotation, lastPoseFocus, lastPresentedAnchor, focus, lastFov, Aspect, NearClipPlane,
+                space, visibility, roomConfiner, settings.PredictiveShots.Value && !EditorialHold &&
+                lastSucceeded && PresentationConfirmed && transitionElapsed >= transitionSeconds);
+        else candidate.Spatial.Suspend("spatial horizon waiting for this shot to be displayed");
+        candidate.TrackingPoint.position = FromCore(candidate.TrajectoryState.Anchor) + candidate.Spatial.Offset;
+        candidate.AnchorVelocity = FromCore(candidate.TrajectoryState.Velocity) + candidate.Spatial.Velocity;
         if (candidate.TrajectoryState.WasReset) candidate.PreviousAnchor = candidate.TrackingPoint.position;
         candidate.TrajectoryReason = candidate.TrajectoryBlocked ? "anchor waiting for clear path" :
             framingPressure > 0.2f ? "bounded framing correction" : "independent world trajectory";
@@ -1376,7 +1391,8 @@ internal sealed class CinemachineShotRig : IDisposable
         candidate.ObservationSettingFov = settings.FieldOfView.Value;
         candidate.Observational = requested; candidate.ObservationToken++;
         candidate.ObservationNeedsSeed = requested; candidate.OrbitNeedsSeed = !requested;
-        candidate.Observation.Suspend(); candidate.Elevation.Reset(); candidate.Trajectory.Reset(); candidate.Placement.Reset();
+        candidate.Observation.Suspend(); candidate.Elevation.Reset(); candidate.Trajectory.Reset(); candidate.Spatial.Reset();
+        candidate.PresentedSpatialOffset = Vector3.zero; candidate.Placement.Reset();
         candidate.TrajectoryFrame = -1; candidate.TrajectoryAt = -1; candidate.TrajectoryBlocked = false;
         candidate.Camera.PreviousStateIsValid = false;
         candidate.Framing.ResetFraming();
@@ -1489,7 +1505,8 @@ internal sealed class CinemachineShotRig : IDisposable
         }
         else
         {
-            future = candidate.PassBy ? position : position + FromCore(candidate.Trajectory.PreviewCoverage(seconds).Anchor) - candidate.TrackingPoint.position;
+            future = candidate.PassBy ? position : position + FromCore(candidate.Trajectory.PreviewCoverage(seconds).Anchor) +
+                candidate.Spatial.Offset - candidate.TrackingPoint.position;
             predictedFocus = focus + velocity * seconds;
             for (int i = 0; i < candidate.Subjects.Count && i < context.Subjects.Count; i++)
             {
@@ -1585,7 +1602,7 @@ internal sealed class CinemachineShotRig : IDisposable
         var shotSubjects = candidate.Subjects;
         Vector3 anchor = candidate.TrackingPoint.position;
         Vector3 wanted = lastPosition + anchor - lastPresentedAnchor;
-        Vector3 future = wanted + FromCore(candidate.Trajectory.Preview(0.75).Anchor) - anchor;
+        Vector3 future = wanted + FromCore(candidate.Trajectory.Preview(0.75).Anchor) + candidate.Spatial.Offset - anchor;
         Vector3 predictedFocus = focus + velocity * 0.75f;
         futureSubjects.Clear();
         for (int i = 0; i < shotSubjects.Count && i < context.Subjects.Count; i++)
@@ -1607,8 +1624,8 @@ internal sealed class CinemachineShotRig : IDisposable
             // Roll the plan back as well as its helper transform. Otherwise the
             // hidden planner could run far ahead and jump when clearance returns.
             Vector3 acceptedAnchor = index == previousChoice ? lastPresentedAnchor : candidate.PreviousAnchor;
-            candidate.Trajectory.Synchronize(ToCore(acceptedAnchor), true);
-            candidate.TrajectoryState = candidate.Trajectory.Preview(0);
+            SynchronizeActorTrajectory(candidate, acceptedAnchor,
+                index == previousChoice ? candidate.PresentedSpatialOffset : candidate.Spatial.Offset);
             candidate.TrackingPoint.position = acceptedAnchor;
             candidate.TrajectoryReason = "holding world anchor for clearance";
             if (!candidate.TrajectoryBlocked) NoteCorrection(now);
@@ -1843,9 +1860,30 @@ internal sealed class CinemachineShotRig : IDisposable
 
     private bool Fail(string reason)
     {
+        RollBackActorGuidance();
         visiblePlayers.Clear(); lastSucceeded = LastPictureUsable = lastCuePresented = false; PictureContext = default; LastFailure = reason;
         Diagnostics = "Procedural camera: " + reason;
         return false;
+    }
+
+    private static void SynchronizeActorTrajectory(Candidate candidate, Vector3 acceptedAnchor, Vector3 acceptedOffset)
+    {
+        candidate.Spatial.Reject(acceptedOffset);
+        // Keep nominal trajectory and avoidance offset distinct. Feeding the
+        // composed anchor into the nominal policy would accumulate the offset
+        // again on the next frame and defeat rollback/continuity.
+        candidate.Trajectory.Synchronize(ToCore(acceptedAnchor - acceptedOffset), true);
+        candidate.TrajectoryState = candidate.Trajectory.Preview(0);
+        candidate.TrackingPoint.position = acceptedAnchor;
+        candidate.AnchorVelocity = Vector3.zero;
+    }
+
+    private void RollBackActorGuidance()
+    {
+        if (IsScenic || !hasPose || previousChoice < 0 || candidates[previousChoice] == null) return;
+        Candidate candidate = candidates[previousChoice];
+        if (!candidate.Observational && !candidate.PassBy)
+            SynchronizeActorTrajectory(candidate, lastPresentedAnchor, candidate.PresentedSpatialOffset);
     }
 
     internal void Reset() => Reset(false);
@@ -1862,6 +1900,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 if (candidate != null && candidate.Camera)
                 {
                     candidate.Camera.PreviousStateIsValid = false; candidate.Placement.Reset(); candidate.Trajectory.Reset();
+                    candidate.Spatial.Reset(); candidate.PresentedSpatialOffset = Vector3.zero;
                     candidate.Dolly.Reset(); candidate.Observation.Reset(); candidate.Elevation.Reset(); candidate.Framing.ResetFraming();
                     candidate.PassBy = false;
                     candidate.Observational = candidate.ObservationNeedsSeed = candidate.OrbitNeedsSeed = candidate.ObservationComposition = false;

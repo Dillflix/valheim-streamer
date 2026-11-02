@@ -27,6 +27,7 @@ internal sealed class ScenicCameraRig : IDisposable
     internal bool MovementAccepted { get; private set; }
     internal float PresentedProgress => hasPose ? accepted.Progress : 0;
     internal long PresentedPlanId => hasPose ? plan?.Id ?? 0 : 0;
+    internal Vector3? PresentedFocus => hasPose && LastPictureUsable ? accepted.Focus : (Vector3?)null;
     internal ScenicRejectionKind FailureKind { get; private set; }
     internal string LastFailure { get; private set; } = "Awaiting a directed scenic shot";
     internal string Diagnostics { get; private set; } = "Scenic director: awaiting a prepared shot";
@@ -67,6 +68,7 @@ internal sealed class ScenicCameraRig : IDisposable
             // large discontinuity must be prepared as a new cut, not accelerated
             // through an unexamined slice of the path in one rendered frame.
             if (Vector3.Distance(accepted.Position, wanted.Position) > 1.5f ||
+                shot.IsSpatial && progress >= accepted.Progress && path.SpatialTravelBetween(accepted.Progress, progress) > .75f ||
                 Quaternion.Angle(accepted.Rotation, wanted.Rotation) > 6f || progress < accepted.Progress - .0001f)
             { safe = false; failure = ScenicRejectionKind.SamplingBudget; reason = "Scenic proposal exceeds one continuous movement step"; }
             else safe = ScenicPoseValidation.Corridor(accepted, wanted, visibility, aspect, nearClip, out failure, out reason);

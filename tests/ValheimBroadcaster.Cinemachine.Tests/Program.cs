@@ -60,6 +60,7 @@ internal static class Program
         yield return ("Measured native scenic sections preserve validated body endpoints and original endpoint aims", MeasuredNativeSection);
         yield return ("Measured scenic section proposals preserve authored ownership and reject invalid ranges", MeasuredSectionValidation);
         foreach (var test in FoliageGeometryTests.Cases()) yield return test;
+        foreach (var test in SpatialTrajectoryMathTests.Cases()) yield return test;
     }
 
     private static ScenicShotPlan Plan(ScenicShotStyle style = ScenicShotStyle.Arc, long id = 4,

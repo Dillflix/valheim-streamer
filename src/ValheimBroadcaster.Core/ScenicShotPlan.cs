@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace ValheimBroadcaster.Core
 {
@@ -16,6 +17,9 @@ namespace ValheimBroadcaster.Core
         /// supplies its camera position.</summary>
         public ScenicShotSample WithCameraPosition(AutonomyPosition camera) =>
             new ScenicShotSample(camera, AimPosition, ScreenX, ScreenY, Phase);
+
+        public ScenicShotSample WithAimPosition(AutonomyPosition aim) =>
+            new ScenicShotSample(CameraPosition, aim, ScreenX, ScreenY, Phase);
     }
 
     /// <summary>
@@ -42,10 +46,14 @@ namespace ValheimBroadcaster.Core
         /// and the authored aim sweep. A planning hint, not rendered evidence.</summary>
         public double VisualChange { get; }
         public ScenicFeature? Feature { get; }
+        public bool IsSpatial => spatialBody != null;
+        public int WaypointCount => spatialBody?.Length ?? 0;
         private readonly AutonomyPosition start, end, offset;
         private readonly AutonomyPosition cameraStart, cameraEnd, cameraControl;
         private readonly bool curved;
         private readonly float screenX, screenY;
+        private readonly AutonomyPosition[]? spatialBody, spatialAim;
+        private readonly double[]? spatialDistance;
 
         public ScenicShotPlan(long id, ScenicShotStyle style, AutonomyPosition aimStart,
             AutonomyPosition aimEnd, AutonomyPosition cameraOffset, float screenX = 0, float screenY = 0.08f)
@@ -105,6 +113,91 @@ namespace ValheimBroadcaster.Core
             new ScenicShotPlan(id, feature, role, cameraStart, cameraEnd, aimStart, aimEnd,
                 fieldOfView, screenX, screenY, cameraControl, useNativeSpline);
 
+        /// <summary>A finite route through measured viewpoints. Points and aims
+        /// are copied, so planning buffers cannot alter an on-air trajectory.
+        /// This defines a proposal: native spline smoothing and all intervening
+        /// poses still need complete acquisition and live validation.</summary>
+        public static ScenicShotPlan Spatial(long id, ScenicFeature feature, ScenicShotRole role,
+            IReadOnlyList<AutonomyPosition> cameraPoints, IReadOnlyList<AutonomyPosition> aimPoints,
+            float fov, float screenX = 0, float screenY = -.04f, bool useNativeSpline = true) =>
+            new ScenicShotPlan(id, feature, role, cameraPoints, aimPoints, fov, screenX, screenY, useNativeSpline);
+
+        private ScenicShotPlan(long id, ScenicFeature feature, ScenicShotRole role,
+            IReadOnlyList<AutonomyPosition> body, IReadOnlyList<AutonomyPosition> aims,
+            float fov, float x, float y, bool useNativeSpline)
+        {
+            if (id <= 0) throw new ArgumentOutOfRangeException(nameof(id));
+            if (feature == null) throw new ArgumentNullException(nameof(feature));
+            if (body == null || aims == null) throw new ArgumentNullException(nameof(body));
+            if (body.Count < 2 || body.Count > 16 || aims.Count != body.Count)
+                throw new ArgumentOutOfRangeException(nameof(body), "Spatial routes require 2–16 paired body/aim points.");
+            if (!Enum.IsDefined(typeof(ScenicShotRole), role) || !Finite(fov) || fov < 30 || fov > 110 ||
+                !Finite(x) || !Finite(y) || Math.Abs(x) > .2 || Math.Abs(y) > .2)
+                throw new ArgumentOutOfRangeException(nameof(fov));
+            spatialBody = new AutonomyPosition[body.Count]; spatialAim = new AutonomyPosition[body.Count];
+            spatialDistance = new double[body.Count];
+            for (int i = 0; i < body.Count; i++)
+            {
+                spatialBody[i] = body[i]; spatialAim[i] = aims[i];
+            }
+            for (int i = 0; i < spatialBody.Length; i++)
+            {
+                if (i > 0)
+                {
+                    double segment = spatialBody[i - 1].Distance(spatialBody[i]);
+                    if (segment < .05 || segment > 40)
+                        throw new ArgumentOutOfRangeException(nameof(body), "Spatial camera segments must have distinct, locally reachable endpoints.");
+                    spatialDistance[i] = spatialDistance[i - 1] + segment;
+                }
+            }
+            TravelMetres = spatialDistance[body.Count - 1];
+            if (TravelMetres < 1 || TravelMetres > 80)
+                throw new ArgumentOutOfRangeException(nameof(body), "Spatial movement must remain meaningful and bounded.");
+            Id = id; IsDirected = true; Feature = feature; FeatureId = feature.Id; FeatureKind = feature.Kind; Role = role;
+            UseNativeSpline = useNativeSpline; FieldOfView = fov; screenX = x; screenY = y;
+            Style = role == ScenicShotRole.Reveal ? ScenicShotStyle.Reveal : role == ScenicShotRole.Detail ? ScenicShotStyle.Approach : ScenicShotStyle.Lateral;
+            cameraStart = spatialBody[0]; cameraEnd = spatialBody[spatialBody.Length - 1]; cameraControl = Midpoint(cameraStart, cameraEnd);
+            start = spatialAim[0]; end = spatialAim[spatialAim.Length - 1];
+            // Reject pathological proposed look directions early. The adapter
+            // repeats this requirement on the actual native curve adaptively.
+            for (int segment = 0; segment < body.Count - 1; segment++)
+            for (int sample = 0; sample <= 16; sample++)
+            {
+                double u = (spatialDistance[segment] + sample / 16d *
+                    (spatialDistance[segment + 1] - spatialDistance[segment])) / TravelMetres;
+                AutonomyPosition p = Body(u), a = Aim(u);
+                double reach = p.Distance(a);
+                if (reach < 2 || reach > 180 || p.HorizontalDistance(a) < .75)
+                    throw new ArgumentOutOfRangeException(nameof(aims), "Spatial routes need a finite, separated environmental aim.");
+            }
+            VisualChange = EstimateVisualChange();
+            double speed = role == ScenicShotRole.Detail ? .7 : role == ScenicShotRole.Establish ? 1.35 : 1.1;
+            double visualSeconds = VisualChange / (role == ScenicShotRole.Detail ? .035 : .045);
+            DurationSeconds = Math.Max(8, Math.Min(30, Math.Max(TravelMetres / speed, visualSeconds)));
+        }
+
+        public AutonomyPosition CameraWaypoint(int index) => spatialBody != null && index >= 0 && index < spatialBody.Length
+            ? spatialBody[index] : throw new ArgumentOutOfRangeException(nameof(index));
+        public AutonomyPosition AimWaypoint(int index) => spatialAim != null && index >= 0 && index < spatialAim.Length
+            ? spatialAim[index] : throw new ArgumentOutOfRangeException(nameof(index));
+
+        /// <summary>Normalized distance to a measured viewpoint in the authored
+        /// polyline. Native solvers remap their own segment lengths onto these
+        /// intervals so body and aim reach their paired endpoints together.</summary>
+        public double WaypointFraction(int index) => spatialDistance != null && index >= 0 && index < spatialDistance.Length
+            ? spatialDistance[index] / TravelMetres : throw new ArgumentOutOfRangeException(nameof(index));
+
+        /// <summary>Sample the aim by route distance, without applying the time
+        /// profile a second time. The native solver uses this after remapping
+        /// native curve distance to the authored viewpoint interval.</summary>
+        public AutonomyPosition RouteAimAt(double fraction)
+        {
+            if (!IsDirected) throw new InvalidOperationException("Only directed routes have an authored distance aim.");
+            if (double.IsNaN(fraction) || double.IsInfinity(fraction) || fraction < 0 || fraction > 1)
+                throw new ArgumentOutOfRangeException(nameof(fraction));
+            return Aim(fraction);
+        }
+
         /// <summary>Restrict a route to its useful prefix. This is a new route
         /// definition and must pass native-curve/visibility validation again.</summary>
         public ScenicShotPlan Trim(double endFraction) => Slice(0, endFraction);
@@ -122,6 +215,19 @@ namespace ValheimBroadcaster.Core
             if (double.IsNaN(endFraction) || double.IsInfinity(endFraction) || endFraction <= startFraction || endFraction > 1)
                 throw new ArgumentOutOfRangeException(nameof(endFraction));
             double from = ScenicMotionProfile.Progress(startFraction), to = ScenicMotionProfile.Progress(endFraction);
+            if (IsSpatial)
+            {
+                var body = new List<AutonomyPosition>(WaypointCount) { Body(from) };
+                var aims = new List<AutonomyPosition>(WaypointCount) { Aim(from) };
+                for (int i = 1; i < WaypointCount - 1; i++)
+                {
+                    double point = spatialDistance![i] / TravelMetres;
+                    if (point > from + .000001 && point < to - .000001)
+                    { body.Add(spatialBody![i]); aims.Add(spatialAim![i]); }
+                }
+                body.Add(Body(to)); aims.Add(Aim(to));
+                return Spatial(Id, Feature!, Role, body, aims, FieldOfView, screenX, screenY, UseNativeSpline);
+            }
             // Quadratic blossom at (from,to) is the middle control of the
             // restricted curve. Keeping the old control would distort an
             // interior interval even if both selected endpoints were correct.
@@ -143,6 +249,12 @@ namespace ValheimBroadcaster.Core
             if (!Finite(metres) || metres < 0 || metres > 64)
                 throw new ArgumentOutOfRangeException(nameof(metres));
             if (metres == 0) return this;
+            if (IsSpatial)
+            {
+                var body = new AutonomyPosition[WaypointCount];
+                for (int i = 0; i < body.Length; i++) body[i] = Raised(spatialBody![i], metres);
+                return Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline);
+            }
             return Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
                 start, end, FieldOfView, screenX, screenY,
                 curved ? Raised(cameraControl, metres) : (AutonomyPosition?)null, UseNativeSpline);
@@ -162,7 +274,7 @@ namespace ValheimBroadcaster.Core
                 // Runtime strength alters the caller's progress clock, never
                 // the geometry which passed acquisition validation.
                 double u = dynamic && strength > 0 ? ease : 0;
-                return new ScenicShotSample(Body(u), Lerp(start, end, u), screenX, screenY,
+                return new ScenicShotSample(Body(u), Aim(u), screenX, screenY,
                     !dynamic || strength == 0 ? "Holding directed composition" : t < .08 ? "Entering" : t > .92 ? "Completing" : "Developing " + Role);
             }
             double move = dynamic ? ease * Math.Min(1.5, strength) : 0;
@@ -207,11 +319,33 @@ namespace ValheimBroadcaster.Core
 
         private AutonomyPosition Body(double u)
         {
+            if (IsSpatial)
+            {
+                int segment = SpatialSegment(u, out double fraction);
+                return Lerp(spatialBody![segment], spatialBody[segment + 1], fraction);
+            }
             if (!curved) return Lerp(cameraStart, cameraEnd, u);
             double a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
             return Position(a * cameraStart.X + b * cameraControl.X + c * cameraEnd.X,
                 a * cameraStart.Y + b * cameraControl.Y + c * cameraEnd.Y,
                 a * cameraStart.Z + b * cameraControl.Z + c * cameraEnd.Z);
+        }
+        private AutonomyPosition Aim(double u)
+        {
+            if (!IsSpatial) return Lerp(start, end, u);
+            int segment = SpatialSegment(u, out double fraction);
+            // Bounded C1 interpolation avoids an abrupt pan at a waypoint and
+            // cannot overshoot the measured aim endpoints.
+            double eased = fraction * fraction * (3 - 2 * fraction);
+            return Lerp(spatialAim![segment], spatialAim[segment + 1], eased);
+        }
+        private int SpatialSegment(double u, out double fraction)
+        {
+            double distance = Math.Max(0, Math.Min(1, u)) * TravelMetres;
+            int segment = 0;
+            while (segment < WaypointCount - 2 && distance > spatialDistance![segment + 1]) segment++;
+            fraction = (distance - spatialDistance![segment]) / (spatialDistance[segment + 1] - spatialDistance[segment]);
+            return segment;
         }
         private static AutonomyPosition Lerp(AutonomyPosition a, AutonomyPosition b, double u) =>
             Position(a.X + (b.X - a.X) * u, a.Y + (b.Y - a.Y) * u, a.Z + (b.Z - a.Z) * u);
@@ -223,10 +357,15 @@ namespace ValheimBroadcaster.Core
             double value = 0;
             AutonomyPosition a = cameraStart, targetA = start;
             double tangent = Math.Tan(FieldOfView * Math.PI / 360);
-            for (int i = 1; i <= 16; i++)
+            int samples = IsSpatial ? (WaypointCount - 1) * 8 : 16;
+            for (int i = 1; i <= samples; i++)
             {
-                double u = i / 16d;
-                AutonomyPosition b = Body(u), targetB = Lerp(start, end, u);
+                // Include each measured turn even when it lies on a short leg;
+                // a global fixed grid can skip it and undercount development.
+                int segment = IsSpatial ? (i - 1) / 8 : 0;
+                double u = IsSpatial ? (spatialDistance![segment] + ((i - 1) % 8 + 1) / 8d *
+                    (spatialDistance[segment + 1] - spatialDistance[segment])) / TravelMetres : i / 16d;
+                AutonomyPosition b = Body(u), targetB = Aim(u);
                 double distance = Math.Max(2, a.Distance(targetA));
                 double dx = targetA.X - a.X, dy = targetA.Y - a.Y, dz = targetA.Z - a.Z;
                 double mx = b.X - a.X, my = b.Y - a.Y, mz = b.Z - a.Z;

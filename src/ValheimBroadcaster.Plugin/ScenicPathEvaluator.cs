@@ -172,9 +172,11 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private float aspect, nearClip, minimumScore, surveyWaitSeconds;
     private float surveyWaitStarted = float.NegativeInfinity;
     private int samples;
+    private long sceneEpoch;
     internal bool Complete { get; private set; }
     internal bool Accepted { get; private set; }
     internal ScenicShotPlan? EvaluatedPlan => plan;
+    internal long SceneEpoch => sceneEpoch;
     internal float Score => hasPrevious ? minimumScore : 0;
     internal float ValidatedFraction { get; private set; }
     internal ScenicRouteWindow ReadableWindow => window;
@@ -187,6 +189,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     internal void Begin(ScenicShotPlan source, ScenicVisibility survey, float cameraAspect, float cameraNearClip, bool moveObserver)
     {
         Reset(); plan = source; visibility = survey; aspect = cameraAspect; nearClip = cameraNearClip; moveCarrier = moveObserver;
+        sceneEpoch = CameraSpatialScene.Shared.Epoch;
         if (!source.IsDirected || !Finite(aspect) || aspect <= 0 || !Finite(nearClip) || nearClip <= 0 || !path.Prepare(source, 1))
         { Fail(ScenicRejectionKind.InvalidPlan, "Unable to prepare the directed native scenic route"); return; }
         // A minimum of 16 intervals limits unsampled curvature, aim and foliage
@@ -199,6 +202,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
     {
         if (sampleBudget < 1 || sampleBudget > 64) throw new ArgumentOutOfRangeException(nameof(sampleBudget));
         if (Complete || plan == null || visibility == null) return Complete;
+        if (sceneEpoch != CameraSpatialScene.Shared.Epoch)
+        { Fail(ScenicRejectionKind.Geometry, "Scenic scene changed during route validation; discard mixed spatial evidence"); return true; }
         for (int i = 0; i < sampleBudget && pending.Count > 0; i++)
         {
             if (++samples > MaximumSamples) { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route exceeds bounded survey effort"); return true; }
@@ -209,6 +214,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 !Finite(pose.Rotation.z) || !Finite(pose.Rotation.w))
             { Fail(ScenicRejectionKind.InvalidPlan, "Native scenic solver returned a non-finite pose"); return true; }
             if (hasPrevious && (Vector3.Distance(previous.Position, pose.Position) > .75f ||
+                plan.IsSpatial && path.SpatialTravelBetween(previous.Progress, fraction) > .75f ||
                 Vector3.Distance(previous.Focus, pose.Focus) > 1f || Quaternion.Angle(previous.Rotation, pose.Rotation) > 3f))
             {
                 if (fraction - previous.Progress < .0001f)
@@ -307,12 +313,24 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private void StartPass()
     {
         pending.Clear(); hasPrevious = previousReadable = false; fitLift = 0;
-        for (int i = 16; i >= 0; i--) pending.Push(i / 16f);
+        var boundaries = new List<float>(33);
+        for (int i = 0; i <= 16; i++) boundaries.Add(i / 16f);
+        // Uniform time samples alone can miss a short turn or an out-and-back
+        // corridor whose endpoints are close. Include every measured knot in
+        // the same native distance mapping used on air; adaptive subdivision
+        // above also bounds traveled arc length rather than just its chord.
+        if (plan!.IsSpatial)
+            for (int i = 0; i < plan.WaypointCount; i++) boundaries.Add(path.WaypointProgress(i));
+        boundaries.Sort();
+        float last = float.NaN;
+        for (int i = boundaries.Count - 1; i >= 0; i--)
+            if (boundaries[i] != last) { pending.Push(boundaries[i]); last = boundaries[i]; }
     }
     internal void Reset()
     {
         pending.Clear(); path.Reset(); solver.Reset(); plan = null; visibility = null;
         Complete = Accepted = hasPrevious = false; minimumScore = ValidatedFraction = 0; samples = 0;
+        sceneEpoch = 0;
         fitting = false; fitLift = totalLift = 0; fitPasses = 0;
         routeRejected = previousReadable = false; measuredTravel = 0; SuggestedCanopyLift = 0; window.Reset();
         surveyWaitSeconds = 0; surveyWaitStarted = float.NegativeInfinity;

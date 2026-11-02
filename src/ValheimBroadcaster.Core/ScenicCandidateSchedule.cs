@@ -25,6 +25,11 @@ namespace ValheimBroadcaster.Core
             return Math.Min(MaximumAttempts, roles * 8);
         }
 
+        /// <summary>Spatial search explores viewpoints inside each role itself;
+        /// repeat azimuth passes would only repeat the same measured search.</summary>
+        public static int SpatialAttemptLimit(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound)
+        { Validate(features, currentIndex, searchRound); return RolesPerPass(features, currentIndex, searchRound); }
+
         public static Candidate Select(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound, int attempt)
         {
             int limit = AttemptLimit(features, currentIndex, searchRound);
@@ -34,7 +39,7 @@ namespace ValheimBroadcaster.Core
             for (int slot = 0; slot < count; slot++)
             {
                 int feature = FeatureIndex(features.Count, currentIndex, searchRound, slot);
-                int roleCount = RoleCount(features[feature].Kind);
+                int roleCount = RoleCount(features[feature]);
                 if (offset < roleCount)
                     return new Candidate(feature, offset, (searchRound + pass + offset * 2) % 8);
                 offset -= roleCount;
@@ -42,15 +47,40 @@ namespace ValheimBroadcaster.Core
             throw new InvalidOperationException("Scenic candidate schedule is inconsistent.");
         }
 
-        public static ScenicShotRole Role(ScenicFeatureKind kind, ScenicShotRole preferred, int index)
+        /// <summary>Give each observed subject its preferred role before
+        /// spending the spatial survey budget on another role of one subject.
+        /// A failing aggregate must not consume recovery with four consecutive
+        /// searches while a nearby building or coastline remains unexamined.</summary>
+        public static Candidate SelectSpatial(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound, int attempt)
         {
-            if (!Enum.IsDefined(typeof(ScenicShotRole), preferred) || index < 0 || index >= RoleCount(kind))
+            int limit = SpatialAttemptLimit(features, currentIndex, searchRound);
+            if (attempt < 0 || attempt >= limit) throw new ArgumentOutOfRangeException(nameof(attempt));
+            int count = Math.Min(MaximumFeaturesPerSearch, features.Count), offset = attempt;
+            for (int role = 0; role < 4; role++)
+            for (int slot = 0; slot < count; slot++)
+            {
+                int feature = FeatureIndex(features.Count, currentIndex, searchRound, slot);
+                if (role >= RoleCount(features[feature])) continue;
+                if (offset-- == 0) return new Candidate(feature, role, 0);
+            }
+            throw new InvalidOperationException("Spatial candidate schedule is inconsistent.");
+        }
+
+        public static ScenicShotRole Role(ScenicFeatureKind kind, ScenicShotRole preferred, int index)
+            => RoleForCount(RoleCount(kind), preferred, index);
+
+        public static ScenicShotRole Role(ScenicFeature feature, ScenicShotRole preferred, int index)
+            => RoleForCount(RoleCount(feature), preferred, index);
+
+        private static ScenicShotRole RoleForCount(int count, ScenicShotRole preferred, int index)
+        {
+            if (!Enum.IsDefined(typeof(ScenicShotRole), preferred) || index < 0 || index >= count)
                 throw new ArgumentOutOfRangeException(nameof(index));
             int seen = 0;
             for (int step = 0; step < 4; step++)
             {
                 var role = (ScenicShotRole)(((int)preferred + step) % 4);
-                if (role == ScenicShotRole.Detail && RoleCount(kind) == 3) continue;
+                if (role == ScenicShotRole.Detail && count == 3) continue;
                 if (seen++ == index) return role;
             }
             throw new InvalidOperationException("No applicable scenic role.");
@@ -59,11 +89,18 @@ namespace ValheimBroadcaster.Core
         public static int RoleCount(ScenicFeatureKind kind) =>
             kind == ScenicFeatureKind.Rock || kind == ScenicFeatureKind.Structure ? 4 : 3;
 
+        public static int RoleCount(ScenicFeature feature)
+        {
+            if (feature == null) throw new ArgumentNullException(nameof(feature));
+            return feature.ScopeLabel == "Settlement" || feature.ScopeLabel == "District"
+                ? 3 : RoleCount(feature.Kind);
+        }
+
         private static int RolesPerPass(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound)
         {
             int roles = 0;
             for (int slot = 0; slot < Math.Min(MaximumFeaturesPerSearch, features.Count); slot++)
-                roles += RoleCount(features[FeatureIndex(features.Count, currentIndex, searchRound, slot)].Kind);
+                roles += RoleCount(features[FeatureIndex(features.Count, currentIndex, searchRound, slot)]);
             return roles;
         }
 
@@ -72,7 +109,11 @@ namespace ValheimBroadcaster.Core
             if (currentIndex >= 0 && slot == 0) return currentIndex;
             int available = count - (currentIndex >= 0 ? 1 : 0);
             int ordinal = slot - (currentIndex >= 0 ? 1 : 0);
-            int index = (searchRound * MaximumFeaturesPerSearch + ordinal) % available;
+            // A pinned current/child subject occupies one slot. Advance only
+            // by the remaining batch width, otherwise one omitted subject is
+            // skipped again at every boundary between observation sweeps.
+            int stride = MaximumFeaturesPerSearch - (currentIndex >= 0 ? 1 : 0);
+            int index = (searchRound * stride + ordinal) % available;
             return currentIndex >= 0 && index >= currentIndex ? index + 1 : index;
         }
 

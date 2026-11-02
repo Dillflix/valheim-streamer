@@ -1,5 +1,26 @@
 # Validation and runtime test record
 
+## 0.8.28 shared spatial planning
+
+Built directly from 0.8.27 (`025fe857eac396c4027d7bb1d4c98960cc6df433`). This is an architectural implementation, not a claim that the earlier scenic recordings now pass. Scenic production constructs routes from measured clear viewpoints/corridors; Player/Creature orbital coverage adds bounded adaptive future planning; construction observations supply local hierarchical context. Full native path validation, actual output evidence and observer protocol 3 remain required. No server update is required.
+
+Local validation: **757/757 core cases**, **57/57 actual native camera math cases**, and warnings-as-errors Core/client/server compilation pass. Real references remain Valheim 1.0.21 / Unity 6000 / BepInEx 5.4.23.2 / Jötunn 2.30.2, Cinemachine 3.1.7 and selected Splines 2.0.0 source. The local runner uses the SDK compiler because this host's normal MSBuild process-metadata query is unavailable; the artifact workflow performs normal builds. Tests exercise unknown/stale/disconnected space, search bounds, winding routes and slices, actual native spline distance/aim parity, adaptive actor prediction and reachable guidance, hierarchy identity/partial coverage, and parent/child sequence evidence. These are policy/math checks, not Unity physics, rendered scenes, component lifecycle or a Windows gameplay session.
+
+Runtime acceptance remains pending:
+
+| Scenario | Required observation |
+| --- | --- |
+| Recorded forest, open clearing, ridge/coast and hillside | Valid above-surface viewpoints; useful moving routes, readable subjects, fixed within-shot lens; record shot duration/recovery share across several region changes |
+| Winding path around geometry | No skipped bend, wall traversal, near-plane clipping, abrupt speed or aim discontinuity; verify native and authored comparison modes |
+| One building, extended hall, clustered village, sprawling base | Scale follows measured extent; parent/child and sibling coverage when visible; partial loaded coverage is not presented as a complete survey |
+| Add/remove construction while broadcasting | Place revision changes, future plans invalidate, active valid footage remains usable; no stale building/corridor permission |
+| Player/Creature moving straight, turning, fighting or stopping | Smooth bounded correction; predictive motion does not mirror target movement instantly, drift through walls or reset each replan |
+| Room, roof, door and exterior/interior transition | Retain native confinement/composition; short horizon in constrained space; unknown evidence cannot force a good current view into recovery |
+| Hold, mode change, travel, return, stop and reconnect | No stale plan/world reuse; correct displayed-plan proof; protocol 3 authorization and simulation isolation unchanged |
+| Long-running dense scene with RTMP audio | Measure main-thread/frame cost and cache/query diagnostics; no unbounded growth, repeated search starvation or transport regression |
+
+No local or production game installation, restart or live deployment is performed. Cinematic quality, performance and long-running behavior require the runtime evidence above.
+
 ## 0.8.27 scenic route recovery and selection
 
 Built directly from 0.8.26 (`e3d9b93114ac63c05fa8146b81727833950614d9`). The user reports most 0.8.26 shots now work, with intermittent long recovery. The supplied `14-38-21` recording lasts 14.436 seconds; recovery occupies approximately 0.050–14.419. Sampled overlays show routes91→96 accepted0, a restarted search2→14 accepted0, then travel to Meadows at about13.5s. RTMP remains publishing. The recurring reason is camera intersection with retained vegetation bounds; two samples incorrectly pair Focus with that reason. The clip does not distinguish real leaf occupancy from conservative false-positive bounds and does not show the preceding successful shots.

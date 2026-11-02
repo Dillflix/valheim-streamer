@@ -16,9 +16,13 @@ namespace ValheimBroadcaster.Core
         public float Radius { get; }
         public float Height { get; }
         public float Confidence { get; }
+        public string? ParentId { get; }
+        public string? ScopeLabel { get; }
+        public bool IsPartial { get; }
 
         public ScenicFeature(string id, ScenicFeatureKind kind, AutonomyPosition center,
-            AutonomyPosition direction, float radius, float height, float confidence)
+            AutonomyPosition direction, float radius, float height, float confidence,
+            string? parentId = null, string? scopeLabel = null, bool isPartial = false)
         {
             if (string.IsNullOrWhiteSpace(id) || id.Length > 160) throw new ArgumentOutOfRangeException(nameof(id));
             if (!Enum.IsDefined(typeof(ScenicFeatureKind), kind)) throw new ArgumentOutOfRangeException(nameof(kind));
@@ -26,7 +30,11 @@ namespace ValheimBroadcaster.Core
                 !Valid(confidence) || confidence < 0 || confidence > 1) throw new ArgumentOutOfRangeException(nameof(radius));
             double length = Math.Sqrt((double)direction.X * direction.X + (double)direction.Z * direction.Z);
             if (length < .001) throw new ArgumentOutOfRangeException(nameof(direction));
+            if (parentId != null && (string.IsNullOrWhiteSpace(parentId) || parentId.Length > 160 || parentId == id) ||
+                scopeLabel != null && (string.IsNullOrWhiteSpace(scopeLabel) || scopeLabel.Length > 64))
+                throw new ArgumentOutOfRangeException(nameof(parentId));
             Id = id; Kind = kind; Center = center; Radius = radius; Height = height; Confidence = confidence;
+            ParentId = parentId; ScopeLabel = scopeLabel; IsPartial = isPartial;
             Direction = new AutonomyPosition((float)(direction.X / length), 0, (float)(direction.Z / length));
         }
 

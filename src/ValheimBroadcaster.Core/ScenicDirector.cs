@@ -151,6 +151,7 @@ namespace ValheimBroadcaster.Core
             if (count == 0) return ScenicShotRole.Establish;
             if (count == 1) return feature.Kind == ScenicFeatureKind.Ridge || feature.Kind == ScenicFeatureKind.Clearing
                 ? ScenicShotRole.Reveal : ScenicShotRole.Traverse;
+            if (feature.ScopeLabel == "Settlement" || feature.ScopeLabel == "District") return ScenicShotRole.Reveal;
             return feature.Kind == ScenicFeatureKind.Rock || feature.Kind == ScenicFeatureKind.Structure
                 ? ScenicShotRole.Detail : ScenicShotRole.Reveal;
         }
@@ -192,14 +193,25 @@ namespace ValheimBroadcaster.Core
                     if (shown.Plan.Role == plan.Role) score -= .16;
                     if (EquivalentView(shown.Plan, plan)) score -= .35;
                 }
-                else if (shown.Plan.Feature!.Center.Distance(plan.Feature.Center) < Math.Max(8, Math.Min(shown.Plan.Feature.Radius, plan.Feature.Radius)))
+                else if (!Related(shown.Plan.Feature!, plan.Feature) && shown.Plan.Feature!.Center.Distance(plan.Feature.Center) < Math.Max(8, Math.Min(shown.Plan.Feature.Radius, plan.Feature.Radius)))
                     score -= .12;
             }
             if (plan.Role == PreferredRole(plan.Feature)) score += .12;
             if (Current?.FeatureId == plan.FeatureId && sameFeature > 0 && sameFeature < 3) score += .1;
+            if (Current != null && ElapsedSeconds >= 2 && sameFeature == 0)
+            {
+                if (plan.Feature.ParentId == Current.FeatureId) score += .24;
+                else if (plan.Feature.ParentId != null && plan.Feature.ParentId == Current.Feature!.ParentId) score += .1;
+            }
+            // A partial observation is usable as a local composition, but must
+            // not win the editorial comparison by pretending to show a whole base.
+            if (plan.Feature.IsPartial && plan.Role == ScenicShotRole.Establish) score -= .06;
             if (sameFeature >= 3) score -= .6;
             return score;
         }
+
+        private static bool Related(ScenicFeature a, ScenicFeature b) =>
+            a.ParentId == b.Id || b.ParentId == a.Id || a.ParentId != null && a.ParentId == b.ParentId;
 
         private int RecentCount(string featureId)
         {

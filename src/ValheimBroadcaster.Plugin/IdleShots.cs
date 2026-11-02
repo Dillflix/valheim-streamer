@@ -51,8 +51,8 @@ internal sealed class IdleShots
         scenic.TickSearch(settings, moveCarrier, held, allowActivate);
     internal Vector3 ScenicFocus(float fraction) => scenic.Focus(fraction);
     internal bool ViewClear(Vector3 camera, Vector3 focus, float fov) => scenic.Visibility.Clear(camera, focus, fov, out _);
-    internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held) =>
-        scenic.Observe(ready, usable, planId, progress, blocked, held, reason);
+    internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held, Vector3? actualFocus) =>
+        scenic.Observe(ready, usable, planId, progress, blocked, held, reason, actualFocus);
     internal void UpdateRecovery(bool onAir, bool usableLive, long planId, bool held) =>
         scenic.UpdateRecovery(onAir, usableLive, planId, held);
 

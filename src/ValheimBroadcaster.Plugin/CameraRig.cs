@@ -38,6 +38,7 @@ internal sealed class CameraRig
     internal bool ScenicMovementAccepted => scenicActive && scenicCamera.MovementAccepted;
     internal float ScenicPresentedProgress => scenicActive ? scenicCamera.PresentedProgress : 0;
     internal long ScenicPresentedPlanId => scenicActive ? scenicCamera.PresentedPlanId : 0;
+    internal Vector3? ScenicPresentedFocus => scenicActive && LastPictureUsable ? scenicCamera.PresentedFocus : null;
     internal ScenicRejectionKind ScenicFailureKind => scenicActive ? scenicCamera.FailureKind : ScenicRejectionKind.None;
     internal string ScenicRejectionReason => scenicActive ? scenicCamera.LastFailure : "Scenic camera inactive";
     private Camera? camera;
