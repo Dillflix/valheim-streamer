@@ -11,6 +11,8 @@ internal static class ScenicShotPlanTests
         yield return ("Scenic strength and static controls retain predictable bounded paths", StrengthAndStaticControls);
         yield return ("Scenic previews and paused footage do not mutate shot progress", ReadOnlySampling);
         yield return ("Environmental path inputs reject invalid geometry and bound world outputs", Validation);
+        yield return ("Terrain fitting raises the whole scenic route without moving its subject or changing the lens", RaisedRoutePreservesComposition);
+        yield return ("Raised curved scenic routes retain their authored shape after trimming", RaisedCurveTrim);
     }
 
     private static AutonomyPosition P(float x = 0, float y = 0, float z = 0) => new AutonomyPosition(x, y, z);
@@ -115,6 +117,47 @@ internal static class ScenicShotPlanTests
         ScenicShotSample sample = boundary.Sample(1, 1.5f);
         Check(sample.CameraPosition.X <= 20000 && sample.CameraPosition.Y <= 20000 && sample.CameraPosition.Z <= 20000,
             "Environmental sampling exceeded supported finite world coordinates.");
+    }
+
+    private static ScenicShotPlan DirectedReveal() => ScenicShotPlan.Directed(41,
+        new ScenicFeature("rock", ScenicFeatureKind.Rock, P(100, 20, 100), P(1), 8, 12, .8f),
+        ScenicShotRole.Reveal, P(85, 16, 85), P(100, 23, 85), P(100, 22, 100), P(102, 23, 100),
+        58, .08f, -.04f, P(92, 18, 82), false);
+
+    private static void RaisedRoutePreservesComposition()
+    {
+        ScenicShotPlan original = DirectedReveal(), raised = original.RaiseCamera(14);
+        Check(!ReferenceEquals(original, raised) && raised.Id == original.Id &&
+            raised.Feature == original.Feature && raised.Role == original.Role &&
+            raised.FieldOfView == original.FieldOfView && raised.UseNativeSpline == original.UseNativeSpline,
+            "Terrain fitting changed the subject/lens/engine identity or mutated the existing plan.");
+        for (int i = 0; i <= 100; i++)
+        {
+            ScenicShotSample a = original.Sample(i / 100d), b = raised.Sample(i / 100d);
+            Check(Math.Abs(b.CameraPosition.Y - a.CameraPosition.Y - 14) < .0001 &&
+                b.CameraPosition.X == a.CameraPosition.X && b.CameraPosition.Z == a.CameraPosition.Z &&
+                b.AimPosition.Distance(a.AimPosition) < .0001 && b.ScreenX == a.ScreenX && b.ScreenY == a.ScreenY,
+                "Surface fit bobbed/clamped the live path or displaced the measured subject.");
+        }
+        Check(Math.Abs(original.TravelMetres - raised.TravelMetres) < .0001,
+            "A rigid vertical fit changed the route's travel length.");
+        Check(ReferenceEquals(original, original.RaiseCamera(0)), "A no-op fit changed path identity.");
+        Reject(() => original.RaiseCamera(float.NaN));
+        Reject(() => original.RaiseCamera(-1));
+        Reject(() => original.RaiseCamera(65));
+    }
+
+    private static void RaisedCurveTrim()
+    {
+        ScenicShotPlan original = DirectedReveal();
+        ScenicShotPlan fitThenTrim = original.RaiseCamera(8).Trim(.7);
+        ScenicShotPlan trimThenFit = original.Trim(.7).RaiseCamera(8);
+        for (int i = 0; i <= 50; i++)
+        {
+            ScenicShotSample a = fitThenTrim.Sample(i / 50d), b = trimThenFit.Sample(i / 50d);
+            Check(a.CameraPosition.Distance(b.CameraPosition) < .0001 && a.AimPosition.Distance(b.AimPosition) < .0001,
+                "Terrain fit/trim changed the curved reveal rather than preserving its useful prefix.");
+        }
     }
     private static void Reject(Action action)
     {

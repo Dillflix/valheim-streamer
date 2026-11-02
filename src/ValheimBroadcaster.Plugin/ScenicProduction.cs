@@ -157,6 +157,10 @@ internal sealed class ScenicProduction
             BeginEvaluation(settings, moveCarrier);
         }
         if (!evaluator.Step(6)) return false;
+        // Surface fitting produces a new immutable route. Keep that exact
+        // route for ranking, trimming, staging and playback, never the original
+        // below-surface proposal that was used to begin the search.
+        testing = evaluator.EvaluatedPlan ?? testing;
         if (evaluator.Accepted)
         {
             if (director.CanOffer(testing!))
@@ -187,7 +191,7 @@ internal sealed class ScenicProduction
             }
         }
         testing = null;
-        if (best != null && (revalidating || attempts >= 4 && bestScore >= .6)) return FinishSearch(held, allowActivate);
+        if (best != null && (Plan == null || revalidating || attempts >= 4 && bestScore >= .6)) return FinishSearch(held, allowActivate);
         revalidating = false;
         return false;
     }

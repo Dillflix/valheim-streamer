@@ -155,9 +155,19 @@ internal sealed class ScenicFeatureSurvey
             Bounds bounds = item.Bounds;
             Vector3 center = bounds.center;
             if (Vector3.ProjectOnPlane(center - origin, Vector3.up).magnitude > 48f || !IdleShots.Ready(center)) continue;
+            // Prefab collider bounds often include the buried half of a rock
+            // or a foundation. Framing that centre aims through the hillside.
+            // Use the exposed vertical extent above the actual loaded terrain;
+            // entirely buried or unmeasured objects are not scenic subjects.
+            if (!ScenicSurface.TryGroundHeight(center, out float ground)) continue;
+            float bottom = Mathf.Max(bounds.min.y, ground + .25f), top = bounds.max.y;
+            if (!ScenicSurface.TryWaterHeight(center, out bool waterPresent, out float water)) continue;
+            if (waterPresent) bottom = Mathf.Max(bottom, water + .25f);
+            if (top - bottom < .75f) continue;
+            center.y = (bottom + top) * .5f;
             Vector3 direction = bounds.size.x >= bounds.size.z ? Vector3.right : Vector3.forward;
             Add(item.Kind, center, direction, Mathf.Clamp(Mathf.Max(bounds.extents.x, bounds.extents.z), 2f, 24f),
-                Mathf.Clamp(bounds.size.y, 1f, 40f), item.Kind == ScenicFeatureKind.Structure ? .82f : .72f);
+                Mathf.Clamp(top - bottom, 1f, 40f), item.Kind == ScenicFeatureKind.Structure ? .82f : .72f);
         }
         // Interior lattice cells have observations on both sides. Missing or
         // saturated evidence cannot certify a clearing, ridge or coastline.

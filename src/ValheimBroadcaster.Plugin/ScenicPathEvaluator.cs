@@ -10,7 +10,7 @@ namespace ValheimBroadcaster.Plugin;
 internal enum ScenicRejectionKind
 {
     None, InvalidPlan, Acquisition, Geometry, CarrierRange, CameraCollision,
-    CorridorCollision, Focus, Foliage, SurveyIncomplete, SamplingBudget, CameraFormat
+    CorridorCollision, Focus, Foliage, SurveyIncomplete, SamplingBudget, CameraFormat, SurfaceClearance
 }
 
 internal readonly struct ScenicPose
@@ -104,6 +104,10 @@ internal static class ScenicPoseValidation
             return Reject(ScenicRejectionKind.Geometry, "Scenic camera or feature geometry is not loaded", out kind, out reason);
         if (!continuous && (!IdleShots.Ready(pose.Position) || !IdleShots.Ready(pose.Focus)))
             return Reject(ScenicRejectionKind.Acquisition, "Scenic camera or feature area is not acquired", out kind, out reason);
+        if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason))
+            return Reject(ScenicRejectionKind.Geometry, surfaceReason, out kind, out reason);
+        if (lift > .001f)
+            return Reject(ScenicRejectionKind.SurfaceClearance, surfaceReason, out kind, out reason);
         if (moveCarrier)
         {
             Vector3 carrier = pose.Position + Vector3.down * 2f;
@@ -160,12 +164,15 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private ScenicShotPlan? plan;
     private ScenicVisibility? visibility;
     private ScenicPose previous;
-    private bool hasPrevious, moveCarrier;
+    private bool hasPrevious, moveCarrier, fitting;
+    private float fitLift, totalLift;
+    private int fitPasses;
     private float aspect, nearClip, minimumScore, surveyWaitSeconds;
     private float surveyWaitStarted = float.NegativeInfinity;
     private int samples;
     internal bool Complete { get; private set; }
     internal bool Accepted { get; private set; }
+    internal ScenicShotPlan? EvaluatedPlan => plan;
     internal float Score => hasPrevious ? minimumScore : 0;
     internal float ValidatedFraction { get; private set; }
     internal ScenicRejectionKind FailureKind { get; private set; }
@@ -178,8 +185,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
         { Fail(ScenicRejectionKind.InvalidPlan, "Unable to prepare the directed native scenic route"); return; }
         // A minimum of 16 intervals limits unsampled curvature, aim and foliage
         // changes even on a compact route; refinement below follows actual pose.
-        for (int i = 16; i >= 0; i--) pending.Push(i / 16f);
-        minimumScore = 1; Reason = "Screening native scenic route";
+        fitting = true; StartPass();
+        minimumScore = 1; Reason = "Fitting scenic route above loaded terrain and water";
     }
 
     internal bool Step(int sampleBudget = 6)
@@ -197,6 +204,38 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 if (fraction - previous.Progress < .0001f)
                 { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route has an unresolved pose discontinuity"); return true; }
                 pending.Push(fraction); pending.Push((fraction + previous.Progress) * .5f); continue;
+            }
+            if (fitting)
+            {
+                if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason))
+                { Fail(ScenicRejectionKind.Geometry, surfaceReason); return true; }
+                fitLift = Mathf.Max(fitLift, lift);
+                previous = pose; hasPrevious = true;
+                if (pending.Count == 0)
+                {
+                    if (fitLift > .001f)
+                    {
+                        float adjustment = fitLift + .1f;
+                        if (++fitPasses > 3 || totalLift + adjustment > 48f)
+                        { Fail(ScenicRejectionKind.SurfaceClearance, "Scenic route cannot fit above the local surface within its elevation budget"); return true; }
+                        totalLift += adjustment;
+                        plan = plan.RaiseCamera(adjustment);
+                        if (!path.Prepare(plan, 1))
+                        { Fail(ScenicRejectionKind.InvalidPlan, "Cannot prepare terrain-fitted scenic route"); return true; }
+                        solver.Reset();
+                    }
+                    else
+                    {
+                        fitting = false;
+                        Reason = "Screening the terrain-fitted native scenic route";
+                    }
+                    StartPass();
+                    // Immutable whole-route placement is finalized before the
+                    // collision/readability pass. Playback never clamps Y or
+                    // changes a route in reaction to the terrain underneath it.
+                    return false;
+                }
+                continue;
             }
             if (!ScenicPoseValidation.Check(pose, plan, visibility, aspect, nearClip, false, moveCarrier,
                 out float score, out ScenicRejectionKind kind, out string reason))
@@ -237,10 +276,16 @@ internal sealed class ScenicPathEvaluator : IDisposable
 
     private void Fail(ScenicRejectionKind kind, string reason)
     { Complete = true; Accepted = false; FailureKind = kind; Reason = reason; pending.Clear(); }
+    private void StartPass()
+    {
+        pending.Clear(); hasPrevious = false; fitLift = 0;
+        for (int i = 16; i >= 0; i--) pending.Push(i / 16f);
+    }
     internal void Reset()
     {
         pending.Clear(); path.Reset(); solver.Reset(); plan = null; visibility = null;
         Complete = Accepted = hasPrevious = false; minimumScore = ValidatedFraction = 0; samples = 0;
+        fitting = false; fitLift = totalLift = 0; fitPasses = 0;
         surveyWaitSeconds = 0; surveyWaitStarted = float.NegativeInfinity;
         FailureKind = ScenicRejectionKind.None; Reason = "No scenic route prepared";
     }

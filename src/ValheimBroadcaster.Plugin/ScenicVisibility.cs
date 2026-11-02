@@ -5,13 +5,16 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
-// Conservative scenic-shot screening. Renderer bounds cover foliage that has no
-// physics collider; they are not an alpha-accurate measurement of rendered leaves.
+// Conservative scenic-shot screening. Local triangle groups or submesh bounds
+// refine nearby foliage; unreadable/unsupported renderers retain coarse bounds.
+// This is not an alpha-accurate measurement of rendered leaves.
 internal sealed class ScenicVisibility
 {
     private const int Capacity = 512;
-    private const float SurveyRadius = 110f, ForegroundRange = 6f;
-    private readonly List<Bounds> foliage = new List<Bounds>(Capacity);
+    private const float SurveyRadius = 110f, ForegroundRange = 6f, DetailRadius = 16f, ReuseDistance = 8f;
+    private const int DetailBudget = 1024;
+    private readonly List<Entry> foliage = new List<Entry>(Capacity);
+    private readonly ScenicFoliageGeometry geometry = new ScenicFoliageGeometry();
     private readonly List<float> distances = new List<float>(Capacity);
     private readonly HashSet<int> groups = new HashSet<int>();
     private Vector3 origin;
@@ -21,7 +24,17 @@ internal sealed class ScenicVisibility
     private int obstructionMask;
     private readonly Collider[] overlaps = new Collider[32];
     private readonly RaycastHit[] hits = new RaycastHit[24];
-    private readonly bool[] foregroundBounds = new bool[Capacity];
+    private readonly bool[] foregroundBounds = new bool[Capacity + DetailBudget];
+    private readonly Bounds[] activeBounds = new Bounds[Capacity + DetailBudget];
+    private int detailRemaining, checkedFrame = -1, activeCount;
+
+    private readonly struct Entry
+    {
+        internal readonly Renderer Renderer;
+        internal readonly Bounds[]? Local;
+        internal Entry(Renderer renderer, Bounds[]? local)
+        { Renderer = renderer; Local = local; }
+    }
 
     internal readonly struct Result
     {
@@ -37,6 +50,7 @@ internal sealed class ScenicVisibility
     {
         foliage.Clear(); distances.Clear(); groups.Clear(); refreshedAt = float.NegativeInfinity;
         coveredRadius = 0; furthest = 0; furthestDistance = 0;
+        geometry.Reset(); checkedFrame = -1; activeCount = 0;
     }
 
     internal void Refresh(Vector3 surveyOrigin)
@@ -46,13 +60,14 @@ internal sealed class ScenicVisibility
         // render frame when opposite viewpoints cross the refresh distance.
         if (now >= refreshedAt && now - refreshedAt < 0.5f) return;
         float displacement = Vector3.Distance(surveyOrigin, origin);
-        // In a dense forest the retained nearest-renderer set may cover less
-        // than 40m. The ordinary movement threshold cannot certify an omitted
-        // foreground: refresh as soon as the minimum survey throttle permits.
-        if (now >= refreshedAt && now - refreshedAt < 5f && displacement <= 40f &&
+        // Reuse stays inside the detailed foreground neighborhood. A truncated
+        // nearest-renderer set cannot certify an omitted foreground, so refresh
+        // as soon as the minimum survey throttle permits in that case too.
+        if (now >= refreshedAt && now - refreshedAt < 5f && displacement <= ReuseDistance &&
             displacement + ForegroundRange < coveredRadius) return;
         origin = surveyOrigin; refreshedAt = now; coveredRadius = SurveyRadius;
         foliage.Clear(); distances.Clear(); groups.Clear(); furthest = 0; furthestDistance = 0;
+        geometry.BeginSurvey(); detailRemaining = DetailBudget; checkedFrame = -1;
         obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         // Scene-wide enumeration is deliberately outside the per-frame evaluator.
         // Only active renderers are returned. No prefab assets are inspected.
@@ -72,17 +87,17 @@ internal sealed class ScenicVisibility
                 {
                     foreach (Renderer detail in levels[0].renderers)
                         if (detail && detail.enabled && detail.gameObject.activeInHierarchy)
-                        { Add(detail.bounds); detailed = true; }
+                        { Add(detail); detailed = true; }
                 }
                 if (!detailed)
                 {
                     // An empty/inactive first LOD must not hide a visible lower
                     // LOD from the survey. Let other renderers in this group in.
                     groups.Remove(group.GetInstanceID());
-                    Add(renderer.bounds);
+                    Add(renderer);
                 }
             }
-            else Add(renderer.bounds);
+            else Add(renderer);
         }
     }
 
@@ -104,7 +119,25 @@ internal sealed class ScenicVisibility
         return transform.GetComponentInParent<TreeBase>() || transform.GetComponentInParent<TreeLog>();
     }
 
-    private void Add(Bounds bounds)
+    private void Add(Renderer renderer)
+    {
+        Bounds coarse = renderer.bounds;
+        // Only the camera's local foreground needs fine geometry. Far bounds
+        // remain a bounded discovery envelope and are refined after recentering.
+        if (coarse.SqrDistance(origin) <= DetailRadius * DetailRadius && detailRemaining > 0)
+        {
+            Bounds[]? cells = geometry.Get(renderer);
+            if (cells != null && cells.Length <= detailRemaining)
+            {
+                detailRemaining -= cells.Length;
+                Add(new Entry(renderer, cells), coarse);
+                return;
+            }
+        }
+        Add(new Entry(renderer, null), coarse);
+    }
+
+    private void Add(Entry entry, Bounds bounds)
     {
         if (!TargetRoster.Finite(bounds.center) || !TargetRoster.Finite(bounds.extents) || bounds.size.sqrMagnitude < 0.01f) return;
         bounds.Expand(0.4f); // Clearance from shader-animated leaf edges.
@@ -112,7 +145,7 @@ internal sealed class ScenicVisibility
         if (distance >= SurveyRadius) return;
         if (foliage.Count < Capacity)
         {
-            foliage.Add(bounds); distances.Add(distance);
+            foliage.Add(entry); distances.Add(distance);
             if (distance >= furthestDistance) { furthest = foliage.Count - 1; furthestDistance = distance; }
             return;
         }
@@ -120,7 +153,7 @@ internal sealed class ScenicVisibility
         // truncated cache never silently declares an unexamined position clear.
         if (distance >= furthestDistance) { coveredRadius = Mathf.Min(coveredRadius, distance); return; }
         coveredRadius = Mathf.Min(coveredRadius, furthestDistance);
-        foliage[furthest] = bounds; distances[furthest] = distance;
+        foliage[furthest] = entry; distances[furthest] = distance;
         furthestDistance = 0;
         for (int i = 0; i < distances.Count; i++)
             if (distances[i] >= furthestDistance) { furthest = i; furthestDistance = distances[i]; }
@@ -135,7 +168,7 @@ internal sealed class ScenicVisibility
         if (!TargetRoster.Finite(camera) || !TargetRoster.Finite(focus) || !Finite(magnitude) || magnitude < 0.0001f ||
             !Finite(fov) || fov < 1 || fov > 170 || !Finite(aspect) || aspect <= 0 || !Finite(nearClip) || nearClip <= 0)
             return Invalid("Invalid scenic camera geometry");
-        Refresh(camera);
+        Refresh(camera); RefreshActive();
         rotation = rotation.normalized;
         Vector3 forward = rotation * Vector3.forward, right = rotation * Vector3.right, up = rotation * Vector3.up;
         float vertical = Mathf.Tan(fov * 0.5f * Mathf.Deg2Rad);
@@ -149,12 +182,16 @@ internal sealed class ScenicVisibility
         Vector3 local = Quaternion.Inverse(rotation) * (focus - camera);
         ShotProjection.Result projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
         bool focusVisible = projected.CenterInFrame && FocusClear(camera, focus, subjectBounds);
-        bool complete = Vector3.Distance(camera, origin) + ForegroundRange < coveredRadius;
+        // A far coarse canopy is discovery evidence, not proof that a queried
+        // camera lies inside leaves. Hold the same candidate until the bounded
+        // survey can recenter and inspect its own local foreground.
+        float requiredRadius = Vector3.Distance(camera, origin) + ForegroundRange;
+        bool complete = requiredRadius < coveredRadius && requiredRadius < DetailRadius;
         float foreground = 0;
         bool insideLeaves = false;
-        for (int i = 0; i < foliage.Count; i++)
+        for (int i = 0; i < activeCount; i++)
         {
-            Bounds bound = foliage[i];
+            Bounds bound = activeBounds[i];
             foregroundBounds[i] = bound.SqrDistance(camera) <= ForegroundRange * ForegroundRange;
             if (bound.Contains(camera)) insideLeaves = true;
         }
@@ -167,9 +204,9 @@ internal sealed class ScenicVisibility
             {
                 Vector3 direction = (forward + right * (x * 0.65f * vertical * aspect) + up * (y * 0.65f * vertical)).normalized;
                 Ray ray = new Ray(camera, direction);
-                for (int i = 0; i < foliage.Count; i++)
+                for (int i = 0; i < activeCount; i++)
                 {
-                    if (!foregroundBounds[i] || !foliage[i].IntersectRay(ray, out float hit) || hit > ForegroundRange) continue;
+                    if (!foregroundBounds[i] || !activeBounds[i].IntersectRay(ray, out float hit) || hit > ForegroundRange) continue;
                     blocked += x == 0 && y == 0 ? 4 : 1;
                     break;
                 }
@@ -177,10 +214,33 @@ internal sealed class ScenicVisibility
             foreground = blocked / 12f;
         }
         float score = (focusVisible ? 1f : 0.3f) * (1f - 0.85f * foreground) * (complete ? 1f : 0.65f);
-        string reason = !complete ? "Scenic foliage survey incomplete" : insideLeaves ? "Scenic camera is inside vegetation bounds" :
+        string reason = !complete ? "Scenic foliage survey incomplete" : insideLeaves ? "Scenic camera intersects retained vegetation bounds" :
             foreground >= 0.5f ? "Foreground vegetation dominates the scenic frame" :
             !focusVisible ? "Scenic feature is outside the frame or hidden" : "Readable scenic composition";
         return new Result(true, focusVisible, complete, Mathf.Clamp01(score), foreground, reason);
+    }
+
+    private void RefreshActive()
+    {
+        if (checkedFrame == Time.frameCount) return;
+        checkedFrame = Time.frameCount; activeCount = 0;
+        for (int i = 0; i < foliage.Count; i++)
+        {
+            Entry entry = foliage[i]; Renderer renderer = entry.Renderer;
+            if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
+            if (entry.Local == null) AddActive(renderer.bounds);
+            else
+            {
+                Matrix4x4 matrix = renderer.localToWorldMatrix;
+                foreach (Bounds local in entry.Local) AddActive(FoliageGeometryMath.Transform(local, matrix));
+            }
+        }
+    }
+
+    private void AddActive(Bounds bound)
+    {
+        if (!FoliageGeometryMath.Valid(bound)) return;
+        bound.Expand(.4f); activeBounds[activeCount++] = bound;
     }
 
     // Explicit legacy/fixed camera comparison still uses a centered view.
@@ -252,7 +312,15 @@ internal sealed class ScenicVisibility
         // to its centre. Unrelated foreground hits outside that extent still
         // reject the shot. Body, near-plane and foliage checks are unchanged.
         for (int i = 0; i < count; i++)
-            if (Solid(hits[i].collider) && (!subjectBounds.HasValue || !subjectBounds.Value.Contains(hits[i].point))) return false;
+        {
+            Collider hit = hits[i].collider;
+            if (!Solid(hit)) continue;
+            // Buried rocks and foundations often enclose terrain in their
+            // bounds. That terrain is still an obstruction, never the visible
+            // surface of the intended object.
+            if (hit.GetComponentInParent<Heightmap>() || hit.gameObject.layer == LayerMask.NameToLayer("terrain") ||
+                !subjectBounds.HasValue || !subjectBounds.Value.Contains(hits[i].point)) return false;
+        }
         return true;
     }
 

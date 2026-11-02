@@ -54,6 +54,8 @@ internal static class Program
         yield return ("Directed camera routes begin developing within their own shot duration", DirectedEarlyMovement);
         yield return ("Directed dolly-off samples follow the authored route at every tested point", DirectedAuthoredPath);
         yield return ("Trimming an authored scenic route preserves dolly-off and fixed lens", DirectedAuthoredPrefix);
+        yield return ("Terrain-fitted scenic routes retain native distance parity without moving their subjects", RaisedNativeRoutes);
+        foreach (var test in FoliageGeometryTests.Cases()) yield return test;
     }
 
     private static ScenicShotPlan Plan(ScenicShotStyle style = ScenicShotStyle.Arc, long id = 4,
@@ -239,6 +241,32 @@ internal static class Program
         Near(path.Sample(1).CameraPosition, original.Sample(.63).CameraPosition, .0001);
         Near(path.Sample(1).AimPosition, original.Sample(.63).AimPosition, .0001);
         Near(path.Sample(.37f).CameraPosition, prefix.Sample(.37f).CameraPosition, 0);
+    }
+
+    private static void RaisedNativeRoutes()
+    {
+        foreach (ScenicShotRole role in Enum.GetValues(typeof(ScenicShotRole)))
+        {
+            ScenicShotPlan source = Directed(role), fitted = source.RaiseCamera(23);
+            using var original = new ScenicSplinePath();
+            using var raised = new ScenicSplinePath();
+            Check(original.Prepare(source, 1) && raised.Prepare(fitted, 1), "Raised native route did not prepare.");
+            Check(Math.Abs(original.Length - raised.Length) < .003, "Whole-route lift changed native path length.");
+            for (int i = 0; i <= 100; i++)
+            {
+                float progress = i / 100f;
+                ScenicShotSample a = original.Sample(progress), b = raised.Sample(progress);
+                Near(P(a.CameraPosition.X, a.CameraPosition.Y + 23, a.CameraPosition.Z), b.CameraPosition);
+                Near(a.AimPosition, b.AimPosition, 0);
+                float normalized = raised.Spline!.ConvertIndexUnit(raised.Distance(progress), PathIndexUnit.Distance, PathIndexUnit.Normalized);
+                Vector3 native = raised.Spline.EvaluatePosition(normalized);
+                Near(P(native.x, native.y, native.z), b.CameraPosition);
+            }
+            var oldSpline = original.Spline;
+            Check(original.Prepare(fitted, 1) && !ReferenceEquals(oldSpline, original.Spline),
+                "The same-ID fitted route reused its below-surface spline cache.");
+            Near(original.Sample(.4f).CameraPosition, raised.Sample(.4f).CameraPosition);
+        }
     }
     private static void Throws(Action action)
     {

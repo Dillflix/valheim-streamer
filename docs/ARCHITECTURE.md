@@ -22,6 +22,9 @@ Version 0.8.24 builds directly on 0.8.23 (`355292a`). `ScenicDirector` and `Scen
 
 Version 0.8.25 repairs the integration around scenic production. Previous-frame live proof is consumed before recovery decisions; idle readiness fluctuations no longer reset the region and wildlife cooldowns. Dedicated scenic search reports explicit exhaustion, runs in the background during ordinary creature coverage, and stages off-air routes without activating them. A bounded off-air creature camera preview gates fallback admission, while the actual creature pose must remain readable. Scenic role scheduling cannot spend the full budget only on establishing views, and clearing candidates stay inside the measured horizontal footprint. Transient foliage-survey throttling waits for coverage rather than declaring geometry failure. Actual scenic cut admission retains an existing valid pose under its original identity until a replacement passes. Observer/server/transport contracts are unchanged.
 
+Version 0.8.26 adds the missing scenic surface-placement invariant. `ScenicSurface` measures the actual loaded terrain collider from above and active water surfaces; `ScenicSurfacePolicy` evaluates the camera body plus actual near-plane centre/corners. Planning uniformly raises the complete immutable camera route, rebuilds the selected native path and screens the resulting pose/corridor before admission. Playback never clamps camera Y and rejects a surface violation even if heightmap readiness and overlap queries pass. Object features aim at their exposed extent, and terrain cannot be ignored merely because a sightline hit lies inside the subject bounds. Local foliage occupancy uses bounded readable-mesh triangle groups or measured submesh bounds, retaining coarse fallback when refinement is unavailable. This does not change player direction, observer/network contracts or streaming.
+
+
 
 ## Components
 

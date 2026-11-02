@@ -117,6 +117,22 @@ namespace ValheimBroadcaster.Core
                 screenX, screenY, curved ? Lerp(cameraStart, cameraControl, u) : (AutonomyPosition?)null, UseNativeSpline);
         }
 
+        /// <summary>Fit a proposed route above observed terrain as one rigid
+        /// vertical translation. This creates another immutable definition;
+        /// it never clamps or bobs individual live camera samples. Aim, lens,
+        /// horizontal path and relative rise remain authored and the complete
+        /// resulting native curve must be screened again before admission.</summary>
+        public ScenicShotPlan RaiseCamera(float metres)
+        {
+            if (!IsDirected) throw new InvalidOperationException("Only directed routes can be terrain fitted.");
+            if (!Finite(metres) || metres < 0 || metres > 64)
+                throw new ArgumentOutOfRangeException(nameof(metres));
+            if (metres == 0) return this;
+            return Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
+                start, end, FieldOfView, screenX, screenY,
+                curved ? Raised(cameraControl, metres) : (AutonomyPosition?)null, UseNativeSpline);
+        }
+
         /// <summary>Bounded non-looping movement starts/ends at rest. A paused
         /// caller samples the same progress; previews never advance state.
         /// Strength zero and dynamic=false retain the initial world viewpoint.</summary>
@@ -185,6 +201,8 @@ namespace ValheimBroadcaster.Core
         private static AutonomyPosition Lerp(AutonomyPosition a, AutonomyPosition b, double u) =>
             Position(a.X + (b.X - a.X) * u, a.Y + (b.Y - a.Y) * u, a.Z + (b.Z - a.Z) * u);
         private static AutonomyPosition Midpoint(AutonomyPosition a, AutonomyPosition b) => Lerp(a, b, .5);
+        private static AutonomyPosition Raised(AutonomyPosition p, float metres) =>
+            new AutonomyPosition(p.X, p.Y + metres, p.Z);
         private double EstimateVisualChange()
         {
             double value = 0;

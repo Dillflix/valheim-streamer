@@ -1,4 +1,12 @@
-# Camera direction (0.8.25)
+# Camera direction (0.8.26)
+
+Version 0.8.26 builds directly on 0.8.25 (`fa96579`). The new recordings show accepted Scenic footage beneath terrain, not just recovery gaps. The separate scenic implementation had no above-ground/water test: its camera height came from the distant feature, while loaded-heightmap and surface-overlap checks did not establish that the camera was above the terrain beneath it.
+
+Scenic route planning now measures the loaded terrain under the actual native camera body and near-plane footprint. It applies a uniform elevation adjustment to the whole immutable route, preserving its horizontal movement, relative rise and fixed lens, then fully validates that fitted route. It allows at most three corrections and 48m total lift within the existing 512-sample budget. Playback repeats the surface check and rejects unsafe output instead of moving the camera vertically at runtime. This is read-only observation of loaded meshes/water; it does not generate terrain or move ordinary actors.
+
+Rock/structure focus uses the portion above measured terrain and water. A terrain hit remains a sightline obstruction even inside object bounds. Local foliage uses bounded triangle-group occupancy when the shared mesh is CPU-readable, otherwise measured submesh or renderer bounds. The nearest-512 renderer coverage remains bounded; up to 1,024 local detail cells and two new readable-mesh refinements per survey prevent unbounded work. Detailed surveys cover a 16m local neighbourhood, with a 6m foreground test. A candidate outside that detail coverage waits for a recentered survey. This remains conservative geometry rather than texture-alpha analysis; unreadable assets may retain coarse false positives.
+
+The initial search may use its first fully validated route rather than staying black to compare four candidates. Later prefetched shots retain editorial comparison. These are source/build corrections; **0.8.26 visual quality, performance and long-running behaviour remain unverified in Valheim**.
 
 Version 0.8.25 builds directly on 0.8.24 (`3230c18`) and repairs idle search/admission failures exposed by the supplied recording. The recorded visible fragments were labelled Creature; intervening black intervals were the operator recovery screen labelled Scenic. This is not successful scenic cinematography. The exact route-rejection reason was not captured in that overlay. The fixes below address established source defects without claiming that the new footage has been visually validated.
 
