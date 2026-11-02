@@ -13,7 +13,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
     internal readonly ConfigEntry<bool> PredictiveShots, ShotSequences, ShotScales, RenderedPictureEvaluation;
     internal readonly ConfigEntry<bool> NativeConfiner, NativeSplineDolly, NativeClearShot;
-    internal readonly ConfigEntry<bool> NativePositionComposer, NativeGroupDolly, NativeFreeLook;
+    internal readonly ConfigEntry<bool> NativePositionComposer, NativeGroupDolly, NativeFreeLook, NativePassBy;
     internal readonly ConfigEntry<float> PositionDamping, AimDamping, DeadZone, ShotMotion;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
@@ -67,6 +67,7 @@ internal sealed class BroadcastSettings
         NativePositionComposer = config.Bind("Camera", "PositionComposer", true, "Offer observational actor shots with a fixed viewing direction and native screen/depth dead zones. The subject can move across the frame or toward/away from the camera before it responds; readable alternatives remain available.");
         NativeGroupDolly = config.Bind("Camera", "GroupDolly", true, "Let native group framing move within validated open-space limits before widening the lens. Constrained or obstructed paths retain zoom-only framing and primary-subject alternatives.");
         NativeFreeLook = config.Bind("Camera", "FreeLookModifier", true, "Use native FreeLook Modifier to coordinate lens, damping and composition with elevation on eligible orbiting/rising shots. Group framing retains exclusive lens ownership for group shots.");
+        NativePassBy = config.Bind("Camera", "PassByShots", true, "Offer finite roadside shots during steady open-space player travel. The camera holds a world position and pans as players pass; encounters, course changes and unreadable views retain tracking alternatives.");
         DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent actor or environmental screen placement from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
         PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));

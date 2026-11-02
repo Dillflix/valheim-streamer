@@ -24,7 +24,7 @@ namespace ValheimBroadcaster.Core
     /// finishes in a quiet sustaining beat instead of repeating a fixed cycle.</summary>
     public sealed class ShotSequencePolicy
     {
-        private enum Episode { Unknown, Idle, Interaction, Travel, Work, Combat, Scenic }
+        private enum Episode { Unknown, Idle, Interaction, Travel, Work, Combat, Hunting, Threat, Scenic }
         private const double EvidenceSeconds = 1.5, MaximumGap = 1, MissingPictureResetSeconds = 3;
         private double lastNow = -1, pendingAge, unusableAge, attemptedAge;
         private bool initialized, lastUsable, wasEnabled, interruptionReset;
@@ -108,7 +108,7 @@ namespace ValheimBroadcaster.Core
             switch (Cue.Beat)
             {
                 case ShotSequenceBeat.Establish:
-                    if (BeatAge >= (episode == Episode.Combat ? 3 : 6))
+                    if (BeatAge >= (episode == Episode.Combat || episode == Episode.Hunting || episode == Episode.Threat ? 3 : 6))
                         Begin(episode == Episode.Unknown ? ShotSequenceBeat.Settle : ShotSequenceBeat.Develop, scene,
                             "Context shown; developing the observed activity");
                     break;
@@ -149,20 +149,24 @@ namespace ValheimBroadcaster.Core
                 beat == ShotSequenceBeat.Aftermath ? ShotRole.Establish :
                 episode == Episode.Travel ? ShotRole.Tracking :
                 episode == Episode.Work && scene.HasInterest ? ShotRole.Detail :
-                episode == Episode.Interaction ? ShotRole.Interaction : ShotRole.Establish;
+                (episode == Episode.Interaction || episode == Episode.Hunting || episode == Episode.Threat) ? ShotRole.Interaction : ShotRole.Establish;
             ShotScale scale = beat == ShotSequenceBeat.Establish || beat == ShotSequenceBeat.Reestablish
                 ? ShotScale.Wide : beat == ShotSequenceBeat.Detail ? ShotScale.Medium : ShotScale.Full;
             float motion = beat == ShotSequenceBeat.Establish ? .55f : beat == ShotSequenceBeat.Develop ? 1 :
                 beat == ShotSequenceBeat.Detail ? .35f : beat == ShotSequenceBeat.Aftermath ? 0 :
                 beat == ShotSequenceBeat.Reestablish ? .5f : .4f;
+            if (episode == Episode.Hunting) { motion = 0; reason = "Stable hunter/target relationship; no inferred release or hit"; }
+            if (episode == Episode.Threat) { motion = Math.Min(motion, .15f); reason = "Establishing threat proximity without assuming engagement"; }
             Cue = new ShotSequenceCue(beat, role, scale, revision, motion, reason);
         }
 
         private static Episode Classify(ShotSituation scene)
         {
             if (scene.Kind == ShotSceneKind.Scenic) return Episode.Scenic;
+            if (scene.Activity == CinematicActivity.Combat && scene.Confidence >= .6f) return Episode.Combat;
+            if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Hunting) return Episode.Hunting;
+            if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Threat) return Episode.Threat;
             if (scene.Confidence < .6f) return Episode.Unknown;
-            if (scene.Activity == CinematicActivity.Combat) return Episode.Combat;
             if (scene.Activity == CinematicActivity.Work) return Episode.Work;
             if (scene.Activity == CinematicActivity.Travel || scene.Locomotion == ShotLocomotion.Boat ||
                 scene.Locomotion == ShotLocomotion.Swim || scene.Locomotion == ShotLocomotion.Vertical) return Episode.Travel;

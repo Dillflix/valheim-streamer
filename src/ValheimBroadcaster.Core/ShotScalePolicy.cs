@@ -60,7 +60,7 @@ namespace ValheimBroadcaster.Core
             Profile(requested); // Reject invalid enum values before branching.
             if (scene.Kind == ShotSceneKind.Scenic) return ShotScale.Wide;
             if (requested != ShotScale.Medium) return requested;
-            if (scene.Kind != ShotSceneKind.Player || scene.Confidence < .6f || scene.Opponents != 0 ||
+            if (scene.Kind != ShotSceneKind.Player || scene.Encounter != EncounterKind.None && scene.EncounterConfidence >= .6f || scene.Confidence < .6f || scene.Opponents != 0 ||
                 scene.Locomotion != ShotLocomotion.Stationary || scene.Environment == ShotEnvironment.Doorway ||
                 scene.Activity == CinematicActivity.Combat || scene.Activity == CinematicActivity.Travel ||
                 scene.Activity == CinematicActivity.Work && !scene.HasInterest)

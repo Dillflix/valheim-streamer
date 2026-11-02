@@ -25,6 +25,13 @@ internal sealed class CameraSceneFrame
     internal float FacingConfidence, InterestConfidence;
     internal bool HasInterest;
     internal string InterestKind = "none";
+    // Encounter evidence is separate from group bounds and the clamped aim
+    // interest: a distant animal must not shrink all players to tiny figures.
+    internal EncounterKind Encounter;
+    internal Vector3 EncounterFocus, EncounterDirection;
+    internal float EncounterConfidence, EncounterDistance, EncounterTargetRadius, EncounterTargetHeight;
+    internal int EncounterOpponentCount, EncounterPlayerCount;
+    internal string EncounterTargetId = "", EncounterEvidence = "none";
     internal float Spread, Confidence;
     // Interior retains Valheim's dungeon-layer meaning for readiness. Measured
     // buildings constrain cinematography without changing that physical contract.

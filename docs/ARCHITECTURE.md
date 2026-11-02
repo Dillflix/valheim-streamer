@@ -14,6 +14,8 @@ Version 0.8.20 builds directly on 0.8.19 (`6fbfb9d`). Native `CinemachineClearSh
 
 Version 0.8.21 builds directly on 0.8.20 (`94e563f`). Native Position Composer owns screen/depth response for a distinct fixed-direction observational actor family. Group Framing can retain validated open-space translation before changing FOV; failed movement falls back to lens-only framing at the original pose. FreeLook Modifier coordinates eligible elevation profiles with explicit lens, damping and composition ownership. Final actual-picture and swept-path validation remain authoritative, and no observer protocol or server behavior changes.
 
+Version 0.8.22 builds directly on 0.8.21 (`9ae20da`). Encounter observation separates evidence of active combat, inferred ranged hunting and nearby powerful threats. Stable target selection supplies bounded participant and action-axis preferences to the shared camera rig; it does not claim remote private aim or unreplicated AI targets. Pass-by shots hold a world-space camera position during a finite qualified travel opportunity and use native Rotation Composer for aim, with ordinary tracking alternatives on interruption. No new gameplay, networking or simulation authority is introduced.
+
 ## Components
 
 | Component | Responsibility |

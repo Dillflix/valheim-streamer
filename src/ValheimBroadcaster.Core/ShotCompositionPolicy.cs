@@ -11,7 +11,7 @@ namespace ValheimBroadcaster.Core
         public float MotionX, MotionY, FacingX, FacingConfidence;
         public float InterestX, InterestY, InterestConfidence;
         public float LeftExtent, RightExtent, TopExtent, BottomExtent;
-        public bool Grouped;
+        public bool Grouped, SemanticInterest;
         public float PrimaryOffsetX, PrimaryOffsetY;
     }
 
@@ -93,7 +93,7 @@ namespace ValheimBroadcaster.Core
             float y = (observation.Grouped ? 0.035f : 0.08f) * scale;
             if (Math.Abs(observation.MotionY) > MotionThreshold)
                 y -= Clamp(observation.MotionY * 0.75f, -0.04f, 0.04f) * scale;
-            if ((activity == CinematicActivity.Work || activity == CinematicActivity.Combat) && observation.InterestConfidence >= 0.55f)
+            if ((observation.SemanticInterest || activity == CinematicActivity.Work || activity == CinematicActivity.Combat) && observation.InterestConfidence >= 0.55f)
                 y -= Clamp(observation.InterestY, -1, 1) * observation.InterestConfidence * 0.05f * scale;
             if (observation.Grouped)
             {
@@ -195,7 +195,7 @@ namespace ValheimBroadcaster.Core
         private static void Cue(ShotCompositionObservation value, CinematicActivity activity, out int side, out int priority)
         {
             side = priority = 0;
-            if ((activity == CinematicActivity.Combat || activity == CinematicActivity.Work) &&
+            if ((value.SemanticInterest || activity == CinematicActivity.Combat || activity == CinematicActivity.Work) &&
                 value.InterestConfidence >= 0.55f && Math.Abs(value.InterestX) >= 0.035f)
             { side = value.InterestX > 0 ? -1 : 1; priority = 3; }
             else if (Math.Abs(value.MotionX) >= MotionThreshold)

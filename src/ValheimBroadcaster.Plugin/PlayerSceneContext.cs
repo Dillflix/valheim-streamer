@@ -24,6 +24,11 @@ internal sealed class PlayerSceneContext
     private readonly List<CompanionObservation> companions = new List<CompanionObservation>(64);
     private readonly List<string> stale = new List<string>();
     private readonly List<Observation> opponents = new List<Observation>();
+    private readonly EncounterPolicy encounters = new EncounterPolicy();
+    private readonly List<EncounterObservation> encounterObservations = new List<EncounterObservation>(64);
+    private readonly List<Character> encounterActors = new List<Character>(64);
+    private Character? encounterActor;
+    private readonly RangedAimContinuity rangedAim = new RangedAimContinuity();
     private readonly RaycastHit[] hits = new RaycastHit[24];
     private readonly CameraSceneFrame frame = new CameraSceneFrame { Description = "Awaiting loaded player context" };
     private Player? primaryActor;
@@ -64,6 +69,7 @@ internal sealed class PlayerSceneContext
         {
             Reset(); frame.SceneId = ++nextSceneId;
         }
+        if (changedPrimary) { rangedAim.Reset(); encounters.Reset(); ClearEncounter(); }
         if (changedPrimary || primaryActor == null)
         { primaryActor = player; primaryId = primary.Identity.Id; primaryCharacter = characterId; world = ZNet.instance; surveyAt = -1; sampledFrame = -1; }
         if (sampledFrame == Time.frameCount) return frame;
@@ -105,6 +111,7 @@ internal sealed class PlayerSceneContext
         if (dt > 0 && TargetRoster.Finite(previousFocus) && Vector3.Distance(previousFocus, frame.Focus) <= 12f)
             frame.Focus = frame.PrimaryFocus + Vector3.ClampMagnitude(Vector3.Lerp(previousFocus, frame.Focus,
                 1f - Mathf.Exp(-3f * dt)) - frame.PrimaryFocus, frame.Interior ? 2.5f : 6f);
+        UpdateEncounterFrame();
         UpdateCompositionEvidence(player, now, dt);
         return frame;
     }
@@ -174,60 +181,14 @@ internal sealed class PlayerSceneContext
         foreach (CameraSceneSubject subject in frame.Subjects)
             if (observations.TryGetValue(subject.CharacterId, out Observation? observation))
             { attack |= observation.AttackUntil > now; damaged |= observation.DamageUntil > now; }
-        opponents.Clear();
-        // AI target IDs are not replicated by vanilla SetTargetInfo (only a boolean
-        // is). Use a real local target when present, otherwise label co-observed
-        // hostile action as contextual evidence rather than claiming exact aggro.
-        int inspectedOpponents = 0;
-        foreach (Character actor in Character.GetAllCharacters())
-        {
-            if (!Valid(actor) || actor is Player || Vector3.Distance(position, actor.transform.position) > 24f ||
-                Math.Abs(position.y - actor.transform.position.y) > (frame.Interior ? 3.5f : 8f) ||
-                Character.InInterior(actor.transform.position) != frame.Interior || !BaseAI.IsEnemy(player, actor)) continue;
-            if (++inspectedOpponents > 64) break;
-            bool connected = Connected(Focus(player), Focus(actor));
-            if (!connected) continue;
-            Observation observed = Observe(actor, now);
-            BaseAI? ai = actor.GetBaseAI();
-            ZNetView? view = actor.GetComponent<ZNetView>();
-            Character? target = ai && view && view.IsOwner() ? ai.GetTargetCreature() : null;
-            bool targetsGroup = false;
-            foreach (CameraSceneSubject subject in frame.Subjects) if (target && target == subject.Actor) targetsGroup = true;
-            float nearest = float.MaxValue;
-            foreach (CameraSceneSubject subject in frame.Subjects) nearest = Mathf.Min(nearest, Vector3.Distance(subject.Focus, Focus(actor)));
-            // An axe swing beside a passive hostile is not combat. Require a
-            // hostile's own action or damage corroborating the group's attack;
-            // health loss of unknown origin alone cannot establish the encounter.
-            bool encounter = ObservedEncounterEvidence.SupportsCombat(targetsGroup, observed.AttackUntil > now,
-                attack, observed.DamageUntil > now, nearest);
-            if (encounter) observed.OpponentUntil = now + 3f;
-            if (observed.OpponentUntil > now && nearest <= 20f) opponents.Add(observed);
-        }
-        opponents.Sort((a, b) =>
-        {
-            bool oldA = old.TryGetValue(a.Actor.GetZDOID().ToString(), out CameraSceneSubject? sa) && sa.IsOpponent;
-            bool oldB = old.TryGetValue(b.Actor.GetZDOID().ToString(), out CameraSceneSubject? sb) && sb.IsOpponent;
-            int retained = oldB.CompareTo(oldA);
-            return retained != 0 ? retained : (a.Position - position).sqrMagnitude.CompareTo((b.Position - position).sqrMagnitude);
-        });
-        for (int i = 0; i < Math.Min(2, opponents.Count); i++)
-            Add(opponents[i].Actor, opponents[i].Actor.GetZDOID().ToString(), false, true, old);
+        SurveyEncounter(player, now, attack, old);
 
         bool work = ObservedWork(player, primaryObservation, now, out string workEvidence,
             out Collider? resource, out Vector3 resourceFocus, out string resourceId);
-        // Retain a credible opponent before considering another. The candidate
-        // list is already bounded to the current encounter, not arbitrary AI.
-        Observation? interestOpponent = null;
-        for (int i = 0; i < Math.Min(2, opponents.Count); i++)
-        {
-            Observation candidate = opponents[i];
-            if (interestOpponent == null || "opponent:" + candidate.Actor.GetZDOID() == interestId)
-                interestOpponent = candidate;
-            if ("opponent:" + candidate.Actor.GetZDOID() == interestId) break;
-        }
-        if (interestOpponent != null)
-            ConsiderInterest("opponent:" + interestOpponent.Actor.GetZDOID(), "opponent", Focus(interestOpponent.Actor),
-                .8f, interestOpponent.Actor, null, now);
+        if (encounterActor && frame.Encounter != EncounterKind.None)
+            ConsiderInterest("encounter:" + encounterActor.GetZDOID(),
+                frame.Encounter == EncounterKind.Hunting ? "hunting" : frame.Encounter == EncounterKind.Threat ? "threat" : "opponent",
+                Focus(encounterActor), frame.EncounterConfidence, encounterActor, null, now);
         else if (resource)
             ConsiderInterest(resourceId, "resource", resourceFocus, .65f, null, resource, now);
         else if (rooms.SupportingShip && rooms.SupportingCollider)
@@ -238,7 +199,7 @@ internal sealed class PlayerSceneContext
         CinematicActivity desired;
         string evidence;
         float confidence;
-        if (opponents.Count > 0) { desired = CinematicActivity.Combat; evidence = "hostile action observed nearby"; confidence = .8f; }
+        if (frame.Encounter == EncounterKind.Combat) { desired = CinematicActivity.Combat; evidence = frame.EncounterEvidence; confidence = frame.EncounterConfidence; }
         else if (work) { desired = CinematicActivity.Work; evidence = workEvidence; confidence = .65f; }
         else if (primaryObservation.Velocity.magnitude > 1.2f || frame.Locomotion == ShotLocomotion.Vertical)
         { desired = CinematicActivity.Travel; evidence = frame.Locomotion == ShotLocomotion.Boat ? "movement on a supported vessel" :
@@ -250,12 +211,172 @@ internal sealed class PlayerSceneContext
         int players = 0;
         foreach (CameraSceneSubject subject in frame.Subjects) if (subject.Player) players++;
         string place = $"; {frame.Environment} {frame.EnvironmentConfidence:F2}; {frame.Locomotion}; scene {frame.SceneId}";
-        frame.Description = $"{frame.Activity}; {players} player(s), {Math.Min(2, opponents.Count)} opponent(s); {evidence}{place}" +
+        frame.Description = $"{frame.Activity}; {players} player(s), {frame.EncounterOpponentCount} opponent(s); {evidence}{place}; encounter {frame.Encounter} ({frame.EncounterConfidence:F2}, {frame.EncounterDistance:F0}m); {frame.EncounterEvidence}" +
             (frame.HasInterest ? $"; {frame.InterestKind} interest {frame.InterestConfidence:F2}" : "");
         stale.Clear();
         foreach (KeyValuePair<string, Observation> pair in observations)
             if (!pair.Value.Actor || now - pair.Value.LastAt > 4) stale.Add(pair.Key);
         foreach (string id in stale) observations.Remove(id);
+    }
+
+    private void SurveyEncounter(Player player, float now, bool groupAttack,
+        Dictionary<string, CameraSceneSubject> old)
+    {
+        opponents.Clear(); encounterObservations.Clear(); encounterActors.Clear();
+        bool drawing = IsDrawingRanged(player);
+        // Brief release follow-through requires an observed draw in this scene;
+        // a stale drawpercent or merely holding a bow never initiates hunting.
+        bool aiming = rangedAim.Observe(now, drawing, encounters.Selected.Kind);
+        Vector3 forward = player.transform.forward; forward.y = 0;
+        if (!TargetRoster.Finite(forward) || forward.sqrMagnitude < .01f) forward = Vector3.forward;
+        forward.Normalize();
+        Vector3 origin = Focus(player);
+        // Cheap bounded shortlist before at most 128 structural raycasts. Sort
+        // by aim relevance and proximity, never Character-list insertion order.
+        foreach (Character actor in Character.GetAllCharacters())
+        {
+            if (!Valid(actor) || actor is Player || actor.IsTamed() ||
+                Character.InInterior(actor.transform.position) != frame.Interior ||
+                Vector3.Distance(origin, Focus(actor)) > 96f) continue;
+            float priority = EncounterPriority(actor, origin, forward, aiming);
+            int at = 0;
+            while (at < encounterActors.Count && EncounterPriority(encounterActors[at], origin, forward, aiming) <= priority) at++;
+            if (at >= EncounterPolicy.MaximumCandidates) continue;
+            encounterActors.Insert(at, actor);
+            if (encounterActors.Count > EncounterPolicy.MaximumCandidates) encounterActors.RemoveAt(encounterActors.Count - 1);
+        }
+        foreach (Character actor in encounterActors)
+        {
+            Vector3 focus = Focus(actor), delta = focus - origin;
+            float distance = delta.magnitude, nearest = distance;
+            Vector3 nearestFocus = origin;
+            foreach (CameraSceneSubject subject in frame.Subjects)
+            {
+                float toMember = Vector3.Distance(subject.Focus, focus);
+                if (toMember < nearest) { nearest = toMember; nearestFocus = subject.Focus; }
+            }
+            bool connected = nearest <= 40 && Connected(nearestFocus, focus);
+            Vector3 flat = delta; flat.y = 0;
+            float alignment = flat.sqrMagnitude > .01f ? Mathf.Clamp(Vector3.Dot(forward, flat.normalized), -1, 1) : -1;
+            // Remote body orientation has no reliable pitch. Reject large
+            // elevation ambiguity instead of inventing a reticle or aim ray.
+            if (Mathf.Abs(delta.y) > Mathf.Max(5, distance * .2f)) alignment = -1;
+            bool aimLine = aiming && alignment >= .985f && ClearHuntingLine(origin, focus);
+            connected |= aimLine;
+            Observation observed = Observe(actor, now);
+            BaseAI? ai = actor.GetBaseAI(); ZNetView? view = actor.GetComponent<ZNetView>();
+            Character? target = ai && view && view.IsOwner() ? ai.GetTargetCreature() : null;
+            bool targetsGroup = false;
+            foreach (CameraSceneSubject subject in frame.Subjects) if (target && target == subject.Actor) targetsGroup = true;
+            bool hostile = BaseAI.IsEnemy(player, actor);
+            float health = actor.GetMaxHealth();
+            float playerHealth = player.GetMaxHealth(), height = actor.GetHeight();
+            float relative = Finite(health) ? health / (Finite(playerHealth) ? Mathf.Max(100, playerHealth) : 100) : 0;
+            float prominence = actor.IsBoss() ? 1 : Mathf.Clamp01(Mathf.Max(relative / 8,
+                Mathf.Max(Finite(height) ? (height - 1.5f) / 5 : 0, (actor.GetLevel() - 1) * .3f)));
+            bool attacking = observed.AttackUntil > now, damaged = observed.DamageUntil > now;
+            if (hostile && connected && ObservedEncounterEvidence.SupportsCombat(targetsGroup, attacking, groupAttack, damaged, nearest))
+                observed.OpponentUntil = now + 3;
+            encounterObservations.Add(new EncounterObservation(actor.GetZDOID().ToString(), distance, nearest, alignment, prominence,
+                connected, hostile, drawing || actor.GetZDOID().ToString() == encounters.Selected.Id, targetsGroup, attacking, damaged, observed.OpponentUntil > now, aimLine));
+        }
+        EncounterCandidate selected = encounters.Update(now, aiming, groupAttack, encounterObservations);
+        ClearEncounter();
+        if (selected.Kind == EncounterKind.None) return;
+        foreach (Character actor in encounterActors)
+            if (actor.GetZDOID().ToString() == selected.Id) { encounterActor = actor; break; }
+        if (!encounterActor) return;
+        frame.Encounter = selected.Kind; frame.EncounterConfidence = selected.Confidence; frame.EncounterTargetId = selected.Id;
+        frame.EncounterEvidence = selected.Kind == EncounterKind.Hunting ? (drawing ? "replicated ranged draw; target inferred from body-facing cone" : "recent qualified ranged aim; shot outcome unknown") :
+            selected.Kind == EncounterKind.Threat ? "nearby hostile prominence; danger inferred, aggression unconfirmed" :
+            selected.Confidence > .9f ? "owner-observed opponent target belongs to group" : "nearby hostile action/damage; exact victim unknown";
+        // Selected actor comes first, then ranked nearby engaged opponents.
+        // Reserve their slots before companions so a group cannot hide its foe.
+        var admitted = new List<Observation>(3);
+        if (selected.Distance <= (frame.Interior ? 12 : 28) && observations.TryGetValue(selected.Id, out Observation? main)) admitted.Add(main);
+        int enemies = 0;
+        foreach (EncounterCandidate candidate in encounters.Ranked)
+        {
+            if (candidate.Kind == EncounterKind.Combat) enemies++;
+            if (admitted.Count >= 3 || candidate.Id == selected.Id || candidate.Kind != EncounterKind.Combat ||
+                candidate.Distance > (frame.Interior ? 12 : 28)) continue;
+            if (observations.TryGetValue(candidate.Id, out Observation? observation)) admitted.Add(observation);
+        }
+        frame.EncounterOpponentCount = Mathf.Max(1, enemies);
+        while (frame.Subjects.Count + admitted.Count > 6) frame.Subjects.RemoveAt(frame.Subjects.Count - 1);
+        // Keep primary, then key opponent, then companions/other threats. This
+        // order is shared by all bounded visibility/group readers.
+        int insertAt = 1;
+        foreach (Observation observation in admitted)
+        {
+            Add(observation.Actor, observation.Actor.GetZDOID().ToString(), false, true, old);
+            CameraSceneSubject subject = frame.Subjects[frame.Subjects.Count - 1];
+            frame.Subjects.RemoveAt(frame.Subjects.Count - 1); frame.Subjects.Insert(insertAt++, subject);
+            opponents.Add(observation);
+        }
+        UpdateEncounterFrame();
+    }
+
+    private float EncounterPriority(Character actor, Vector3 origin, Vector3 forward, bool aiming)
+    {
+        Vector3 delta = Focus(actor) - origin; float distance = delta.magnitude; delta.y = 0;
+        float priority = distance;
+        if (actor == encounterActor) priority -= 200;
+        if (aiming && delta.sqrMagnitude > .01f && Vector3.Dot(forward, delta.normalized) >= .985f) priority -= 100;
+        return priority;
+    }
+
+    internal static bool IsDrawingRanged(Player player)
+    {
+        if (!Valid(player)) return false;
+        ZDO? zdo = player.GetComponent<ZNetView>()?.GetZDO();
+        return zdo != null && zdo.IsValid() && (Drawing(zdo, zdo.GetInt(ZDOVars.s_rightItem, 0)) ||
+            Drawing(zdo, zdo.GetInt(ZDOVars.s_leftItem, 0)));
+    }
+
+    private static bool Drawing(ZDO zdo, int itemHash)
+    {
+        if (itemHash == 0 || !ObjectDB.instance) return false;
+        GameObject? prefab = ObjectDB.instance.GetItemPrefab(itemHash);
+        ItemDrop? item = prefab ? prefab.GetComponent<ItemDrop>() : null;
+        string? draw = item?.m_itemData?.m_shared?.m_attack?.m_drawAnimationState;
+        return !string.IsNullOrEmpty(draw) && draw!.Length <= 128 &&
+            zdo.GetInt(unchecked(438569 + ZSyncAnimation.GetHash(draw)), 0) != 0;
+    }
+
+    private bool ClearHuntingLine(Vector3 from, Vector3 to)
+    {
+        Vector3 delta = to - from;
+        if (delta.sqrMagnitude < .01f) return true;
+        int count = Physics.RaycastNonAlloc(from, delta.normalized, hits, delta.magnitude, mask, QueryTriggerInteraction.Ignore);
+        if (count >= hits.Length) return false;
+        for (int i = 0; i < count; i++)
+            if (hits[i].collider && !hits[i].collider.GetComponentInParent<Character>()) return false;
+        return true;
+    }
+
+    private void UpdateEncounterFrame()
+    {
+        if (!Valid(encounterActor) || frame.Encounter == EncounterKind.None ||
+            Character.InInterior(encounterActor!.transform.position) != frame.Interior ||
+            Vector3.Distance(frame.PrimaryFocus, Focus(encounterActor)) > 96)
+        { ClearEncounter(); return; }
+        frame.EncounterFocus = Focus(encounterActor!);
+        Vector3 delta = frame.EncounterFocus - frame.PrimaryFocus;
+        frame.EncounterDistance = delta.magnitude; frame.EncounterDirection = delta.sqrMagnitude > .01f ? delta.normalized : Vector3.zero;
+        float radius = encounterActor!.GetRadius(), height = encounterActor.GetHeight();
+        frame.EncounterTargetRadius = Finite(radius) ? Mathf.Clamp(radius, .45f, 8) : .6f;
+        frame.EncounterTargetHeight = Finite(height) ? Mathf.Clamp(height, .5f, 16) : 2;
+        frame.EncounterPlayerCount = 0;
+        foreach (CameraSceneSubject subject in frame.Subjects) if (subject.Player) frame.EncounterPlayerCount++;
+    }
+
+    private void ClearEncounter()
+    {
+        encounterActor = null; frame.Encounter = EncounterKind.None; frame.EncounterTargetId = ""; frame.EncounterEvidence = "none";
+        frame.EncounterConfidence = frame.EncounterDistance = frame.EncounterTargetRadius = frame.EncounterTargetHeight = 0;
+        frame.EncounterOpponentCount = frame.EncounterPlayerCount = 0;
+        frame.EncounterFocus = frame.PrimaryFocus; frame.EncounterDirection = Vector3.zero;
     }
 
     private Observation Observe(Character actor, float now)
@@ -320,7 +441,7 @@ internal sealed class PlayerSceneContext
     private void ConsiderInterest(string id, string kind, Vector3 point, float strength,
         Character? actor, Collider? resource, float now)
     {
-        if (!TargetRoster.Finite(point) || Vector3.Distance(frame.PrimaryFocus, point) > 24f) return;
+        if (!TargetRoster.Finite(point) || Vector3.Distance(frame.PrimaryFocus, point) > (actor ? 96f : 24f)) return;
         if (id != interestId)
         {
             if (pendingInterestId != id) { pendingInterestId = id; interestSince = now; return; }
@@ -358,7 +479,7 @@ internal sealed class PlayerSceneContext
             fresh &= Valid(interestActor);
             if (fresh) interestPoint = Focus(interestActor);
         }
-        else if (interestKind == "opponent") fresh = false;
+        else if (interestKind == "opponent" || interestKind == "hunting" || interestKind == "threat") fresh = false;
         if ((interestKind == "resource" || interestKind == "vessel") && (!interestResource || !interestResource.enabled ||
             !interestResource.gameObject.activeInHierarchy)) fresh = false;
         if (interestKind == "vessel" && fresh)
@@ -367,7 +488,9 @@ internal sealed class PlayerSceneContext
             fresh = ship && ship == rooms.SupportingShip;
             if (fresh) interestPoint = ship!.transform.position + Vector3.up * 1.5f;
         }
-        fresh &= TargetRoster.Finite(interestPoint) && Vector3.Distance(frame.PrimaryFocus, interestPoint) <= 24f;
+        fresh &= TargetRoster.Finite(interestPoint) && Vector3.Distance(frame.PrimaryFocus, interestPoint) <= (interestActor ? 96f : 24f);
+        if (interestKind == "opponent" || interestKind == "hunting" || interestKind == "threat")
+            fresh &= frame.Encounter != EncounterKind.None && interestActor == encounterActor;
         float desired = fresh ? interestStrength : 0;
         frame.InterestConfidence = Mathf.MoveTowards(frame.InterestConfidence, desired, dt * (fresh ? .8f : 1.2f));
         if (fresh)
@@ -407,9 +530,9 @@ internal sealed class PlayerSceneContext
         subject.Id = id; subject.CharacterId = character; subject.Player = actor as Player;
         subject.IsPrimary = primary; subject.IsOpponent = opponent; subject.Focus = Focus(actor);
         float radius = actor.GetRadius();
-        subject.Radius = actor is Player ? .6f : Finite(radius) ? Mathf.Clamp(radius, .45f, 3f) : .6f;
+        subject.Radius = actor is Player ? .6f : Finite(radius) ? Mathf.Clamp(radius, .45f, 8f) : .6f;
         float height = actor.GetHeight();
-        subject.Height = Finite(height) ? Mathf.Clamp(height, .5f, 8f) : 2f;
+        subject.Height = Finite(height) ? Mathf.Clamp(height, .5f, actor is Player ? 8f : 16f) : 2f;
         subject.BottomOffset = subject.Focus.y - actor.transform.position.y;
         frame.Subjects.Add(subject);
     }
@@ -427,7 +550,7 @@ internal sealed class PlayerSceneContext
 
     internal void Reset()
     {
-        grouping.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
+        grouping.Reset(); encounters.Reset(); encounterObservations.Clear(); encounterActors.Clear(); ClearEncounter(); rangedAim.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
         rooms.Reset(); locomotion.Reset(); frame.SceneId = 0;
         frame.Environment = ShotEnvironment.Unknown; frame.Locomotion = ShotLocomotion.Stationary;
         frame.EnvironmentConfidence = frame.LocomotionConfidence = frame.CeilingHeight = 0;

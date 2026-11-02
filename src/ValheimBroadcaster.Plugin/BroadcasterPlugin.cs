@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.21";
+    public const string PluginVersion = "0.8.22";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -230,7 +230,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             bool cutawayAllowed = wildlife.Update(roster, remote,
                 !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding ||
                 !observer.RemoteSession || observer.Phase != ObserverPhase.Watching || automatic?.ControlsSelection != true ||
-                automatic.RouteActive, coverage.IsWildlifeCutaway);
+                automatic.RouteActive || HasFreshEncounter(), coverage.IsWildlifeCutaway);
             // Select the cutaway before the automatic director can rotate or
             // acquire a different player on this same threshold-crossing frame.
             TargetRoster.Target? priorTarget = CurrentTarget();
@@ -414,11 +414,21 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             // Companions share scene identity without inventing their actions.
             PlayerActivityKind kind = !subject.IsPrimary ? PlayerActivityKind.Unknown :
                 scene.Activity == CinematicActivity.Combat ? PlayerActivityKind.Combat :
+                scene.Encounter == EncounterKind.Hunting ? PlayerActivityKind.Action :
                 scene.Activity == CinematicActivity.Work ? PlayerActivityKind.Work :
                 scene.Activity == CinematicActivity.Travel ? PlayerActivityKind.Travel : PlayerActivityKind.Idle;
             localActivities.Add(new PlayerActivityEvidence(target.Identity.Id, kind,
-                subject.IsPrimary ? Mathf.Clamp01(scene.Confidence) : 1f, freshUntil, scene.SceneId));
+                subject.IsPrimary ? Mathf.Clamp01(scene.Encounter == EncounterKind.Hunting ? scene.EncounterConfidence : scene.Confidence) : 1f,
+                freshUntil, scene.SceneId));
         }
+    }
+    private bool HasFreshEncounter()
+    {
+        CameraSceneFrame? scene = rig.CurrentPlayerScene;
+        float age = Time.unscaledTime - rig.PlayerSceneObservedAt;
+        return scene != null && age >= 0 && age <= .75f &&
+            rig.CurrentPlayerId == CurrentTarget()?.Identity.Id &&
+            scene.Encounter != EncounterKind.None && scene.EncounterConfidence >= .6f;
     }
     private void MoveTarget(int direction)
     {
@@ -979,7 +989,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void CameraCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition|groups|prediction|sequences|scales|picture|confiner|dolly|clearshot|observation|groupdolly|freelook on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
+        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition|groups|prediction|sequences|scales|picture|confiner|dolly|clearshot|observation|groupdolly|freelook|passby on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
         if (args.Length < 2) { context?.AddString(usage); return; }
         string mode = args[1].ToLowerInvariant();
         if (mode == "status" && args.Length == 2)
@@ -989,6 +999,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             context?.AddString($"Production direction: prediction {settings.PredictiveShots.Value}; sequences {settings.ShotSequences.Value}; scales {settings.ShotScales.Value}; rendered-picture analysis {settings.RenderedPictureEvaluation.Value}");
             context?.AddString($"Native Cinemachine: Confiner 3D {settings.NativeConfiner.Value}; Spline Dolly {settings.NativeSplineDolly.Value}; ClearShot {settings.NativeClearShot.Value}");
             context?.AddString($"Native shot behavior: Position Composer {settings.NativePositionComposer.Value}; Group Dolly Then Zoom {settings.NativeGroupDolly.Value}; FreeLook Modifier {settings.NativeFreeLook.Value}");
+            context?.AddString($"Pass-by shots: {settings.NativePassBy.Value}");
             context?.AddString($"Camera settings (player / creature / scenic): procedural {settings.ProceduralPlayers.Value}; composition {settings.DeliberateComposition.Value}; dynamic {settings.DynamicShots.Value}; groups {settings.GroupFraming.Value}; motion {settings.ShotMotion.Value:F2}; position damping {settings.PositionDamping.Value:F2}s; aim damping {settings.AimDamping.Value:F2}s; dead zone {settings.DeadZone.Value:F2}");
             return;
         }
@@ -1005,7 +1016,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             settings.GroupFraming.Value = args[2] == "on";
         else if (args.Length == 3 && (args[2] == "on" || args[2] == "off") &&
             (mode == "confiner" || mode == "dolly" || mode == "clearshot" ||
-             mode == "observation" || mode == "groupdolly" || mode == "freelook"))
+             mode == "observation" || mode == "groupdolly" || mode == "freelook" || mode == "passby"))
         {
             bool enabled = args[2] == "on";
             if (mode == "confiner") settings.NativeConfiner.Value = enabled;
@@ -1013,6 +1024,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             else if (mode == "clearshot") settings.NativeClearShot.Value = enabled;
             else if (mode == "observation") settings.NativePositionComposer.Value = enabled;
             else if (mode == "groupdolly") settings.NativeGroupDolly.Value = enabled;
+            else if (mode == "passby") settings.NativePassBy.Value = enabled;
             else settings.NativeFreeLook.Value = enabled;
             pictureMonitor.Clear();
         }

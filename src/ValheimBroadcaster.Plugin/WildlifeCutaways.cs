@@ -75,6 +75,7 @@ internal sealed class WildlifeCutaways
                     }
                     bool moved = Vector3.Distance(sample!.Anchor, actor.transform.position) >= .15f;
                     localActive = moved || actor.InAttack() || actor.IsBlocking() || actor.InDodge() ||
+                        PlayerSceneContext.IsDrawingRanged(actor) ||
                         health + .5f < sample.Health || emote != sample.Emote || (zdo?.GetInt(Crafting, 0) ?? 0) != 0;
                     if (localActive) { sample.LastActive = now; sample.Anchor = actor.transform.position; }
                     sample.Health = health; sample.Emote = emote; sample.SampleAt = now;

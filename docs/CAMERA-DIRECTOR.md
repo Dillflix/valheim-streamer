@@ -1,10 +1,10 @@
-# Shared camera director (0.8.21)
+# Shared camera director (0.8.22)
 
-Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.21 builds directly on 0.8.20 (`94e563f`), adding observational Position Composer shots, validated group Dolly Then Zoom and coordinated FreeLook Modifier profiles. The preceding native Confiner 3D, Spline Dolly, ClearShot, blend curves and automatic clean-feed orientation calibration remain active. Existing future-readability ranking, activity sequences, deliberate scales, room/opening measurements, group continuity and observer limits remain active. Wildlife cutaways retain their existing global-idle requirements.
+Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.22 builds directly on 0.8.21 (`9ae20da`), adding evidence-qualified encounter direction and finite world-position pass-by shots. Observational Position Composer shots, validated group Dolly Then Zoom and coordinated FreeLook Modifier profiles remain available. The preceding native Confiner 3D, Spline Dolly, ClearShot, blend curves and automatic clean-feed orientation calibration remain active. Existing future-readability ranking, activity sequences, deliberate scales, room/opening measurements, group continuity and observer limits remain active. Wildlife cutaways retain their existing global-idle requirements.
 
 Scenery supplies planned world camera and aim paths; creatures supply their actual dimensions and observed movement. Neither is represented as a fake player. The observer's travel/authorization rules remain separate. Probe viewing stays a fixed acquisition measurement, while travel and recovery use the existing held-frame/slate presentation.
 
-Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.21 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
+Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.22 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
 
 ## Controls and configuration
 
@@ -26,6 +26,7 @@ Use `-console` when launching Valheim, then F5. The operator console remains loc
 | `broadcast camera observation on` / `off` | Offer native fixed-direction observational actor shots or the existing tracking alternative; this is eligibility, not a forced camera selection |
 | `broadcast camera groupdolly on` / `off` | Allow validated open-space group translation before zoom, or retain lens-only framing |
 | `broadcast camera freelook on` / `off` | Coordinate eligible elevation profiles through native lens/damping/composition modifiers |
+| `broadcast camera passby on` / `off` | Offer finite world-position travel shots with native panning; eligibility does not force selection |
 | `broadcast camera groups on` / `off` | Enable/disable player cooperative and opponent group compositions; creature coverage currently frames one primary actor |
 | `broadcast camera motion 0` | Stop decorative movement while retaining tracking, damping and dynamic shot selection |
 | `broadcast camera motion 1` | Restore default decorative movement strength; accepted range is 0–1.5 |
@@ -210,6 +211,16 @@ The optional 0.8.18 companion supplies `EventRequest1` / `EventReply1` when `Obs
 
 Older compatible protocol-3 servers simply omit this feed: local camera direction, loaded-group continuity and locally observed activity remain available. Admission stays at protocol 3, discovery at 2, and existing context/idle activity extensions at 1. Server 0.8.18 is optional for richer remote activity; server 0.8.17 or later is still needed for the separate global-idle wildlife eligibility feature. Ordinary players require no mod.
 
+## Encounter direction and pass-by shots (0.8.22)
+
+Encounter observation now separates **Combat**, **Hunting** and **Threat**. Combat needs relevant observed hostile action, corroborated damage/action or an owner-valid AI target. Hunting needs an active replicated ranged-draw state and an unobstructed narrow body-facing cone toward a loaded creature; ambiguous initial candidates are not presented as a known target. Nearby powerful hostiles can supply a threat composition without being labelled as actively attacking. Prominence uses observable boss status, body size, level and relative maximum health; it is not a prediction of damage or survival.
+
+The selected opponent persists through small ranking changes. Missing/dead/unloaded actors, disconnected geometry and stale scene evidence invalidate it. Hunting retains a short release follow-through only after a target has been qualified; turning away, losing that target or stronger combat evidence ends it. Remote aim is explicitly inferred from body orientation: vanilla does not replicate the private reticle or exact AI target identity to this observer. Existing server telemetry cannot supply those missing values. No ordinary-player mod or server update is required for this local observation.
+
+Nearby relevant opponents and cooperative players can share the native Target Group, with a bounded subject count and the key opponent reserved ahead of optional members. A distant target supplies action direction and composition evidence rather than an enormous group envelope. Encounter-oriented candidate scoring favors views explaining the player–opponent relationship, with oblique views along a hunting direction and more lateral fight/threat views. Actual target visibility and represented opponents affect preference; primary-player readability and physical safety remain required. Axis changes develop gradually rather than flipping on every target movement. Hunting/threat evidence also suppresses unrelated observational and pass-by styles, and blocks an idle-wildlife cutaway while fresh.
+
+Pass-by candidates require sustained walking/running through known open space without an active encounter. The camera takes a point ahead of and beside the projected route, holds that position, and uses native Rotation Composer to pan through approach, crossing and departure. Native body tracking, obstacle repositioning, group dolly and elevation modifiers do not compete for that camera position. The shot is finite, with a cooldown before another opportunity; stopping, reversing, veering, changing elevation, entering an encounter or losing clearance/readability returns selection to the existing tracking views. Endpoints and the predicted crossing/departure must pass the existing visibility and movement checks. This is an additional eligible shot family, not a guarantee that every walk triggers one.
+
 ## Reading camera diagnostics
 
 `broadcast camera status` identifies the active scene kind. Actor diagnostics report trajectory mode, `anchor lag`, planned anchor `speed`, `rendered camera` speed and `subject` speed, plus the trajectory validation/correction reason. The anchor is a planned position reference; it is not the observer body or necessarily the final camera position. Rendered-camera speed is a smoothed estimate with a cap for cuts, not an isolated measurement of one camera component. Similar camera/player speeds during sustained travel are expected. Look at the response to starts, stops, reversals and shot development when checking whether movement is still being copied.
@@ -233,7 +244,7 @@ The companion added in 0.8.13 can supply observation ages, coarse velocity and r
 
 The client probes support after observer authorization. An older server that does not reply falls back to local context after six seconds. Freshness, character identity and packet bounds are checked; stale or invalid optional context does not revoke an approved observer role. The camera currently uses fresh primary health-loss hints as supporting evidence, not as sufficient proof of combat.
 
-The 0.8.21 production-camera changes require only the client update: install its three DLLs and included `ThirdParty` notices together, preserving configuration. The 0.8.18 server remains optional for remote event evidence; global-idle wildlife cutaways still require the 0.8.17-or-later activity service. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
+The 0.8.22 production-camera changes require only the client update: install its three DLLs and included `ThirdParty` notices together, preserving configuration. The 0.8.18 server remains optional for remote event evidence; global-idle wildlife cutaways still require the 0.8.17-or-later activity service. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
 
 ## Reused Cinemachine components
 
@@ -284,10 +295,15 @@ Keep the custom activity/group evidence, foliage and rendered-picture measuremen
 
 ## Runtime validation
 
-**The 0.8.21 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
+**The 0.8.22 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
 
 | Exercise | Expected result to verify |
 | --- | --- |
+| Aim a bow at a distant loaded creature; hold, release, turn away; repeat with two creatures close to the aim line | Hunting is labelled inferred, qualified target persists briefly after release, ambiguity does not invent certainty, and distant target cannot force the player into a tiny wide shot |
+| Fight one enemy, then several; repeat with multiple cooperative players | Key opponent receives framing priority, companion/foe count remains bounded, fight axis develops smoothly, hidden or dead enemies do not keep control of composition |
+| Stand near a large hostile without fighting; compare a passive small creature and a tamed animal | Threat stays distinct from active combat; proximity alone does not invent an attack or select a pet as an enemy |
+| Travel steadily in clear terrain until pass-by is selected; continue past the camera | Camera position stays fixed through approach/crossing/departure, pan remains upright and readable, then ordinary coverage resumes |
+| During pass-by stop, reverse, turn, enter trees/a doorway or begin combat; toggle passby off/on | Safe interruption and finite cooldown; no retreating pseudo-pass-by, stale location, loading request or state leak |
 | In a readable observational shot, stand, walk sideways, approach/recede, then sprint continuously and stop/reverse | Subject moves within screen/depth dead zones before the body responds; fixed heading does not re-aim at every step; prolonged movement remains readable without travel/loading loops |
 | Compare `observation on/off`; enter combat, a doorway or constrained room; change primary, teleport, stop/restart | Observational eligibility and diagnostics are explicit; existing alternate cameras remain available; boundaries discard old target/profile history and transitions start from the displayed pose |
 | Two to four admitted players spread/rejoin in open space, then approach walls/trees, narrow rooms and different floors | Native group translation precedes bounded zoom only along a supported route; rejected movement falls back to zoom at the original pose, without repeated dolly oscillation or primary loss |
