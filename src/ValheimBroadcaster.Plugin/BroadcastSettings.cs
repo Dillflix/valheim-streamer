@@ -13,6 +13,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
     internal readonly ConfigEntry<bool> PredictiveShots, ShotSequences, ShotScales, RenderedPictureEvaluation;
     internal readonly ConfigEntry<bool> NativeConfiner, NativeSplineDolly, NativeClearShot;
+    internal readonly ConfigEntry<bool> NativePositionComposer, NativeGroupDolly, NativeFreeLook;
     internal readonly ConfigEntry<float> PositionDamping, AimDamping, DeadZone, ShotMotion;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
@@ -63,6 +64,9 @@ internal sealed class BroadcastSettings
         NativeConfiner = config.Bind("Camera", "Confiner3D", true, "Use native Cinemachine Confiner 3D inside verified local interior volumes. Uncertain or open spaces retain the existing visibility and physical-clearance checks; no gameplay collider is added to the world.");
         NativeSplineDolly = config.Bind("Camera", "SplineDolly", true, "Use native Cinemachine Spline Dolly for finite procedural scenic paths, retaining validated movement, independent aim and presentation-qualified progress.");
         NativeClearShot = config.Bind("Camera", "ClearShot", true, "Use native Cinemachine ClearShot to rank evaluated camera views. Readability, actual-footage pacing, continuity and final pose validation remain required.");
+        NativePositionComposer = config.Bind("Camera", "PositionComposer", true, "Offer observational actor shots with a fixed viewing direction and native screen/depth dead zones. The subject can move across the frame or toward/away from the camera before it responds; readable alternatives remain available.");
+        NativeGroupDolly = config.Bind("Camera", "GroupDolly", true, "Let native group framing move within validated open-space limits before widening the lens. Constrained or obstructed paths retain zoom-only framing and primary-subject alternatives.");
+        NativeFreeLook = config.Bind("Camera", "FreeLookModifier", true, "Use native FreeLook Modifier to coordinate lens, damping and composition with elevation on eligible orbiting/rising shots. Group framing retains exclusive lens ownership for group shots.");
         DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent actor or environmental screen placement from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
         PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));

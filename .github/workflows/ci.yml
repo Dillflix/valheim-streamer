@@ -85,7 +85,7 @@ jobs:
           --configuration Release -warnaserror
           -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
           -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
-      - name: Test actual native spline mathematics
+      - name: Test actual native camera and spline mathematics
         run: >-
           dotnet run --project tests/ValheimBroadcaster.Cinemachine.Tests
           --configuration Release -warnaserror

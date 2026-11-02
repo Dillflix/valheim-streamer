@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.20";
+    public const string PluginVersion = "0.8.21";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -979,7 +979,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void CameraCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition|groups|prediction|sequences|scales|picture|confiner|dolly|clearshot on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
+        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition|groups|prediction|sequences|scales|picture|confiner|dolly|clearshot|observation|groupdolly|freelook on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
         if (args.Length < 2) { context?.AddString(usage); return; }
         string mode = args[1].ToLowerInvariant();
         if (mode == "status" && args.Length == 2)
@@ -988,6 +988,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             context?.AddString(pictureMonitor.Diagnostics);
             context?.AddString($"Production direction: prediction {settings.PredictiveShots.Value}; sequences {settings.ShotSequences.Value}; scales {settings.ShotScales.Value}; rendered-picture analysis {settings.RenderedPictureEvaluation.Value}");
             context?.AddString($"Native Cinemachine: Confiner 3D {settings.NativeConfiner.Value}; Spline Dolly {settings.NativeSplineDolly.Value}; ClearShot {settings.NativeClearShot.Value}");
+            context?.AddString($"Native shot behavior: Position Composer {settings.NativePositionComposer.Value}; Group Dolly Then Zoom {settings.NativeGroupDolly.Value}; FreeLook Modifier {settings.NativeFreeLook.Value}");
             context?.AddString($"Camera settings (player / creature / scenic): procedural {settings.ProceduralPlayers.Value}; composition {settings.DeliberateComposition.Value}; dynamic {settings.DynamicShots.Value}; groups {settings.GroupFraming.Value}; motion {settings.ShotMotion.Value:F2}; position damping {settings.PositionDamping.Value:F2}s; aim damping {settings.AimDamping.Value:F2}s; dead zone {settings.DeadZone.Value:F2}");
             return;
         }
@@ -1003,12 +1004,16 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         else if (mode == "groups" && args.Length == 3 && (args[2] == "on" || args[2] == "off"))
             settings.GroupFraming.Value = args[2] == "on";
         else if (args.Length == 3 && (args[2] == "on" || args[2] == "off") &&
-            (mode == "confiner" || mode == "dolly" || mode == "clearshot"))
+            (mode == "confiner" || mode == "dolly" || mode == "clearshot" ||
+             mode == "observation" || mode == "groupdolly" || mode == "freelook"))
         {
             bool enabled = args[2] == "on";
             if (mode == "confiner") settings.NativeConfiner.Value = enabled;
             else if (mode == "dolly") settings.NativeSplineDolly.Value = enabled;
-            else settings.NativeClearShot.Value = enabled;
+            else if (mode == "clearshot") settings.NativeClearShot.Value = enabled;
+            else if (mode == "observation") settings.NativePositionComposer.Value = enabled;
+            else if (mode == "groupdolly") settings.NativeGroupDolly.Value = enabled;
+            else settings.NativeFreeLook.Value = enabled;
             pictureMonitor.Clear();
         }
         else if (args.Length == 3 && (args[2] == "on" || args[2] == "off") &&

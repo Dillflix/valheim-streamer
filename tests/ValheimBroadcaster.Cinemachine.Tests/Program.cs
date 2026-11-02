@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.Splines;
 using ValheimBroadcaster.Core;
@@ -16,7 +17,7 @@ internal static class Program
             try { test.Run(); passed++; System.Console.WriteLine("PASS " + test.Name); }
             catch (Exception error) { System.Console.WriteLine("FAIL " + test.Name + ": " + error.Message); }
         }
-        System.Console.WriteLine($"{passed}/{total} native spline math cases passed. No Unity scene, camera component or graphics backend is executed.");
+        System.Console.WriteLine($"{passed}/{total} native camera math cases passed. No Unity scene, camera-component lifecycle, physics or graphics backend is executed.");
         return passed == total ? 0 : 1;
     }
 
@@ -34,6 +35,14 @@ internal static class Program
         yield return ("Distance progress is bounded, monotonic and starts/ends at rest", RestToRest);
         yield return ("Large world coordinates retain finite bounded spline positions", WorldBounds);
         yield return ("Malformed spline progress and shape strength are rejected", InvalidInputs);
+        yield return ("Native FreeLook lens interpolation preserves camera mode and clip planes", LensModifierContract);
+        yield return ("Native FreeLook lens endpoints and center retain deliberate scale", LensModifierEndpoints);
+        yield return ("Fresh camera solves do not accumulate FreeLook lens adjustment", LensModifierNoAccumulation);
+        yield return ("Observational profiles produce nested native dead and hard guides", ObservationalRectangles);
+        yield return ("Observational placement converts vertical guide coordinates once", ObservationalVerticalPlacement);
+        yield return ("FreeLook composition preserves native image limits through interpolation", ProfileLimits);
+        yield return ("FreeLook composition respects saturated native limit offsets", SaturatedProfileLimits);
+        yield return ("FreeLook composition uses effective disabled dead-zone size", DisabledDeadZoneLimits);
     }
 
     private static ScenicShotPlan Plan(ScenicShotStyle style = ScenicShotStyle.Arc, long id = 4,
@@ -130,5 +139,124 @@ internal static class Program
     {
         try { action(); } catch (ArgumentOutOfRangeException) { return; } catch (InvalidOperationException) { return; }
         throw new Exception("Invalid input was accepted.");
+    }
+
+    // These are real upstream non-component modifier objects and CameraState
+    // values. The unused vcam parameter is null; no GameObject or engine API is
+    // substituted. The complete extension's easing/cache/callback lifecycle
+    // still requires a Unity runtime.
+    private static LensSettings BaseLens()
+    {
+        LensSettings lens = LensSettings.Default;
+        lens.FieldOfView = 55;
+        lens.NearClipPlane = .25f; lens.FarClipPlane = 2200;
+        lens.ModeOverride = LensSettings.OverrideModes.Perspective;
+        lens.Dutch = 0;
+        return lens;
+    }
+    private static CinemachineFreeLookModifier.LensModifier LensModifier()
+    {
+        var modifier = new CinemachineFreeLookModifier.LensModifier { Top = BaseLens(), Bottom = BaseLens() };
+        ElevationProfile profile = ElevationProfilePolicy.Resolve(true, true, false, false, false, ShotScale.Full, false, false, 55, true);
+        modifier.Top.FieldOfView = profile.TopFov; modifier.Bottom.FieldOfView = profile.BottomFov;
+        // The native modifier must inherit the current camera's perspective
+        // mode even if the endpoint was authored in another projection mode.
+        modifier.Top.ModeOverride = modifier.Bottom.ModeOverride = LensSettings.OverrideModes.Orthographic;
+        return modifier;
+    }
+    private static CameraState ApplyLens(CinemachineFreeLookModifier.LensModifier modifier, float amount)
+    {
+        CameraState state = CameraState.Default;
+        state.Lens = BaseLens(); state.RawPosition = new Vector3(10, 20, 30);
+        modifier.BeforePipeline(null!, ref state, .02f, amount);
+        return state;
+    }
+    private static void LensModifierContract()
+    {
+        CameraState state = ApplyLens(LensModifier(), .5f);
+        Check(Math.Abs(state.Lens.FieldOfView - 57) < .0001f, "Native upper profile interpolation changed.");
+        Check(state.Lens.ModeOverride == LensSettings.OverrideModes.Perspective && !state.Lens.Orthographic,
+            "Lens profile changed the physical camera projection mode.");
+        Check(state.Lens.NearClipPlane == .25f && state.Lens.FarClipPlane == 2200 && state.Lens.Dutch == 0,
+            "Lens profile unexpectedly changed clipping or introduced roll.");
+        Check(state.RawPosition == new Vector3(10, 20, 30), "Lens profile displaced the camera.");
+    }
+    private static void LensModifierEndpoints()
+    {
+        var modifier = LensModifier();
+        Check(ApplyLens(modifier, -1).Lens.FieldOfView == 53 && ApplyLens(modifier, 0).Lens.FieldOfView == 55 &&
+            ApplyLens(modifier, 1).Lens.FieldOfView == 59, "Native lens profile did not preserve lower/center/upper values.");
+        Check(ApplyLens(modifier, -.5f).Lens.FieldOfView == 54, "Lower profile interpolated in the wrong direction.");
+    }
+    private static void LensModifierNoAccumulation()
+    {
+        var modifier = LensModifier();
+        for (int i = 0; i < 100; i++)
+            Check(ApplyLens(modifier, .5f).Lens.FieldOfView == 57, "Repeated fresh solves compounded lens modification.");
+        Check(ApplyLens(modifier, 0).Lens.FieldOfView == 55, "Returning to neutral failed to restore the base lens.");
+    }
+
+    private static void ObservationalRectangles()
+    {
+        foreach (ShotScale scale in new[] { ShotScale.Wide, ShotScale.Full })
+            foreach (float x in new[] { -1f, -.12f, 0, .12f, 1f })
+                foreach (float y in new[] { -.4f, 0, .4f })
+                {
+                    var profile = ObservationalShotPolicy.Describe(scale, 10, 1, x, y);
+                    ScreenComposerSettings settings = NativeObservationalCamera.Composition(profile);
+                    Rect dead = settings.DeadZoneRect, hard = settings.HardLimitsRect;
+                    Check(dead.xMin > hard.xMin && dead.xMax < hard.xMax && dead.yMin > hard.yMin && dead.yMax < hard.yMax,
+                        "Actual native dead zone escapes the hard limit.");
+                    Check(hard.xMin >= .05f && hard.xMax <= .95f && hard.yMin >= .05f && hard.yMax <= .95f,
+                        "Native observational hard guide exceeds the image safe area.");
+                }
+    }
+    private static void ObservationalVerticalPlacement()
+    {
+        var profile = ObservationalShotPolicy.Describe(ShotScale.Full, 10, 1, .1f, .05f);
+        ScreenComposerSettings settings = NativeObservationalCamera.Composition(profile);
+        Check(Math.Abs(settings.DeadZoneRect.center.x - .6f) < .0001f && Math.Abs(settings.DeadZoneRect.center.y - .45f) < .0001f,
+            "Core Y-up placement was not converted exactly once to Cinemachine Y-down.");
+    }
+    private static ScreenComposerSettings ProfileBaseline()
+    {
+        ScreenComposerSettings settings = ScreenComposerSettings.Default;
+        settings.ScreenPosition = new Vector2(.08f, -.08f);
+        settings.DeadZone.Enabled = settings.HardLimits.Enabled = true;
+        settings.DeadZone.Size = new Vector2(.12f, .1f);
+        settings.HardLimits.Size = new Vector2(.8f, .72f);
+        settings.HardLimits.Offset = new Vector2(-2 * .08f / (.8f - .12f), 2 * .08f / (.72f - .1f));
+        return settings;
+    }
+    private static void RectNear(Rect a, Rect b) => Check(Math.Abs(a.xMin - b.xMin) < .0001f && Math.Abs(a.xMax - b.xMax) < .0001f &&
+        Math.Abs(a.yMin - b.yMin) < .0001f && Math.Abs(a.yMax - b.yMax) < .0001f, "A native profile moved the actual image hard limits.");
+    private static void ProfileLimits()
+    {
+        var baseline = ProfileBaseline();
+        var profile = ElevationProfilePolicy.Resolve(true, true, false, false, false, ShotScale.Full, false, false, 55, true);
+        var top = NativeFreeLookProfiles.ComposeEndpoint(baseline, profile.TopScreenY);
+        var bottom = NativeFreeLookProfiles.ComposeEndpoint(baseline, profile.BottomScreenY);
+        Check(top.ScreenPosition.y > baseline.ScreenPosition.y && bottom.ScreenPosition.y < baseline.ScreenPosition.y,
+            "Elevation profiles failed to vary vertical composition.");
+        for (int i = 0; i <= 20; i++)
+        {
+            RectNear(baseline.HardLimitsRect, ScreenComposerSettings.Lerp(baseline, top, i / 20f).HardLimitsRect);
+            RectNear(baseline.HardLimitsRect, ScreenComposerSettings.Lerp(bottom, baseline, i / 20f).HardLimitsRect);
+        }
+    }
+    private static void SaturatedProfileLimits()
+    {
+        foreach (float offset in new[] { -.98f, .98f })
+        {
+            var baseline = ProfileBaseline(); baseline.HardLimits.Offset.y = offset;
+            RectNear(baseline.HardLimitsRect, NativeFreeLookProfiles.ComposeEndpoint(baseline, .1f).HardLimitsRect);
+            RectNear(baseline.HardLimitsRect, NativeFreeLookProfiles.ComposeEndpoint(baseline, -.1f).HardLimitsRect);
+        }
+    }
+    private static void DisabledDeadZoneLimits()
+    {
+        var baseline = ProfileBaseline(); baseline.DeadZone.Enabled = false;
+        RectNear(baseline.HardLimitsRect, NativeFreeLookProfiles.ComposeEndpoint(baseline, .04f).HardLimitsRect);
+        RectNear(baseline.HardLimitsRect, NativeFreeLookProfiles.ComposeEndpoint(baseline, -.04f).HardLimitsRect);
     }
 }

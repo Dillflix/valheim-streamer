@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <Deterministic>true</Deterministic>
-    <Version>0.8.20</Version>
+    <Version>0.8.21</Version>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 </Project>
