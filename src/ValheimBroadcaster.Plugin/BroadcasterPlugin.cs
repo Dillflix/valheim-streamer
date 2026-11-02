@@ -56,6 +56,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly IdleShots idle = new IdleShots();
     private readonly WildlifeCutaways wildlife = new WildlifeCutaways();
     private float nextCreatureRefresh;
+    private string? creatureSearchPlayerId;
     private float nextScenicSearch;
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
@@ -227,8 +228,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 recentPicture && frameHold.HasRecentLiveFrame && presentedMode == CoverageMode.Player &&
                 priorTarget != null && presentedPlayerId == priorTarget.Identity.Id && CanShow(priorTarget))
             {
-                idle.Refresh(Mathf.Min(30f, settings.CreatureRadius.Value), priorTarget.LoadedPlayer!.transform.position);
-                nextCreatureRefresh = Time.unscaledTime + 1f;
+                if (Time.unscaledTime >= nextCreatureRefresh || creatureSearchPlayerId != priorTarget.Identity.Id)
+                {
+                    idle.Refresh(Mathf.Min(30f, settings.CreatureRadius.Value), priorTarget.LoadedPlayer!.transform.position);
+                    creatureSearchPlayerId = priorTarget.Identity.Id;
+                    nextCreatureRefresh = Time.unscaledTime + 1f;
+                }
                 coverage.Tick(0, priorTarget.Identity.Id, roster.ConnectedOthers, true, idle.ReadyIds(),
                     false, false, true);
             }
@@ -264,6 +269,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 bool nearPlayer = current?.LoadedPlayer && roster.ConnectedOthers > 0;
                 idle.Refresh(nearPlayer ? Mathf.Min(30f, settings.CreatureRadius.Value) : settings.CreatureRadius.Value,
                     nearPlayer ? current!.LoadedPlayer!.transform.position : (Vector3?)null);
+                creatureSearchPlayerId = nearPlayer ? current!.Identity.Id : null;
                 nextCreatureRefresh = Time.unscaledTime + 1f;
             }
             if (!probe.Active && coverage.Mode == CoverageMode.Scenic &&
@@ -345,6 +351,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null;
         nextCreatureRefresh = nextScenicSearch = 0;
+        creatureSearchPlayerId = null;
     }
     private void RecordVisibleCoverage(bool recentPicture)
     {
