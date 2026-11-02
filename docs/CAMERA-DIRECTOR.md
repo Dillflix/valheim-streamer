@@ -139,7 +139,7 @@ Actor direction chooses a stable left/right placement instead of aiming every sh
 
 Brief turns do not immediately swap sides. Opposite-direction evidence must persist, stopping retains the established side, and the requested position eases toward its next placement. The aim dead zone still allows the player to move around that guide. The guide is a preference, not a fixed screen coordinate imposed on every frame. Its evidence clock advances with usable footage rather than treating a long interruption as continuous movement.
 
-Placement accounts for the projected subject envelope, including head and feet. Framing quality measures body visibility, readable size, safe frame coverage and headroom, rather than rewarding proximity to the image center. Available space, interiors and recent corrective moves reduce the offset. When the envelope cannot fit, the policy asks for neutral or primary-centered framing so the adapter can consider a wider or compact alternative. It never treats an aesthetic framing failure as missing world geometry or authorization for travel.
+Placement accounts for the required shot envelope: head and feet for wide/full views, head and torso for qualified medium views. Framing quality measures body visibility, readable size, safe frame coverage and headroom, rather than rewarding proximity to the image center. Available space, interiors and recent corrective moves reduce the offset. When the envelope cannot fit, the policy asks for neutral or primary-centered framing so the adapter can consider a wider or compact alternative. It never treats an aesthetic framing failure as missing world geometry or authorization for travel.
 
 ## Actor movement, framing and shared continuity
 
