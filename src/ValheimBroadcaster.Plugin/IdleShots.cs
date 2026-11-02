@@ -5,61 +5,31 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
-// Region discovery owns places and subjects; the shared Cinemachine rig owns
-// presentation. The survey origin only bounds loaded-region searches.
+// Creature discovery stays separate from the dedicated environmental director.
 internal sealed class IdleShots
 {
-    private const int MaximumCreatures = 32, SearchBudget = 72, MinimumSearch = 18;
+    private const int MaximumCreatures = 32;
     private readonly Dictionary<string, Character> creatures = new Dictionary<string, Character>(StringComparer.Ordinal);
     private readonly List<string> readyIds = new List<string>(MaximumCreatures);
     private readonly List<CreatureCandidate> nearby = new List<CreatureCandidate>(MaximumCreatures);
-    private readonly Queue<ShownPlace> recentPlaces = new Queue<ShownPlace>(12);
-    private readonly ScenicVisibility visibility = new ScenicVisibility();
-    private readonly ScenicPresentationPolicy presentation = new ScenicPresentationPolicy();
-    private readonly ScenicShotReadiness readiness = new ScenicShotReadiness();
+    private readonly ScenicProduction scenic = new ScenicProduction();
     private float radius = 50;
-    private Vector3 surveyOrigin, creatureOrigin, selectedPlace, bestPlace;
-    private int sample, attemptsLeft, attemptsMade, viablePlans;
-    private long nextPlanId;
-    private ScenicShotPlan? bestPlan;
-    private float bestScore, lastFraction, nextViewCheck;
-    private bool recorded, lastViewClear;
-    internal bool Searching => attemptsLeft > 0;
-    internal bool NeedsReplacement { get; private set; }
-    internal bool RecoveryExhausted => presentation.RecoveryExhausted;
-    internal ScenicVisibility Visibility => visibility;
-    internal ScenicShotPlan? Plan { get; private set; }
+    private Vector3 surveyOrigin, creatureOrigin;
+    internal bool Searching => scenic.Searching;
+    internal bool NeedsReplacement => scenic.NeedsReplacement;
+    internal bool RecoveryExhausted => scenic.RecoveryExhausted;
+    internal ScenicVisibility Visibility => scenic.Visibility;
+    internal ScenicShotPlan? Plan => scenic.Plan;
     internal long PlanId => Plan?.Id ?? 0;
-    internal Vector3 ScenicOffset
-    {
-        get
-        {
-            if (Plan == null) return Vector3.zero;
-            ScenicShotSample point = Plan.Sample(lastFraction);
-            return FromCore(point.CameraPosition) - FromCore(point.AimPosition);
-        }
-    }
-    internal int RejectedViews { get; private set; }
-    internal string ViewReason { get; private set; } = "No scenic shot";
-    internal string Diagnostics => "Scenic view: " + ViewReason + "; style " + (Plan?.Style.ToString() ?? "none") +
-        "; path " + PlanId + "; progress " + (lastFraction * 100).ToString("F0") + "%" +
-        "; searching " + Searching + "; viable " + viablePlans + "; rejected " + RejectedViews +
-        "; shown places " + recentPlaces.Count + "; loaded creatures " + creatures.Count +
-        "; replacement " + (presentation.Scheduled ? "scheduled" : NeedsReplacement ? "picture recovery" : "none") +
-        "; recovery exhausted " + RecoveryExhausted;
-    internal bool HasRegion { get; private set; }
+    internal Vector3 ScenicOffset => scenic.Offset;
+    internal int RejectedViews => scenic.RejectedViews;
+    internal string ViewReason => scenic.Reason;
+    internal string Diagnostics => scenic.Diagnostics + "; loaded creatures " + creatures.Count;
+    internal bool HasRegion => scenic.HasRegion;
     internal bool HasScenicPath => Plan != null;
-    internal bool CanContinue => Plan != null && readiness.CanContinue(Plan.Id,
-        FromCore(Plan.Sample(lastFraction).AimPosition));
-    internal bool SceneReady => HasRegion && (CanContinue
-        ? PlayerShotReadiness.PositionReady(surveyOrigin, true) : Ready(surveyOrigin));
+    internal bool CanContinue => scenic.CanContinue;
+    internal bool SceneReady => scenic.SceneReady;
 
-    private readonly struct ShownPlace
-    {
-        internal readonly Vector3 Position;
-        internal readonly ScenicShotStyle Style;
-        internal ShownPlace(Vector3 position, ScenicShotStyle style) { Position = position; Style = style; }
-    }
     private readonly struct CreatureCandidate
     {
         internal readonly string Id;
@@ -67,201 +37,17 @@ internal sealed class IdleShots
         internal readonly float Distance;
         internal CreatureCandidate(string id, Character actor, float distance) { Id = id; Actor = actor; Distance = distance; }
     }
-
-    internal void SetRegion(Vector3 origin) { Clear(); surveyOrigin = creatureOrigin = origin; HasRegion = TargetRoster.Finite(origin); }
+    internal void SetRegion(Vector3 origin)
+    { creatures.Clear(); readyIds.Clear(); nearby.Clear(); surveyOrigin = creatureOrigin = origin; scenic.SetRegion(origin); }
     internal void Clear()
-    {
-        creatures.Clear(); readyIds.Clear(); nearby.Clear(); recentPlaces.Clear();
-        creatureOrigin = default;
-        HasRegion = NeedsReplacement = false; Plan = bestPlan = null;
-        sample = attemptsLeft = attemptsMade = viablePlans = 0;
-        presentation.Reset(); readiness.Reset(); nextViewCheck = lastFraction = 0;
-        lastViewClear = recorded = false; RejectedViews = 0;
-        ViewReason = "No scenic shot"; visibility.Reset();
-        // IDs remain unique across region resets, so stale render proof cannot
-        // credit a replacement with the same numeric identifier.
-    }
-
-    internal void BeginScenicPath()
-    {
-        if (!NeedsReplacement) presentation.ScheduleReplacement();
-        NeedsReplacement = true;
-        if (Searching) return;
-        attemptsLeft = SceneReady ? SearchBudget : 0;
-        attemptsMade = viablePlans = 0; bestPlan = null; bestScore = -1;
-        ViewReason = HasScenicPath ? "Retaining the current scene while seeking fresh coverage" : "Searching scenic compositions";
-    }
-
-    // A retained plan must not rewind when CoverageDirector begins the next
-    // scenic interval before its replacement has passed validation.
-    internal float PlanFraction(double elapsed, double duration)
-    {
-        // Consume the coverage clock even while a recovery search freezes this
-        // plan. Resuming must not repay that time as a sudden camera movement.
-        lastFraction = (float)presentation.AdvancePlan(elapsed, duration, Searching || NeedsReplacement);
-        return lastFraction;
-    }
-
-    // Rank a bounded batch spread over updates. All terrain and actor queries are
-    // read-only and restricted to already loaded content.
-    internal bool Search(BroadcastSettings settings)
-    {
-        if (!Searching) return false;
-        if (!SceneReady) { attemptsLeft = 0; ViewReason = "Scenic region is not ready"; return false; }
-        visibility.Refresh(Player.m_localPlayer ? Player.m_localPlayer.transform.position : surveyOrigin);
-        Camera? rendering = Camera.main;
-        float aspect = rendering ? rendering.aspect : Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
-        float nearClip = rendering ? rendering.nearClipPlane : 0.3f;
-        for (int attempt = 0; attempt < 3 && attemptsLeft > 0; attempt++)
-        {
-            attemptsLeft--; attemptsMade++;
-            int index = sample++;
-            if (sample > 600000) sample = 0;
-            int place = index / 6, view = index % 6;
-            float angle = place * 137.50776f * Mathf.Deg2Rad;
-            float distance = 18f + place % 5 * 8f;
-            Vector3 direction = new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle));
-            if (!Ground(surveyOrigin + direction * distance, out Vector3 start)) continue;
-            bool recent = false;
-            foreach (ShownPlace previous in recentPlaces)
-                if ((previous.Position - start).sqrMagnitude < 144f) { recent = true; break; }
-            if (recent) continue;
-            Vector3 tangent = new Vector3(direction.z, 0, -direction.x);
-            if (!Ground(start + tangent * 12f, out Vector3 end) || Mathf.Abs(end.y - start.y) > 8f ||
-                !Ground((start + end) * 0.5f, out Vector3 middle) || Mathf.Abs(middle.y - (start.y + end.y) * 0.5f) > 3f) continue;
-            float heading = (settings.Azimuth.Value + view * 60f) * Mathf.Deg2Rad;
-            float height = Mathf.Clamp(settings.Height.Value + (view % 3) * 4f, 3f, 45f);
-            float radiusScale = view < 3 ? 1f : 1.25f;
-            float distanceFromFeature = Mathf.Clamp(settings.Distance.Value * radiusScale, 5f, 70f);
-            Vector3 offset = new Vector3(Mathf.Sin(heading) * distanceFromFeature, height, Mathf.Cos(heading) * distanceFromFeature);
-            ScenicShotStyle style = (ScenicShotStyle)((place + view) % 5);
-            float screenX = view % 2 == 0 ? -0.12f : 0.12f;
-            // Ground features below center leave room for the surrounding terrain
-            // and sky; this is a landscape guide, not humanoid headroom.
-            float screenY = style == ScenicShotStyle.Approach ? -0.04f : -0.1f;
-            var candidate = new ScenicShotPlan(nextPlanId + 1, style, ToCore(start + Vector3.up * 1.5f),
-                ToCore(end + Vector3.up * 1.5f), ToCore(offset), screenX, screenY);
-            if (!EvaluatePath(candidate, settings, aspect, nearClip, out float score, out bool readable, out string reason) ||
-                HasScenicPath && !readable)
-            { RejectedViews++; ViewReason = reason; continue; }
-            viablePlans++;
-            // Measured terrain relief supplies a modest interest preference. It
-            // cannot make an obscured or physically invalid view win.
-            score += Mathf.Clamp01((Mathf.Abs(end.y - start.y) + Mathf.Abs(middle.y - start.y)) / 12f) * 0.04f;
-            int styleCount = 0;
-            foreach (ShownPlace previous in recentPlaces) if (previous.Style == style) styleCount++;
-            score -= Mathf.Min(0.12f, styleCount * 0.025f);
-            if (score > bestScore) { bestPlan = candidate; bestScore = score; bestPlace = start; }
-        }
-        // At least three locations/six views enter the competition. A good
-        // candidate need not wait through all 72 probes in a dense region.
-        bool enough = attemptsMade >= MinimumSearch && viablePlans >= 3 && bestScore >= 0.5f;
-        if (!enough && attemptsLeft > 0) return false;
-        if (bestPlan == null)
-        {
-            presentation.SearchCompleted(false);
-            attemptsLeft = 0; ViewReason = "No fresh physically supported scenic path in this loaded region";
-            return false;
-        }
-        Plan = bestPlan; selectedPlace = bestPlace; nextPlanId = Plan.Id;
-        readiness.Reset();
-        bestPlan = null; attemptsLeft = 0; NeedsReplacement = false;
-        lastFraction = 0; recorded = false; presentation.Accept(Time.unscaledTime);
-        nextViewCheck = 0; lastViewClear = true;
-        ViewReason = "Selected " + Plan.Style + " scenic path from " + viablePlans + " supported candidates";
-        return true;
-    }
-
-    private bool EvaluatePath(ScenicShotPlan candidate, BroadcastSettings settings, float aspect, float nearClip,
-        out float score, out bool readable, out string reason)
-    {
-        score = 0; readable = true; reason = "Scenic path has unsupported geometry";
-        Vector3 previous = default;
-        float worst = 1f, average = 0;
-        // Validate the full allowed movement envelope so changing motion strength
-        // while the shot runs cannot enter a path that was never examined.
-        for (int point = 0; point < 9; point++)
-        {
-            ScenicShotSample sample = candidate.Sample(point / 8d, 1.5f, true);
-            Vector3 camera = FromCore(sample.CameraPosition), focus = FromCore(sample.AimPosition);
-            if (!Ready(camera) || !Ready(focus) || !Ready(camera + Vector3.down * 2f) ||
-                Vector3.ProjectOnPlane(focus - camera, Vector3.up).sqrMagnitude < 1f ||
-                Player.m_localPlayer && Vector3.Distance(Player.m_localPlayer.transform.position, camera + Vector3.down * 2f) >= 91f)
-                return false;
-            if (point > 0 && !visibility.SegmentClear(previous, camera))
-            { reason = "Scenic path crosses solid geometry"; return false; }
-            Quaternion rotation = ScenicVisibility.Compose(camera, focus,
-                settings.DeliberateComposition.Value ? sample.ScreenX : 0,
-                settings.DeliberateComposition.Value ? sample.ScreenY : 0, settings.FieldOfView.Value, aspect);
-            ScenicVisibility.Result result = visibility.Evaluate(camera, rotation, focus, settings.FieldOfView.Value, aspect, nearClip);
-            if (!result.CameraClear) { reason = result.Reason; return false; }
-            readable &= PictureQuality.Scenic(result.CameraClear, result.FocusVisible, result.Score,
-                result.ForegroundOcclusion, result.SurveyComplete).Readable;
-            average += result.Score / 9f;
-            worst = Mathf.Min(worst, result.Score);
-            previous = camera;
-        }
-        // One branch-filled interval cannot hide inside a high path average.
-        // This ranks picture quality; even poor but physically safe coverage is
-        // retained as a fallback when the loaded region offers nothing better.
-        score = worst * 0.55f + average * 0.45f;
-        reason = readable ? "Supported readable scenic path" : "Supported scenic path has unreadable intervals";
-        return true;
-    }
-
-    internal Vector3 ScenicFocus(float fraction)
-    {
-        if (!Searching && !NeedsReplacement) lastFraction = Mathf.Clamp01(fraction);
-        return Plan == null ? surveyOrigin : FromCore(Plan.Sample(lastFraction).AimPosition);
-    }
-    internal bool ViewClear(Vector3 camera, Vector3 focus, float fov)
-    {
-        if (Time.unscaledTime < nextViewCheck) return lastViewClear;
-        nextViewCheck = Time.unscaledTime + 0.25f;
-        visibility.Refresh(camera);
-        lastViewClear = visibility.Clear(camera, focus, fov, out string reason);
-        ViewReason = lastViewClear ? "Readable scenic composition" : reason;
-        return lastViewClear;
-    }
-
-    // Called with proof from the preceding actual live render, not merely a
-    // solver success or held framebuffer. The caller also matches PlanId.
-    internal bool ReportPresentation(bool ready, string reason, bool usable = true)
-    {
-        if (Plan == null) return false;
-        if (ready) readiness.Presented(Plan.Id, FromCore(Plan.Sample(lastFraction).AimPosition));
-        bool recovered = presentation.Observe(Time.unscaledTime, ready, usable);
-        if (recovered)
-        {
-            // A better view of the retained plan has already restored footage.
-            // A pending search must not cut away after that recovery succeeds.
-            attemptsLeft = 0; bestPlan = null; NeedsReplacement = false;
-            ViewReason = "Retained scenic composition recovered";
-        }
-        if (ready && usable)
-        {
-            if (!recorded && presentation.ShownSeconds >= 2f)
-            {
-                recentPlaces.Enqueue(new ShownPlace(selectedPlace, Plan.Style));
-                if (recentPlaces.Count > 12) recentPlaces.Dequeue();
-                recorded = true;
-            }
-            return false;
-        }
-        ViewReason = reason;
-        if (!presentation.ReplacementRequested || Searching || NeedsReplacement) return false;
-        NeedsReplacement = true;
-        return true;
-    }
-
-    private static bool Ground(Vector3 point, out Vector3 ground)
-    {
-        ground = default;
-        if (!Ready(point) || !Physics.Raycast(point + Vector3.up * 80f, Vector3.down, out RaycastHit hit,
-                240f, LayerMask.GetMask("terrain"), QueryTriggerInteraction.Ignore)) return false;
-        ground = hit.point;
-        return Ready(ground);
-    }
+    { creatures.Clear(); readyIds.Clear(); nearby.Clear(); surveyOrigin = creatureOrigin = default; scenic.Clear(); }
+    internal void BeginScenicPath() => scenic.RequestShot();
+    internal float ProposeScenic(float dt, BroadcastSettings settings, bool held) => scenic.Propose(dt, settings, held);
+    internal bool Search(BroadcastSettings settings, bool moveCarrier, bool held) => scenic.TickSearch(settings, moveCarrier, held);
+    internal Vector3 ScenicFocus(float fraction) => scenic.Focus(fraction);
+    internal bool ViewClear(Vector3 camera, Vector3 focus, float fov) => scenic.Visibility.Clear(camera, focus, fov, out _);
+    internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held) =>
+        scenic.Observe(ready, usable, planId, progress, blocked, held, reason);
 
     internal void Refresh(float searchRadius, Vector3? creatureSearchOrigin = null)
     {

@@ -123,7 +123,8 @@ internal sealed class ScenicVisibility
 
     // Landscape quality uses the actual presented orientation/lens. Foliage and
     // focus visibility are editorial evidence, never physical area readiness.
-    internal Result Evaluate(Vector3 camera, Quaternion rotation, Vector3 focus, float fov, float aspect, float nearClip)
+    internal Result Evaluate(Vector3 camera, Quaternion rotation, Vector3 focus, float fov, float aspect, float nearClip,
+        Bounds? subjectBounds = null)
     {
         float magnitude = rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w;
         if (!TargetRoster.Finite(camera) || !TargetRoster.Finite(focus) || !Finite(magnitude) || magnitude < 0.0001f ||
@@ -142,7 +143,7 @@ internal sealed class ScenicVisibility
 
         Vector3 local = Quaternion.Inverse(rotation) * (focus - camera);
         ShotProjection.Result projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
-        bool focusVisible = projected.CenterInFrame && FocusClear(camera, focus);
+        bool focusVisible = projected.CenterInFrame && FocusClear(camera, focus, subjectBounds);
         bool complete = Vector3.Distance(camera, origin) + ForegroundRange < coveredRadius;
         float foreground = 0;
         bool insideLeaves = false;
@@ -200,6 +201,31 @@ internal sealed class ScenicVisibility
         return true;
     }
 
+    internal bool NearPlaneCorridorClear(Vector3 from, Quaternion fromRotation, Vector3 to, Quaternion toRotation,
+        float fov, float aspect, float nearClip)
+    {
+        if (obstructionMask == 0) obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        float height = nearClip * Mathf.Tan(fov * .5f * Mathf.Deg2Rad);
+        float width = height * aspect;
+        Vector3 first = from + fromRotation * (Vector3.forward * nearClip);
+        Vector3 last = to + toRotation * (Vector3.forward * nearClip);
+        Vector3 delta = last - first;
+        Quaternion middle = Quaternion.Slerp(fromRotation, toRotation, .5f);
+        // The midpoint-oriented box encloses the rotating near rectangle. The
+        // extra near-distance margin also bounds its curved centre trajectory.
+        float padding = (new Vector3(width, height, .04f).magnitude + nearClip) *
+            Mathf.Sin(Quaternion.Angle(fromRotation, toRotation) * .5f * Mathf.Deg2Rad);
+        Vector3 extents = new Vector3(width + padding, height + padding, .04f + padding);
+        int count = Physics.OverlapBoxNonAlloc(first, extents, overlaps, middle, obstructionMask, QueryTriggerInteraction.Ignore);
+        if (SolidOverlap(count)) return false;
+        if (delta.sqrMagnitude <= .000001f) return true;
+        count = Physics.BoxCastNonAlloc(first, extents, delta.normalized, hits, middle, delta.magnitude,
+            obstructionMask, QueryTriggerInteraction.Ignore);
+        if (count == hits.Length) return false;
+        for (int i = 0; i < count; i++) if (Solid(hits[i].collider)) return false;
+        return true;
+    }
+
     internal static Quaternion Compose(Vector3 camera, Vector3 focus, float screenX, float screenY, float fov, float aspect)
     {
         Quaternion centered = Quaternion.LookRotation(focus - camera, Vector3.up);
@@ -208,7 +234,7 @@ internal sealed class ScenicVisibility
             -Mathf.Atan(2 * screenX * tangent * aspect) * Mathf.Rad2Deg, 0);
     }
 
-    private bool FocusClear(Vector3 camera, Vector3 focus)
+    private bool FocusClear(Vector3 camera, Vector3 focus, Bounds? subjectBounds)
     {
         Vector3 delta = focus - camera;
         float distance = delta.magnitude;
@@ -216,7 +242,12 @@ internal sealed class ScenicVisibility
         int count = Physics.RaycastNonAlloc(camera, delta / distance, hits, Mathf.Max(0, distance - 0.25f),
             obstructionMask, QueryTriggerInteraction.Ignore);
         if (count == hits.Length) return false;
-        for (int i = 0; i < count; i++) if (Solid(hits[i].collider)) return false;
+        // A rock or building is framed around its measured extent; the sightline
+        // should terminate on its surface instead of requiring a ray through it
+        // to its centre. Unrelated foreground hits outside that extent still
+        // reject the shot. Body, near-plane and foliage checks are unchanged.
+        for (int i = 0; i < count; i++)
+            if (Solid(hits[i].collider) && (!subjectBounds.HasValue || !subjectBounds.Value.Contains(hits[i].point))) return false;
         return true;
     }
 

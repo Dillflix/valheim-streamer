@@ -1,0 +1,300 @@
+using System;
+using System.Collections.Generic;
+using ValheimBroadcaster.Core;
+
+internal static class ScenicDirectorTests
+{
+    internal static IEnumerable<(string Name, Action Run)> Cases()
+    {
+        yield return ("Directed scenic paths keep validated geometry and lens immutable", ImmutableRoute);
+        yield return ("Directed scenic duration follows route and visual development", UsefulDuration);
+        yield return ("Directed scenic curves retain independently authored aim", CurvedAim);
+        yield return ("Trimming scenery restricts its route to the useful prefix", TrimPrefix);
+        yield return ("Directed scene input validates finite meaningful measured subjects", Validation);
+        yield return ("Scenic proposals never advance accepted progress", ProposalIsReadOnly);
+        yield return ("Only matching live readable scenery commits presented progress", PresentationCommit);
+        yield return ("Scenic output gaps and duplicate observations earn no time", ObservationGaps);
+        yield return ("Rejected scenic movement leads to bounded local replacement", BlockedReplacement);
+        yield return ("Manual scenic hold pauses both novelty and blockage timers", ManualHold);
+        yield return ("Scenic still comparison retains normal finite shot lifetime", StaticComparison);
+        yield return ("Scenic prefetch prepares a replacement without activating it", PreparedShot);
+        yield return ("Scenic shot progression never repays an interruption", NoCatchUp);
+        yield return ("Actual scenic footage earns sequence beats, candidate search does not", SequenceEvidence);
+        yield return ("Scenic ranking rewards distinct views and retires exhausted subjects", ViewMemory);
+        yield return ("Scenic memory remains bounded and resets across worlds", BoundedHistory);
+        yield return ("Missing or unreadable scenic output requests bounded replacement", PictureFailure);
+        yield return ("Scenic rejected progress never revokes already accepted progress", MonotonicProgress);
+        yield return ("Low frame rate cannot suspend scenic recovery deadlines", LowRateRecovery);
+        yield return ("Long observation gaps reset uncertain scenic failure persistence", RecoveryGap);
+        yield return ("Completed scenic episodes cannot win again through score fallback", EpisodeAdmission);
+        yield return ("Equivalent scenic views cannot be relabeled as fresh sequence beats", EquivalentAdmission);
+        yield return ("A blocked scenic route can admit a materially different recovery path", RecoveryAdmission);
+        yield return ("Scenic episode memory survives unrelated short-history turnover", EpisodeRetention);
+    }
+
+    private static AutonomyPosition P(float x = 0, float y = 20, float z = 0) => new AutonomyPosition(x, y, z);
+    private static ScenicFeature Feature(string id = "ridge") => new ScenicFeature(id, ScenicFeatureKind.Ridge,
+        P(), P(1, 0, 0), 10, 8, .8f);
+    private static ScenicShotPlan Plan(long id = 1, string feature = "ridge", ScenicShotRole role = ScenicShotRole.Establish,
+        float distance = 24, bool curve = false) => ScenicShotPlan.Directed(id, Feature(feature), role,
+            P(-8, 26, -distance), P(8, 26, -distance), P(), P(2), 55, -.1f, -.08f,
+            curve ? P(0, 30, -distance - 6) : (AutonomyPosition?)null);
+    private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+    private static void Near(double a, double b, string message) => Check(Math.Abs(a - b) < .0001, message);
+    private static void Reject(Action action)
+    { try { action(); } catch (ArgumentException) { return; } throw new Exception("Invalid input was accepted."); }
+    private static void Observe(ScenicDirector d, int first, int last, bool live = true, bool readable = true,
+        bool blocked = false, bool held = false)
+    { for (int i = first; i <= last; i++) d.Observe(d.Current!.Id, i / 10d, d.Progress, live, readable, blocked, held); }
+
+    private static void ImmutableRoute()
+    {
+        var plan = Plan(curve: true);
+        Check(plan.IsDirected && plan.FeatureId == "ridge" && plan.Feature != null && plan.Feature.Kind == ScenicFeatureKind.Ridge && plan.FieldOfView == 55,
+            "Directed metadata or lens was not retained.");
+        for (int i = 0; i <= 20; i++)
+        {
+            double p = i / 20d;
+            Check(plan.Sample(p, .2f).CameraPosition.Distance(plan.Sample(p, 1.5f).CameraPosition) < .001,
+                "Motion strength reshaped an already validated directed route.");
+            Check(plan.Sample(p, .2f).AimPosition.Distance(plan.Sample(p, 1.5f).AimPosition) < .001,
+                "Motion strength reshaped the environmental aim route.");
+        }
+        Check(plan.Sample(1, 0).CameraPosition.Distance(plan.Sample(0).CameraPosition) < .001,
+            "Explicit zero-motion sampling comparison did not retain the initial pose.");
+    }
+    private static void UsefulDuration()
+    {
+        var plan = Plan();
+        Check(plan.DurationSeconds >= 8 && plan.DurationSeconds <= 20 && plan.VisualChange > .25,
+            "A useful route was stretched to the legacy blanket dwell or has no planned screen development.");
+        Check(plan.Sample(2 / plan.DurationSeconds).CameraPosition.Distance(plan.Sample(0).CameraPosition) > 1,
+            "The directed move has an excessively static opening.");
+        var shortPlan = ScenicShotPlan.Directed(2, Feature(), ScenicShotRole.Traverse,
+            P(-2, 26, -24), P(2, 26, -24), P(), P(), 55);
+        Check(shortPlan.DurationSeconds < plan.DurationSeconds,
+            "Shorter routes did not receive shorter shots.");
+        var near = ScenicShotPlan.Directed(3, Feature(), ScenicShotRole.Traverse,
+            P(-8, 24, -12), P(8, 24, -12), P(), P(), 55);
+        Check(near.VisualChange > plan.VisualChange,
+            "Measured visual development ignores the subject's viewing distance.");
+    }
+    private static void CurvedAim()
+    {
+        var plan = Plan(curve: true);
+        var middle = plan.Sample(.5);
+        Check(middle.CameraPosition.Y > 27 && middle.CameraPosition.Z < -26,
+            "Authored camera control point was ignored.");
+        Check(middle.AimPosition.Distance(P(1)) < .001,
+            "The scenic aim copied the body curve instead of its authored subject trajectory.");
+        double largest = 0;
+        var previous = plan.Sample(0);
+        for (int i = 1; i <= 1200; i++)
+        {
+            var sample = plan.Sample(i / 1200d);
+            largest = Math.Max(largest, previous.CameraPosition.Distance(sample.CameraPosition)); previous = sample;
+        }
+        Check(largest < .04, "Directed curve has a position discontinuity.");
+    }
+    private static void TrimPrefix()
+    {
+        var plan = Plan(curve: true);
+        var prefix = plan.Trim(.65);
+        Check(prefix.Id == plan.Id && prefix.FeatureId == plan.FeatureId && prefix.FieldOfView == plan.FieldOfView,
+            "Prefix changed shot identity or lens.");
+        Check(prefix.Sample(0).CameraPosition.Distance(plan.Sample(0).CameraPosition) < .001 &&
+            prefix.Sample(1).CameraPosition.Distance(plan.Sample(.65).CameraPosition) < .001 &&
+            prefix.Sample(1).AimPosition.Distance(plan.Sample(.65).AimPosition) < .001,
+            "Prefix did not preserve original route endpoints.");
+        Check(prefix.TravelMetres < plan.TravelMetres && prefix.DurationSeconds <= plan.DurationSeconds,
+            "A shorter useful route retained the original route length or expanded duration.");
+    }
+    private static void Validation()
+    {
+        Reject(() => new ScenicFeature("", ScenicFeatureKind.Ridge, P(), P(1, 0, 0), 10, 2, .8f));
+        Reject(() => new ScenicFeature("x", ScenicFeatureKind.Ridge, P(), P(0, 1, 0), 10, 2, .8f));
+        Reject(() => new ScenicFeature("x", ScenicFeatureKind.Ridge, P(), P(1, 0, 0), float.NaN, 2, .8f));
+        Reject(() => ScenicShotPlan.Directed(1, Feature(), ScenicShotRole.Detail, P(0, 20, -10), P(0, 20, -10), P(), P(), 55));
+        Reject(() => ScenicShotPlan.Directed(1, Feature(), ScenicShotRole.Detail, P(-4, 20, 0), P(4, 20, 0), P(), P(), 55));
+        Reject(() => Plan().Trim(0));
+        Reject(() => Plan().Trim(double.NaN));
+        var d = new ScenicDirector(); Reject(() => d.Propose(-1)); Reject(() => d.Propose(.1, true, float.PositiveInfinity));
+    }
+    private static void ProposalIsReadOnly()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0);
+        double proposal = d.Propose(.1);
+        for (int i = 0; i < 50; i++) Near(d.Propose(.1), proposal, "Repeated preview changed proposed progress.");
+        Near(d.Progress, 0, "A preview committed unrendered camera progress.");
+        Near(d.Propose(.1, false), 0, "Paused scenic move proposed advancement.");
+    }
+    private static void PresentationCommit()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0);
+        d.Observe(2, 0, .1, true, true, false); Near(d.Progress, 0, "Another plan's frame advanced scenery.");
+        d.Observe(1, 0, .1, false, true, false); Near(d.Progress, 0, "Held texture advanced scenery.");
+        d.Observe(1, .1, .1, true, false, false); Near(d.Progress, 0, "Unreadable output advanced scenery.");
+        d.Observe(1, .2, .1, true, true, false); Near(d.Progress, .1, "Actual useful frame did not commit.");
+    }
+    private static void ObservationGaps()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); d.Observe(1, 0, 0, true, true, false);
+        d.Observe(1, .1, .01, true, true, false); Near(d.ElapsedSeconds, .1, "Continuous output lost time.");
+        d.Observe(1, .1, .02, true, true, false); Near(d.Progress, .01, "Duplicate timestamp committed another proposal.");
+        d.Observe(1, 20, .01, true, true, false); Near(d.ElapsedSeconds, .1, "Missing observation interval earned screen time.");
+        Check(!d.NeedsReplacement && d.RememberedShots == 0, "Observation gap advanced editorial lifetime.");
+    }
+    private static void BlockedReplacement()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 19, blocked: true);
+        Check(!d.NeedsReplacement, "A temporary pause ended a useful shot too quickly.");
+        Observe(d, 20, 21, blocked: true);
+        Check(d.NeedsReplacement && d.Reason.IndexOf("blocked", StringComparison.Ordinal) >= 0,
+            "Permanently rejected progress trapped the shot until a long fixed dwell.");
+        Near(d.Progress, 0, "Rejected next position became accepted progress.");
+    }
+    private static void ManualHold()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 400, blocked: true, held: true);
+        Check(!d.NeedsReplacement && d.ElapsedSeconds == 0 && d.BlockedSeconds == 0,
+            "Operator hold was treated as failed camera movement or completed footage.");
+    }
+    private static void StaticComparison()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 300);
+        Check(d.NeedsReplacement && d.ElapsedSeconds >= d.Current!.DurationSeconds,
+            "A steady comparison disabled normal shot variety indefinitely.");
+    }
+    private static void PreparedShot()
+    {
+        var d = new ScenicDirector(); var current = Plan(); var next = Plan(2, "shore", ScenicShotRole.Traverse);
+        d.Accept(current, 0); d.Stage(next);
+        Check(d.Current == current && d.Prepared == next && d.Progress == 0 && d.RememberedShots == 0,
+            "Prefetch changed the on-air scene or viewing history.");
+        Check(d.TakePrepared() == next && d.Prepared == null && d.Current == current,
+            "Taking staged geometry implicitly activated it.");
+        d.Accept(next, 1); Check(d.Current == next && d.Progress == 0, "Prepared activation retained previous progress.");
+        d.Observe(2, 1, .7, true, true, false); Check(d.ShouldPrefetch, "Developed scenic shot did not request a successor in advance.");
+    }
+    private static void NoCatchUp()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0);
+        d.Observe(1, 0, .2, true, true, false);
+        double before = d.Propose(.016);
+        for (int i = 1; i <= 100; i++) d.Propose(.016, false);
+        Near(d.Propose(.016), before, "Resumption repaid paused proposal time.");
+        Check(d.Propose(20) - d.Progress <= .1 / d.Current!.DurationSeconds + .00001,
+            "Long frame stall created a camera leap.");
+    }
+    private static void SequenceEvidence()
+    {
+        var d = new ScenicDirector(); var feature = Feature(); d.Accept(Plan(), 0);
+        Check(d.PreferredRole(feature) == ScenicShotRole.Establish, "Unshown plan consumed the establishing beat.");
+        d.Stage(Plan(2)); Check(d.PreferredRole(feature) == ScenicShotRole.Establish, "Staging consumed a sequence beat.");
+        Observe(d, 0, 21); Check(d.PreferredRole(feature) == ScenicShotRole.Reveal && d.RememberedShots == 1,
+            "Actual establishing footage did not advance the ridge sequence.");
+    }
+    private static void ViewMemory()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 21);
+        var repeated = Plan(2);
+        var fresh = ScenicShotPlan.Directed(3, Feature(), ScenicShotRole.Reveal,
+            P(24, 26, -8), P(24, 30, 8), P(), P(2), 55);
+        Check(d.Rank(fresh, .9) > d.Rank(repeated, .9) + .2,
+            "Equivalent nearby views competed equally with a distinct next sequence shot.");
+        d.Accept(Plan(4, role: ScenicShotRole.Reveal), 3); Observe(d, 30, 51);
+        d.Accept(Plan(5, role: ScenicShotRole.Traverse), 6); Observe(d, 60, 81);
+        Check(d.Rank(Plan(6, "new-ridge"), .9) > d.Rank(Plan(7), .9),
+            "An exhausted feature did not yield to an unshown place.");
+    }
+    private static void BoundedHistory()
+    {
+        var d = new ScenicDirector();
+        for (int shot = 0; shot < 40; shot++)
+        { d.Accept(Plan(shot + 1, "feature" + shot), shot * 3); Observe(d, shot * 30, shot * 30 + 22); }
+        Check(d.RememberedShots == 24, "Scenic viewing memory grew without a bound.");
+        d.Reset(); Check(d.Current == null && d.Prepared == null && d.RememberedShots == 0 && d.Progress == 0,
+            "World reset retained scenic identities or direction history.");
+    }
+    private static void PictureFailure()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 6, live: false, readable: false);
+        Check(d.NeedsReplacement, "Missing live scenery never requested replacement.");
+        d.Accept(Plan(2), 1); Observe(d, 10, 31, readable: false);
+        Check(d.NeedsReplacement, "Persistent unreadable scenery never requested replacement.");
+    }
+    private static void MonotonicProgress()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); d.Observe(1, 0, .4, true, true, false);
+        d.Observe(1, .1, .3, true, true, true); Near(d.Progress, .4, "Retained output rewound already accepted progress.");
+        d.Accept(Plan(2), .2); Near(d.Progress, 0, "A new shot inherited previous progress.");
+    }
+    private static void LowRateRecovery()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0);
+        d.Observe(1, 0, 0, true, true, true);
+        d.Observe(1, 1, 0, true, true, true);
+        d.Observe(1, 2, 0, true, true, true);
+        Check(d.NeedsReplacement && d.BlockedSeconds >= 2 && d.ElapsedSeconds == 0,
+            "Slow output either suspended blocked-route recovery or invented continuous footage credit.");
+        d.Accept(Plan(2), 3);
+        d.Observe(2, 3, 0, false, false, false);
+        d.Observe(2, 4, 0, false, false, false);
+        Check(d.NeedsReplacement, "Slow observations suspended missing-output recovery.");
+    }
+    private static void RecoveryGap()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0);
+        d.Observe(1, 0, 0, true, true, true);
+        d.Observe(1, 1, 0, true, true, true);
+        d.Observe(1, 20, 0, true, true, true);
+        Check(!d.NeedsReplacement && d.BlockedSeconds == 0,
+            "Unobserved time was counted as a persistent blocked condition.");
+        d.Observe(1, 21, 0, true, true, true);
+        Check(!d.NeedsReplacement, "A stale failure interval leaked into renewed observations.");
+    }
+    private static void EpisodeAdmission()
+    {
+        var d = new ScenicDirector();
+        for (int shot = 0; shot < 3; shot++)
+        {
+            d.Accept(Plan(shot + 1, role: (ScenicShotRole)shot), shot * 3);
+            Observe(d, shot * 30, shot * 30 + 22);
+        }
+        var novelAngle = ScenicShotPlan.Directed(5, Feature(), ScenicShotRole.Detail,
+            P(18, 24, -8), P(18, 24, 8), P(), P(), 45);
+        Check(!d.CanOffer(novelAngle), "A fourth shot of a completed subject episode was still admissible.");
+        Check(d.CanOffer(Plan(6, "fresh-feature")), "A completed episode blocked unrelated scenery.");
+        d.Accept(Plan(7, "clock"), 320);
+        Check(d.CanOffer(novelAngle), "Expired episode memory permanently banned a feature.");
+    }
+    private static void EquivalentAdmission()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 22);
+        Check(!d.CanOffer(Plan(2, role: ScenicShotRole.Reveal)),
+            "Relabeling identical framing bypassed view novelty admission.");
+        var scaled = Plan(3, role: ScenicShotRole.Detail, distance: 12);
+        Check(d.CanOffer(scaled), "A genuinely different framing scale was mistaken for an equivalent view.");
+    }
+    private static void RecoveryAdmission()
+    {
+        var d = new ScenicDirector(); var current = Plan(); d.Accept(current, 0); Observe(d, 0, 22);
+        var alternative = ScenicShotPlan.Directed(2, Feature(), ScenicShotRole.Traverse,
+            P(-8, 26, -24), P(14, 26, -24), P(), P(2), 55, -.1f, -.08f);
+        Check(!d.CanOffer(alternative), "A small route variation was treated as fresh ordinary coverage.");
+        Observe(d, 23, 45, blocked: true);
+        Check(d.CanOffer(alternative) && !d.CanOffer(Plan(3)),
+            "Blocked-route recovery either banned a distinct route or readmitted the same failing route.");
+    }
+    private static void EpisodeRetention()
+    {
+        var d = new ScenicDirector();
+        for (int shot = 0; shot < 3; shot++)
+        { d.Accept(Plan(shot + 1), shot * 3); Observe(d, shot * 30, shot * 30 + 22); }
+        for (int shot = 3; shot < 30; shot++)
+        { d.Accept(Plan(shot + 1, "other" + shot), shot * 3); Observe(d, shot * 30, shot * 30 + 22); }
+        Check(d.RememberedShots == 24 && !d.CanOffer(ScenicShotPlan.Directed(40, Feature(), ScenicShotRole.Detail,
+            P(18, 24, -8), P(18, 24, 8), P(), P(), 45)),
+            "Short continuity history turnover erased the bounded episode exclusion.");
+    }
+}

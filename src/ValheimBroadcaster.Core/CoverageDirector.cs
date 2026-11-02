@@ -24,6 +24,9 @@ namespace ValheimBroadcaster.Core
         public const double CreaturePresentationTimeout = 3, CreatureFailedViewCooldown = 30;
         public const double ScenicPresentationTimeout = 3;
         public double ShotElapsed => elapsed;
+        // Dedicated environmental shots have their own lifetime. This clock
+        // continues to govern wildlife opportunities, not camera-plan edits.
+        public bool DedicatedScenicShots { get; set; }
         public double CreatureCooldownSeconds { get; set; } = 300;
         public double ScenicSeconds { get => scenicSeconds; set => scenicSeconds = Duration(value); }
         public double CreatureSeconds { get => creatureSeconds; set => creatureSeconds = Duration(value); }
@@ -104,7 +107,7 @@ namespace ValheimBroadcaster.Core
             elapsed = Math.Min(ScenicSeconds, elapsed + dt);
             if (elapsed < ScenicSeconds) return;
             if (!TrySelectCreature(readyCreatures))
-            { elapsed = 0; Revision++; } // New scenic path, not a repeated orbit.
+            { elapsed = 0; if (!DedicatedScenicShots) Revision++; } // Internal scenic editing can own its separate clock.
         }
 
         private bool TickCreature(double dt, bool holding, bool usableFootage)

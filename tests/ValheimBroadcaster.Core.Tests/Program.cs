@@ -97,6 +97,8 @@ internal static class Program
             .Concat(ScenicAvailabilityTests.Cases())
             .Concat(ScenicPresentationTests.Cases())
             .Concat(ScenicMotionTests.Cases())
+            .Concat(ScenicDirectorTests.Cases())
+            .Concat(ScenicIntegrationTests.Cases())
             .Concat(ScenicReadinessTests.Cases())
             .Concat(IdlePresentationTests.Cases())
             .Concat(WildlifeCutawayPolicyTests.Cases())

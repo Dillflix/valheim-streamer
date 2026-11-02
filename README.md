@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.24 introduces dedicated scenic direction.** Built directly on 0.8.23 (`355292a`), it chooses measured environmental features, prepares complete native camera routes, and gives each shot its own fixed lens and route-derived duration. New shots use deliberate cuts; a blocked route starts local replacement planning after two seconds instead of parking for the remainder of a 45-second interval. The director stages upcoming shots and records only actual usable presentation. Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). In-game visual quality and performance remain unverified.
+
 **0.8.23 repairs scenic continuity and motion.** Built directly on 0.8.22 (`7bda56a`), it separates blocked camera motion from readable footage and loaded-scene availability, prevents obsolete recovery searches from replacing recovered shots, and removes actor-style timed viewpoint/lens changes from scenic paths. Scenic movement uses short smooth ramps and steady cruising, with no catch-up after pauses. Acquired scenic plans can continue on verified geometry while unrelated objects load. Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md); in-game visual confirmation remains pending.
 
 **0.8.22 adds encounter-aware direction and deliberate pass-by shots.** Built directly on 0.8.21 (`9ae20da`), it separates active combat, inferred hunting targets and nearby powerful threats, preserves relevant participants, and chooses encounter-oriented compositions without sacrificing primary-player readability. Eligible travel shots can hold a world position and pan as players approach, pass and recede. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. In-game visual and replicated-encounter validation remain pending.
@@ -174,11 +176,11 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
 | `broadcast camera prediction on` / `off` (also `sequences`, `scales`, `picture`) | Toggle future-view ranking, short activity sequences, deliberate shot scales or actual-picture feedback |
-| `broadcast camera procedural` / `fixed` / `status` | Select shared Cinemachine or legacy fixed framing for player, creature and scenic coverage; inspect mode/quality diagnostics. The existing `Camera.ProceduralPlayers` key is retained for compatibility |
-| `broadcast camera dynamic` / `steady` | Enable/disable deliberate movement and timed composition changes; steady retains procedural visibility, damping and groups |
+| `broadcast camera procedural` / `fixed` / `status` | Select procedural actor/dedicated scenic cameras or legacy fixed framing; inspect mode/quality diagnostics. The existing `Camera.ProceduralPlayers` key is retained for compatibility |
+| `broadcast camera dynamic` / `steady` | Enable/disable deliberate movement; scenic steady holds the developed pose while shot scheduling continues, actor tracking remains active |
 | `broadcast camera composition on` / `off` | Enable deliberate screen placement or use the centered comparison preference; retain damping, groups and visibility checks |
 | `broadcast camera groups on` / `off` | Enable/disable player cooperative and opponent group framing; creature coverage currently uses one primary actor |
-| `broadcast camera motion <0-1.5>` | Set decorative movement strength; zero retains tracking and shot selection |
+| `broadcast camera motion <0-1.5>` | Set actor movement strength or directed scenic traversal speed; zero pauses scenic movement while shot scheduling continues |
 | `broadcast camera damping <position> <aim>` | Set independent damping in seconds, each 0.1–3 |
 | `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
 | `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
@@ -197,22 +199,22 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 
 | Section / key | Default | Meaning |
 | --- | --- | --- |
-| `Camera / ProceduralPlayers` | `true` | Shared Cinemachine player, creature and scenic coverage; false selects legacy fixed framing. The serialized key name is retained for compatibility |
+| `Camera / ProceduralPlayers` | `true` | Procedural actor and dedicated scenic coverage; false selects legacy fixed framing. The serialized key name is retained for compatibility |
 | `Camera / DynamicShots` | `true` | Activity/space-aware shot duration and deliberate movement |
 | `Camera / GroupFraming` | `true` | Persistent nearby player companions and relevant opponents when a readable composition is available; not creature-herd inference |
 | `Camera / PositionDamping`, `AimDamping` | `0.8`, `1` | Cinemachine damping in seconds; larger values soften response, range 0.1–3. Position damping smooths the planned trajectory, not a raw player-follow point |
 | `Camera / DeadZone` | `0.12` | Screen fraction allowing movement before recentering, range 0–0.3 |
-| `Camera / ShotMotion` | `1` | Decorative movement strength, range 0–1.5 |
+| `Camera / ShotMotion` | `1` | Actor movement strength or scenic traversal-speed multiplier, range 0–1.5; accepted scenic routes are not reshaped |
 | `Camera / Distance` | `18` | Horizontal metres from target |
 | `Camera / Height` | `10` | Metres above the focus point |
 | `Camera / FieldOfView` | `75` | Vertical degrees |
 | `Camera / Azimuth` | `225` | Preferred world-space direction; procedural shots can reframe around obstructions |
-| `Camera / Smoothing` | `5` | Legacy fixed camera response per second; shared procedural modes use position/aim damping |
+| `Camera / Smoothing` | `5` | Legacy fixed camera response per second; actor cameras use position/aim damping and directed scenery uses its authored route |
 | `Director / DwellSeconds` | `30` | Ready player footage before rotating targets; separate from composition duration |
 | `Director / TargetTimeoutSeconds` | `20` | Maximum experimental remote acquisition attempt |
 | `Director / AcquisitionCooldownSeconds` | `30` | Local-interest interval between remote attempts |
 | `Idle / WildlifeCutaways` | `true` | Allow nearby wildlife cutaways after all connected ordinary players are observed idle for 60 seconds; requires the 0.8.17 server activity service |
-| `Idle / ScenicSeconds` | `45` | Usable scenic footage before trying a creature or a fresh environmental path |
+| `Idle / ScenicSeconds` | `45` | Usable scenic footage between opportunities to try a loaded creature; directed scenic shot duration is independent |
 | `Idle / CreatureSeconds` | `25` | Usable creature footage before returning to scenery |
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
@@ -244,7 +246,11 @@ See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUN
 
 ## Continuous coverage and solo idle test
 
-Press **F8** while alone to test normal idle coverage (F10 is still the explicit self-follow test). The loaded region around the observer is a search boundary, never a fixed camera focus. Scenic coverage ranks terrain paths with independent camera/aim movement and avoids recently shown locations. The default intervals are 45 seconds of usable scenic footage and 25 seconds of usable creature footage; held images and slates do not advance them. Loaded living stationary creatures remain eligible. A successfully shown creature has a five-minute repeat cooldown; a view that remains unusable for three seconds returns to scenery with a separate 30-second failed-view cooldown. With no eligible creature, the director seeks another scenic path while retaining a valid existing view during the search. The read-only autonomous mode adds generated-region traversal; ordinary/offline modes keep local coverage. If no fresh destination or valid local path exists, diagnostics report the limitation.
+Press **F8** while alone to test normal idle coverage (F10 remains the self-follow test). The loaded region is a search boundary, never a fixed camera focus. The scenic director infers ridge, coastline, clearing, rock, structure and open-landscape subjects from loaded terrain, active water and static-object bounds. These are geometric hints, not semantic landmark recognition. It develops establishing, traversing, revealing and eligible detail shots with a fixed lens per shot and prepares the next route before editing. Typical shot durations are 8–20 seconds at default movement speed; longer routes retain a speed bound. A new shot cuts directly to its validated viewpoint rather than making a short, fast blend.
+
+`Idle.ScenicSeconds` remains 45 seconds by default, but now measures usable scenic coverage between opportunities to try loaded wildlife; it no longer stretches every scenic camera route to 45 seconds. Creature dwell remains 25 seconds. Held images and slates earn no footage. A successfully shown creature has a five-minute repeat cooldown; a creature view unusable for three seconds yields to scenery with a separate 30-second failed-view cooldown. Read-only autonomous sessions retain generated-region travel; ordinary/offline modes stay local. No suitable subject or fully readable route produces an explicit diagnostic and bounded retry rather than an invented scenic view.
+
+Use `broadcast camera dynamic` and `broadcast camera motion 1` for normal scenic movement. `steady` or `motion 0` retains the developed pose while normal shot scheduling can still advance. `broadcast hold` also pauses scenic timing and edits; `resume` continues without catching up to held time. Directed scenery uses a prepared native Dolly route by default; `broadcast camera dolly off` selects an authored-curve comparison for newly planned shots. Composition changes likewise apply to future plans. Actor damping, group, sequence, scale and FreeLook switches do not rewrite the active scenic route or lens. `broadcast camera fixed` remains the legacy framing comparison. See the [dedicated scenic design](docs/CAMERA-DIRECTOR.md#dedicated-scenic-direction-0824) for controls and validation limits.
 
 Normal coverage locally masks the broadcaster's child renderers, restoring their previous settings on stop. F10 deliberately shows the character for self-follow testing. This is local presentation only: in ordinary modes other clients can still see the character, and player input, collision, damage, AI interactions, and simulation effects are not removed. See [OBSERVER.md](docs/OBSERVER.md).
 

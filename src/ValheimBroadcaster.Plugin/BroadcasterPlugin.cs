@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.23";
+    public const string PluginVersion = "0.8.24";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -57,7 +57,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly WildlifeCutaways wildlife = new WildlifeCutaways();
     private float nextCreatureRefresh;
     private string? creatureSearchPlayerId;
-    private float nextScenicSearch;
+    private float presentedScenicProgress;
+    private bool presentedScenicBlocked;
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
     private readonly List<string> visibleCoverageIds = new List<string>(6);
@@ -292,10 +293,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 creatureSearchPlayerId = nearPlayer ? current!.Identity.Id : null;
                 nextCreatureRefresh = Time.unscaledTime + 1f;
             }
-            if (!probe.Active && coverage.Mode == CoverageMode.Scenic &&
+            if (!probe.Active && coverage.Mode == CoverageMode.Scenic)
                 idle.ReportPresentation(currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame,
-                    recentPicture ? rig.PictureReason : frameHold.LastFailure, usableIdlePicture))
-                nextScenicSearch = Time.unscaledTime;
+                    recentPicture ? rig.PictureReason : frameHold.LastFailure, usableIdlePicture,
+                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding);
+            coverage.DedicatedScenicShots = true;
             coverage.ScenicSeconds = settings.ScenicDwell.Value;
             coverage.CreatureSeconds = settings.CreatureDwell.Value;
             // Preserve selection/pose through short loading gaps. The camera hook
@@ -315,9 +317,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             if (coverage.Mode == CoverageMode.Scenic)
             {
-                if ((idle.NeedsReplacement || !idle.HasScenicPath) && !idle.Searching && Time.unscaledTime >= nextScenicSearch)
-                { idle.BeginScenicPath(); nextScenicSearch = Time.unscaledTime + 5f; }
-                if (idle.Search(settings)) { coverage.ScenicPresentationStarted(); presentedIdleUsable = false; }
+                // The environmental director prepares and edits its own shots.
+                // Coverage's independent clock still permits wildlife cutaways.
+                if (idle.Search(settings, observer.Active, director.IsHolding)) presentedIdleUsable = false;
             }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
@@ -372,7 +374,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false;
         localActivities.Clear();
-        nextCreatureRefresh = nextScenicSearch = 0;
+        nextCreatureRefresh = 0;
         creatureSearchPlayerId = null;
     }
     private void RecordVisibleCoverage(bool recentPicture)
@@ -471,7 +473,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             observer.Resume();
             director.SetEnabled(true); activeWorld = ZNet.instance;
             idle.SetRegion(Player.m_localPlayer.transform.position); coverage.Reset(); rig.ResetPose();
-            nextRosterRefresh = nextCreatureRefresh = nextScenicSearch = 0;
+            nextRosterRefresh = nextCreatureRefresh = 0;
             automatic?.Started(); connection?.OnManualStart(); SetHolding(false);
             return true;
         }
@@ -658,7 +660,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             else if (plugin.coverage.Mode == CoverageMode.Scenic && plugin.idle.SceneReady && plugin.idle.HasScenicPath)
             {
-                scenicProgress = plugin.idle.PlanFraction(plugin.coverage.ShotElapsed, plugin.coverage.ScenicSeconds);
+                scenicProgress = plugin.idle.ProposeScenic(Time.unscaledDeltaTime, plugin.settings, plugin.director.IsHolding);
                 scenicPlan = plugin.idle.Plan;
                 focus = plugin.idle.ScenicFocus(scenicProgress);
                 continuousScenic = plugin.idle.CanContinue;
@@ -699,7 +701,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             plugin.presentedPlayerUsable = plugin.presentedPlayerId != null && plugin.rig.LastPictureUsable;
             plugin.presentedMode = plugin.coverage.Mode;
             plugin.presentedRevision = plugin.coverage.Revision;
-            plugin.presentedScenicPlan = scenicPlan?.Id ?? -1;
+            plugin.presentedScenicPlan = scenicPlan != null && plugin.rig.IsProcedural
+                ? plugin.rig.ScenicPresentedPlanId : scenicPlan?.Id ?? -1;
+            plugin.presentedScenicProgress = plugin.rig.IsProcedural ? plugin.rig.ScenicPresentedProgress : scenicProgress;
+            plugin.presentedScenicBlocked = scenicPlan != null && plugin.rig.IsProcedural && !plugin.rig.ScenicMovementAccepted;
             plugin.presentedIdleUsable = !plugin.probe.Active && plugin.cameraReady && plugin.rig.LastPictureUsable &&
                 (plugin.coverage.Mode == CoverageMode.Scenic || plugin.coverage.Mode == CoverageMode.Creature);
             plugin.presentedFrame = Time.frameCount;

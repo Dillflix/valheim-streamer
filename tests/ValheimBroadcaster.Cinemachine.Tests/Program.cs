@@ -44,6 +44,16 @@ internal static class Program
         yield return ("FreeLook composition preserves native image limits through interpolation", ProfileLimits);
         yield return ("FreeLook composition respects saturated native limit offsets", SaturatedProfileLimits);
         yield return ("FreeLook composition uses effective disabled dead-zone size", DisabledDeadZoneLimits);
+        foreach (ScenicShotRole role in Enum.GetValues(typeof(ScenicShotRole)))
+        {
+            ScenicShotRole captured = role;
+            yield return ($"Directed {role} route matches native distance evaluation and fixed endpoints", () => DirectedNativeDistance(captured));
+        }
+        yield return ("Directed route shape is independent of decorative strength", DirectedStrength);
+        yield return ("A trimmed directed route builds the intended prefix endpoints", DirectedPrefix);
+        yield return ("Directed camera routes begin developing within their own shot duration", DirectedEarlyMovement);
+        yield return ("Directed dolly-off samples follow the authored route at every tested point", DirectedAuthoredPath);
+        yield return ("Trimming an authored scenic route preserves dolly-off and fixed lens", DirectedAuthoredPrefix);
     }
 
     private static ScenicShotPlan Plan(ScenicShotStyle style = ScenicShotStyle.Arc, long id = 4,
@@ -144,6 +154,91 @@ internal static class Program
         Throws(() => path.Prepare(Plan(), float.NaN)); Throws(() => path.Prepare(Plan(), -1));
         path.Prepare(Plan(), 1);
         Throws(() => path.Sample(float.NaN)); Throws(() => path.Distance(float.PositiveInfinity));
+    }
+    private static ScenicShotPlan Directed(ScenicShotRole role = ScenicShotRole.Traverse, bool useNativeSpline = true)
+    {
+        var feature = new ScenicFeature("ridge:example", ScenicFeatureKind.Ridge,
+            P(100, 30, -40), P(1, 0, 0), 14, 8, .85f);
+        return ScenicShotPlan.Directed(40, feature, role, P(78, 39, -61), P(102, 43, -58),
+            P(97, 33, -40), P(106, 35, -39), 58, -.1f, -.06f, P(88, 44, -70), useNativeSpline);
+    }
+    private static void DirectedNativeDistance(ScenicShotRole role)
+    {
+        var plan = Directed(role);
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(plan, 1) && path.Ready, "Directed native path was not prepared.");
+        Near(path.Sample(0).CameraPosition, plan.Sample(0).CameraPosition);
+        Near(path.Sample(1).CameraPosition, plan.Sample(1).CameraPosition);
+        for (int i = 0; i <= 100; i++)
+        {
+            float progress = i / 100f;
+            float normalized = path.Spline!.ConvertIndexUnit(path.Distance(progress), PathIndexUnit.Distance, PathIndexUnit.Normalized);
+            Vector3 native = path.Spline.EvaluatePosition(normalized);
+            var sample = path.Sample(progress);
+            Near(sample.CameraPosition, P(native.x, native.y, native.z));
+            Near(sample.AimPosition, plan.Sample(progress).AimPosition);
+            Check(sample.ScreenX == -.1f && sample.ScreenY == -.06f, "Native Dolly replaced directed composition.");
+        }
+    }
+    private static void DirectedStrength()
+    {
+        var plan = Directed();
+        using var low = new ScenicSplinePath(); using var high = new ScenicSplinePath();
+        Check(low.Prepare(plan, .25f) && high.Prepare(plan, 1.5f), "Directed route preparation failed.");
+        for (int i = 0; i <= 100; i++)
+        {
+            Near(low.Sample(i / 100f).CameraPosition, high.Sample(i / 100f).CameraPosition, .0001);
+            Near(low.Sample(i / 100f).AimPosition, high.Sample(i / 100f).AimPosition, .0001);
+        }
+        Check(Math.Abs(low.Length - high.Length) < .0001f, "Motion strength reshaped a screened directed route.");
+    }
+    private static void DirectedPrefix()
+    {
+        var plan = Directed(ScenicShotRole.Reveal); var prefix = plan.Trim(.6);
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(prefix, 1), "Directed prefix was not prepared.");
+        Near(path.Sample(0).CameraPosition, plan.Sample(0).CameraPosition);
+        Near(path.Sample(1).CameraPosition, plan.Sample(.6).CameraPosition);
+        Near(path.Sample(1).AimPosition, plan.Sample(.6).AimPosition);
+        Check(prefix.FieldOfView == plan.FieldOfView, "Trimming changed the fixed shot lens.");
+        // A regenerated spline must still receive route validation; this proves
+        // endpoint/prefix intent, not collision equivalence to the source spline.
+    }
+    private static void DirectedEarlyMovement()
+    {
+        var plan = Directed(); using var path = new ScenicSplinePath(); path.Prepare(plan, 1);
+        float early = (float)Math.Min(1, 2 / plan.DurationSeconds);
+        Check(path.Distance(early) > path.Length * .04f, "Directed shot spends its opening effectively still.");
+        float cruise = path.Distance(.35f) - path.Distance(.25f);
+        Check(Math.Abs((path.Distance(.65f) - path.Distance(.55f)) - cruise) < .0001f,
+            "Native directed route contains an unplanned middle speed surge.");
+    }
+    private static void DirectedAuthoredPath()
+    {
+        var plan = Directed(ScenicShotRole.Reveal, false);
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(plan, 1), "Authored scenic route could not be prepared.");
+        foreach (float progress in new[] { 0f, .015f, .08f, .17f, .35f, .52f, .73f, .92f, .99f, 1f })
+        {
+            ScenicShotSample authored = plan.Sample(progress), output = path.Sample(progress);
+            Near(output.CameraPosition, authored.CameraPosition, 0);
+            Near(output.AimPosition, authored.AimPosition, 0);
+            Check(output.ScreenX == authored.ScreenX && output.ScreenY == authored.ScreenY,
+                "Dolly-off changed the authored composition.");
+        }
+    }
+    private static void DirectedAuthoredPrefix()
+    {
+        var original = Directed(ScenicShotRole.Reveal, false);
+        var prefix = original.Trim(.63);
+        Check(!prefix.UseNativeSpline && prefix.FieldOfView == original.FieldOfView,
+            "Trimming reset the authored-body selection or fixed lens.");
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(prefix, 1), "Trimmed authored route could not be prepared.");
+        Near(path.Sample(0).CameraPosition, original.Sample(0).CameraPosition, 0);
+        Near(path.Sample(1).CameraPosition, original.Sample(.63).CameraPosition, .0001);
+        Near(path.Sample(1).AimPosition, original.Sample(.63).AimPosition, .0001);
+        Near(path.Sample(.37f).CameraPosition, prefix.Sample(.37f).CameraPosition, 0);
     }
     private static void Throws(Action action)
     {

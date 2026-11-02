@@ -60,6 +60,7 @@ internal sealed class ScenicSplinePath : IDisposable
         if (!Ready) throw new InvalidOperationException("No prepared scenic spline.");
         if (!Finite(progress)) throw new ArgumentOutOfRangeException(nameof(progress));
         float p = Mathf.Clamp01(progress);
+        if (plan!.IsDirected && !plan.UseNativeSpline) return plan.Sample(p);
         Vector3 camera = SplineUtility.EvaluatePosition(Spline!, Ease(p));
         return plan!.Sample(p, shapeStrength).WithCameraPosition(ToCore(camera));
     }
