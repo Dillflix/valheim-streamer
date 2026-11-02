@@ -37,6 +37,33 @@ internal sealed class RemoteObserverClient
             item.StateAgeSeconds + elapsed, item.MetadataAgeSeconds + elapsed,
             item.HealthLossAgeSeconds.HasValue ? (float?)Math.Min(ObserverContextProtocol.MaximumAgeSeconds, item.HealthLossAgeSeconds.Value + elapsed) : null);
     }
+    private readonly ObserverActivityCache activity = new ObserverActivityCache();
+    private float activityProbeAt = -1, nextActivity;
+    private bool activitySupported, activityUnavailable, activityRejected;
+    internal ObserverActivitySnapshot? Activity => Isolated && Approved ? activity.Snapshot : null;
+    internal double ActivityAge => activity.Age(Time.realtimeSinceStartup);
+    internal bool ActivityFresh => Isolated && Approved && !activityUnavailable && activity.Fresh(Time.realtimeSinceStartup);
+    internal string ActivityStatus
+    {
+        get
+        {
+            if (!Isolated || !Approved) return "Activity: awaiting authorized observer connection";
+            if (activityUnavailable) return "Activity: optional server observations unavailable; connected-player wildlife cutaways disabled";
+            if (!activitySupported) return "Activity: probing optional server support";
+            ObserverActivitySnapshot? snapshot = Activity;
+            if (snapshot?.Enabled != true) return "Activity: server observations disabled";
+            if (!snapshot.Complete) return "Activity: incomplete ordinary-player cohort";
+            double age = ActivityAge;
+            if (age >= ObserverActivityProtocol.FreshSeconds) return "Activity: server observations stale";
+            int fresh = 0;
+            foreach (ObserverPlayerActivity player in snapshot.Players) if (player.Fresh(age)) fresh++;
+            return "Activity: " + fresh + "/" + snapshot.Players.Count + " players with fresh observations; age " + age.ToString("F1") + "s";
+        }
+    }
+    // The caller must also match the complete discovery cohort before making an
+    // all-player decision. This accessor never extrapolates observed idle time.
+    internal ObserverPlayerActivity? GetPlayerActivity(string id, string characterId) =>
+        Isolated && Approved && !activityUnavailable ? activity.Find(id, characterId, Time.realtimeSinceStartup) : null;
     internal bool Isolated => requested && world && world == ZNet.instance;
     internal bool Approved { get; private set; }
     internal bool Failed => failed;
@@ -80,12 +107,15 @@ internal sealed class RemoteObserverClient
         client.readySince = -1; client.nextHello = client.nextDiscovery = 0; client.discovery.Reset();
         client.context.Reset(); client.contextProbeAt = -1; client.nextContext = 0;
         client.contextSupported = client.contextUnavailable = client.contextRejected = false;
+        client.activity.Reset(); client.activityProbeAt = -1; client.nextActivity = 0;
+        client.activitySupported = client.activityUnavailable = client.activityRejected = false;
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
         if (client.requested)
         {
             __0.m_rpc.Register<int, int>(ObserverProtocol.Reply, client.Reply);
             __0.m_rpc.Register<ZPackage>(ObserverDiscoveryProtocol.Reply, client.DiscoveryReply);
             __0.m_rpc.Register<ZPackage>(ObserverContextProtocol.Reply, client.ContextReply);
+            __0.m_rpc.Register<ZPackage>(ObserverActivityProtocol.Reply, client.ActivityReply);
         }
     }
     private static bool RequestBeforeAdmission(ZRpc __0)
@@ -166,6 +196,48 @@ internal sealed class RemoteObserverClient
         catch (Exception error)
         { contextUnavailable = true; context.Reset(); log("Optional server context request unavailable: " + error.GetType().Name); }
     }
+    private void ActivityReply(ZRpc rpc, ZPackage package)
+    {
+        if (!Isolated || !Approved || failed || activityRejected || server == null ||
+            !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
+        try
+        {
+            if (package.Size() > ObserverActivityProtocol.MaxPacketBytes) throw new ArgumentException("Observer activity packet too large.");
+            ObserverActivitySnapshot snapshot = ObserverActivityProtocol.Decode(package.GetArray());
+            if (snapshot.WorldId != world!.GetWorldUID()) throw new ArgumentException("Observer activity world mismatch.");
+            activity.Accept(snapshot, Time.realtimeSinceStartup);
+            activitySupported = true; activityUnavailable = false;
+        }
+        catch (Exception error)
+        {
+            // Optional telemetry cannot revoke a correctly admitted observer.
+            activityUnavailable = activityRejected = true; activity.Reset();
+            log("Optional server activity rejected after " + error.GetType().Name + "; connected-player wildlife cutaways disabled.");
+        }
+    }
+
+    private void TickActivity(float now)
+    {
+        if (!Approved || activityUnavailable || server == null) return;
+        if (!activitySupported && activityProbeAt >= 0)
+        {
+            if (now - activityProbeAt >= ObserverActivityProtocol.ProbeSeconds)
+            {
+                activityUnavailable = true;
+                log("Optional server activity unavailable; existing observer camera operation remains active.");
+            }
+            return;
+        }
+        if (now < nextActivity) return;
+        nextActivity = now + 2;
+        if (activityProbeAt < 0) activityProbeAt = now;
+        try { server.m_rpc.Invoke(ObserverActivityProtocol.Request, ObserverActivityProtocol.Version); }
+        catch (Exception error)
+        {
+            activityUnavailable = true; activity.Reset();
+            log("Optional server activity request unavailable: " + error.GetType().Name);
+        }
+    }
     internal void Tick()
     {
         if (!Isolated) return;
@@ -189,12 +261,14 @@ internal sealed class RemoteObserverClient
             server.m_rpc.Invoke(ObserverDiscoveryProtocol.Request, ObserverDiscoveryProtocol.Version);
         }
         TickContext(Time.realtimeSinceStartup);
+        TickActivity(Time.realtimeSinceStartup);
     }
     internal void Spawned() { spawned = true; Status = "Read-only observer connection active"; }
     internal void Fail(string reason, bool terminal = true)
     {
         if (failed) return;
-        failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); context.Reset(); contextUnavailable = true; Status = reason; log(reason);
+        failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); context.Reset(); contextUnavailable = true;
+        activity.Reset(); activityUnavailable = true; Status = reason; log(reason);
         if (world && world == ZNet.instance && server != null && world.GetPeers().Contains(server)) world.Disconnect(server);
         // Do not unpin input/network restrictions inside a still-loaded world.
     }

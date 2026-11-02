@@ -54,7 +54,7 @@ namespace ValheimBroadcaster.Core
         { Id = AutonomousDirector.Label(id, nameof(id)); Name = AutonomousDirector.Label(name, nameof(name)); Position = position; }
     }
 
-    public enum AutonomyState { Disabled, Following, Acquiring, Scenic, Travelling, Waiting, Paused, RouteTest }
+    public enum AutonomyState { Disabled, Following, Acquiring, Scenic, Travelling, Waiting, Paused, RouteTest, WildlifeCutaway }
     public enum AutonomyTravelKind { Player, Scenic, RouteTest }
     public sealed class AutonomyTravelRequest
     {
@@ -124,6 +124,10 @@ namespace ValheimBroadcaster.Core
         public int RouteCount => route?.Count ?? 0;
         public double ReadyDwellSeconds => dwell;
         public bool PresentationGraceActive { get; private set; }
+        public bool WildlifeCutawayActive { get; private set; }
+        public bool CanStartWildlifeCutaway => Enabled && !paused && !Held && State == AutonomyState.Following &&
+            hasPresentedTarget && targetId != null && PendingTravel == null && ActiveTravel == null && route == null &&
+            requestedSelection == null && requestedStep == 0;
         public double ReacquisitionGraceSeconds { get; set; } = 3;
         public double DwellSeconds { get => dwellSeconds; set => dwellSeconds = Positive(value, nameof(DwellSeconds)); }
         public double AcquisitionSeconds { get => acquisitionSeconds; set => acquisitionSeconds = Positive(value, nameof(AcquisitionSeconds)); }
@@ -142,6 +146,7 @@ namespace ValheimBroadcaster.Core
             if (Enabled == enabled) return;
             Enabled = enabled;
             coverage.Reset();
+            WildlifeCutawayActive = false;
             paused = false; PendingTravel = ActiveTravel = null; route = null;
             SetTarget(null, 0); started = false; idleActive = false; idleDwell = 0; idleUnreadyBegan = -1;
             requestedSelection = null; requestedStep = 0;
@@ -153,6 +158,7 @@ namespace ValheimBroadcaster.Core
         {
             if (paused == value) return;
             paused = value;
+            WildlifeCutawayActive = false;
             PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
             if (value) { PendingTravel = ActiveTravel = null; State = AutonomyState.Paused; Reason = "Automatic direction paused"; }
             else { acquisitionBegan = lastNow; idleUnreadyBegan = -1; }
@@ -172,7 +178,8 @@ namespace ValheimBroadcaster.Core
         }
 
         public void Tick(double now, double dt, IReadOnlyList<AutonomyPlayer> players, IReadOnlyList<ScenicRegion> regions,
-            AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false)
+            AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false,
+            bool wildlifeCutaway = false)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (players == null) throw new ArgumentNullException(nameof(players));
@@ -189,6 +196,11 @@ namespace ValheimBroadcaster.Core
             if (!Enabled) { State = AutonomyState.Disabled; return; }
             if (!started) { started = true; acquisitionBegan = now; }
             if (paused) { State = AutonomyState.Paused; Reason = "Automatic direction paused"; return; }
+            // An intentional editorial cutaway is not a missing player shot. It
+            // never substitutes for transport/route state or an operator command.
+            if (WildlifeCutawayActive && (!wildlifeCutaway || Held || requestedSelection != null || requestedStep != 0 ||
+                ActiveTravel != null || PendingTravel != null || travelBusy || route != null || Find(players, targetId) == null))
+                EndWildlifeCutaway(now);
             if (ActiveTravel != null || travelBusy)
             {
                 State = AutonomyState.Travelling;
@@ -207,6 +219,18 @@ namespace ValheimBroadcaster.Core
             if (route != null) { TickRoute(now, footage, idleShotReady); return; }
 
             AutonomyPlayer? selected = Find(players, targetId);
+            if (wildlifeCutaway && selected != null && (WildlifeCutawayActive || CanStartWildlifeCutaway))
+            {
+                WildlifeCutawayActive = true;
+                TargetName = selected.Name;
+                // Rebase only acquisition clocks. Preserve target dwell and real
+                // viewing credit; do not claim that the player is still rendered.
+                acquisitionBegan = now; shotLostAt = outOfReachSince = -1;
+                PresentationGraceActive = false;
+                State = AutonomyState.WildlifeCutaway;
+                Reason = "Wildlife cutaway; retaining " + selected.Name + " for return";
+                return;
+            }
             if (requestedSelection != null)
             {
                 AutonomyPlayer? requested = Find(players, requestedSelection);
@@ -426,6 +450,7 @@ namespace ValheimBroadcaster.Core
             Held = paused = started = idleActive = false; idleUnreadyBegan = -1; idleDwell = dwell = 0;
             acquisitionTrips = 0; lastPlayerDestination = null; lastTravelAt = double.NegativeInfinity;
             hasPresentedTarget = PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
+            WildlifeCutawayActive = false;
             CurrentRegionId = CurrentRegionName = TargetName = LastFailure = null;
             CompletedTravels = FailedTravels = 0; route = null; routeIndex = 0; RouteTestResult = "No solo route run";
             State = AutonomyState.Disabled; Reason = "Automatic direction disabled";
@@ -438,8 +463,15 @@ namespace ValheimBroadcaster.Core
             if (string.Equals(targetId, id, StringComparison.Ordinal)) return;
             targetId = id; TargetName = player?.Name; acquisitionBegan = now; dwell = 0; acquisitionTrips = 0; lastPlayerDestination = null;
             hasPresentedTarget = PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
+            WildlifeCutawayActive = false;
             Revision++;
             if (id != null) { lastPlayer = id; State = AutonomyState.Acquiring; Reason = "Acquiring " + player!.Name; }
+        }
+        private void EndWildlifeCutaway(double now)
+        {
+            WildlifeCutawayActive = false;
+            acquisitionBegan = now; shotLostAt = outOfReachSince = -1;
+            PresentationGraceActive = false;
         }
         private static AutonomyPlayer? Find(IReadOnlyList<AutonomyPlayer> players, string? id)
         {

@@ -1,5 +1,15 @@
 # Validation and runtime test record
 
+## 0.8.17 observed-idle wildlife cutaways
+
+Built directly from 0.8.16 (`04e1361a6aaae3e44b60e3ba65c963362ec22b64`). The new policy permits a bounded nearby creature shot only after complete fresh server evidence establishes that all connected ordinary players have been observed idle for at least 60 seconds. Local action can veto that evidence. Existing creature selection, usable-footage dwell and cooldowns apply; activity, stale/unknown evidence or subject loss resumes player coverage. Another cutaway requires at least 60 seconds of rearm. Manual hold, self-follow, probe and route operations suppress the feature.
+
+A separate optional `ActivityRequest1` / `ActivityReply1` exchange observes existing replicated movement/actions, station/crafting, block/emote and health evidence. It does not establish raw-input inactivity or quiet inventory/menu use. Admission remains protocol 3, discovery 2 and optional camera context 1. Older servers preserve player coverage and explicitly disable cutaways without activity support. Empty-server coverage, spawning, simulation ownership, world time and travel permissions are unchanged.
+
+Local validation: **264/264 core cases pass**, including 37 new cases for idle evidence, optional activity packets/freshness, cutaway eligibility/return and suspended acquisition timing. Core, client and server compile with warnings treated as errors against the matching real Valheim 1.0.21 / Unity 6000 / BepInEx 5.4.23.2 / Jötunn 2.30.2 references and Cinemachine 3.1.7. Local validation uses the SDK compiler; CI additionally runs normal builds, real-assembly audits and Windows/Linux RTMP tests. **No Unity/Valheim runtime session has been run here.** The [camera-director matrix](CAMERA-DIRECTOR.md#runtime-validation) adds all-player 60-second eligibility, a distant active player, action/roster/staleness interruption, rearm, unsupported-server fallback and no-creature/suppression cases. Preserve the shared-camera and player-follow regressions below; these runtime procedures are not claimed passes.
+
+For this feature, install the 0.8.17 client plugin/core/Cinemachine DLLs with notices, and the dedicated server plugin/core pair, preserving configuration. Ordinary players need no mod. No live installation or server restart is performed.
+
 ## 0.8.16 shared player, creature and scenic direction
 
 Built directly from 0.8.15 (`ca43f2beca6370b9ac95034bc2e91a598f822f15`). Source inspection confirmed the user's report: Cinemachine was selected only for player targets. Scenic/creature coverage still used a fixed offset, legacy position smoothing and immediate centered aim; cinematic controls had no effect there. Idle dwell advanced without usable-image proof, and ordinary coverage/path resets discarded displayed-pose continuity.

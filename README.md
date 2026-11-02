@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.17 adds nearby wildlife cutaways when every connected ordinary player has been observed idle for at least 60 seconds.** It builds directly on 0.8.16. Fresh complete server activity evidence is required; movement or observed action returns coverage to players. Cutaways use already-loaded creatures and the existing creature camera/dwell, with at least 60 seconds before another cutaway. This is observed inactivity, not proof that a player is away from their keyboard. Install the 0.8.17 server/core pair for this feature, plus the client's three DLLs and included notices, preserving configuration. Older protocol-3 servers retain player coverage and report why cutaways are unavailable. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md#observed-idle-wildlife-cutaways) for limits and pending runtime checks.
+
 **0.8.16 brings the shared Cinemachine pipeline to scenic and creature coverage.** It builds directly on 0.8.15. Scenery now uses ranked environmental paths with independent camera/aim movement and five non-looping shot styles; creatures use their actual body dimensions and observed movement. Composition, damping, movement controls and validated handoffs now apply across all three production modes. Idle pacing and history require usable live footage, not held images or a successful camera calculation alone. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for mode behavior and pending runtime tests. Replace all three client DLLs and included notices together, preserving configuration. No server update is required.
 
 **0.8.15 separates camera trajectories from player translation.** It builds directly on 0.8.14 and retains its deliberate composition. Each procedural candidate now develops a persistent position in the world while aiming at the current subject, with activity-dependent tracking and bounded corrections. This addresses the target-relative follow point, velocity prediction and blend displacement that made the camera feel attached during movement. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior, diagnostics and pending visual tests. Replace all three client DLLs and included notices together, preserving configuration. The existing protocol-3 server can remain installed.
@@ -153,6 +155,7 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast follow <id>` | Select an exact listed ID and hold it; start with `broadcast on` first |
 | `broadcast status` | Show director state, target, hold/auto mode, and roster count |
 | `broadcast stream on` / `off` / `status` / `diagnostics` | Request/cancel RTMP audio + video and inspect encoder/retry failures; publishing requires an eligible camera |
+| `broadcast wildlife on` / `off` / `status` | Enable/disable observed-idle wildlife cutaways or inspect activity freshness, minimum idle time, rearm time and blocking reason |
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
@@ -193,6 +196,7 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 | `Director / DwellSeconds` | `30` | Ready player footage before rotating targets; separate from composition duration |
 | `Director / TargetTimeoutSeconds` | `20` | Maximum experimental remote acquisition attempt |
 | `Director / AcquisitionCooldownSeconds` | `30` | Local-interest interval between remote attempts |
+| `Idle / WildlifeCutaways` | `true` | Allow nearby wildlife cutaways after all connected ordinary players are observed idle for 60 seconds; requires the 0.8.17 server activity service |
 | `Idle / ScenicSeconds` | `45` | Usable scenic footage before trying a creature or a fresh environmental path |
 | `Idle / CreatureSeconds` | `25` | Usable creature footage before returning to scenery |
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
@@ -229,7 +233,7 @@ Press **F8** while alone to test normal idle coverage (F10 is still the explicit
 
 Normal coverage locally masks the broadcaster's child renderers, restoring their previous settings on stop. F10 deliberately shows the character for self-follow testing. This is local presentation only: in ordinary modes other clients can still see the character, and player input, collision, damage, AI interactions, and simulation effects are not removed. See [OBSERVER.md](docs/OBSERVER.md).
 
-When other players become ready, coverage switches to them and rotates if several are available. When none remain ready, idle resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
+When other players become ready, coverage switches to them and rotates if several are available. Authorized autonomous sessions can briefly show nearby wildlife when all connected ordinary players meet the observed-idle rule; see [wildlife cutaways](docs/CAMERA-DIRECTOR.md#observed-idle-wildlife-cutaways). When none remain ready, normal idle coverage resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
 
 [IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the local shot layer and its earlier design. [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) documents the current read-only acquisition, scenic traversal and recovery layers. Multiplayer isolation remains experimental and requires the companion. Offline observation retains manually selected travel; automatic discovery requires the authorized server feed.
 

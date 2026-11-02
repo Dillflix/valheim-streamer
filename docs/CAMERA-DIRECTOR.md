@@ -1,10 +1,10 @@
-# Shared camera director (0.8.16)
+# Shared camera director (0.8.17)
 
-Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.16 builds directly on 0.8.15: its independent actor trajectories and player/group composition are retained, and idle coverage now receives the same camera mechanics with scene-specific inputs.
+Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.17 builds directly on 0.8.16 and retains its shared camera mechanics. It adds bounded nearby wildlife cutaways during globally observed player inactivity.
 
 Scenery supplies planned world camera and aim paths; creatures supply their actual dimensions and observed movement. Neither is represented as a fake player. The observer's travel/authorization rules remain separate. Probe viewing stays a fixed acquisition measurement, while travel and recovery use the existing held-frame/slate presentation.
 
-Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.16 visual cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
+Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.17 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
 
 ## Controls and configuration
 
@@ -21,9 +21,10 @@ Use `-console` when launching Valheim, then F5. Close the console to observe the
 | `broadcast camera motion 1` | Restore default decorative movement strength; accepted range is 0–1.5 |
 | `broadcast camera damping 0.8 1` | Set position and aim damping in seconds; each accepts 0.1–3 |
 | `broadcast camera procedural` / `fixed` | Select shared procedural or legacy fixed framing for player, creature and scenic coverage |
-| `broadcast diagnostics` | Include observer/discovery/output state and optional server-context status |
+| `broadcast wildlife on` / `off` / `status` | Enable/disable wildlife cutaways or inspect activity freshness, minimum idle time, rearm time and blocking reason |
+| `broadcast diagnostics` | Include observer/discovery/output state, optional server context and wildlife status |
 
-These controls apply to all three production modes. `composition off` eases actor or environmental placement toward the centered comparison preference without disabling damping or visibility checks. Actor body framing can still require a corrective offset. `steady` retains the developed decorative offset/path sample rather than snapping back to the origin; necessary actor tracking continues. `motion 0` likewise stops discretionary development while keeping tracking and framing. Normal coverage scheduling can still choose another subject or scenic plan; `broadcast hold` pauses that scheduling rather than freezing all camera mechanics. The probe remains a fixed measurement independent of these cinematic controls.
+The camera controls apply to all three production modes. `composition off` eases actor or environmental placement toward the centered comparison preference without disabling damping or visibility checks. Actor body framing can still require a corrective offset. `steady` retains the developed decorative offset/path sample rather than snapping back to the origin; necessary actor tracking continues. `motion 0` likewise stops discretionary development while keeping tracking and framing. Normal coverage scheduling can still choose another subject or scenic plan; `broadcast hold` pauses that scheduling rather than freezing all camera mechanics. The probe remains a fixed measurement independent of these cinematic controls.
 
 | `Camera` key | Default | Meaning |
 | --- | --- | --- |
@@ -58,7 +59,17 @@ A still-valid scene remains available while a replacement is sought, with its de
 
 Creature observation uses `Character.GetHeight`/`GetRadius`, stable character identity, filtered movement and body facing. Vertical movement is retained for flying/swimming actors. Stationary creatures remain eligible and can receive a calm developing shot; locomotion uses bounded tracking. An observed attack can support a combat hint, but the camera does not invent an opponent or infer herds from proximity. Dormant creatures are not awakened, simulated or repositioned for the broadcast. Their body envelope approximates character dimensions rather than every animated wing, tail or weapon.
 
-Scenic and creature dwell advance only on a usable live image matched to the current mode, revision and scenic plan ID. Held framebuffers, slates and previous-plan footage do not count. A creature that cannot produce usable footage for three seconds yields to scenery and receives a short failed-view cooldown. After three seconds without usable scenery, the director can try an eligible creature without claiming that scenic footage was shown. Successfully shown creatures retain the separate five-minute repeat cooldown. Ready players preempt idle coverage immediately.
+Scenic and creature dwell advance only on a usable live image matched to the current mode, revision and scenic plan ID. Held framebuffers, slates and previous-plan footage do not count. During normal idle coverage, a creature that cannot produce usable footage for three seconds yields to scenery and receives a short failed-view cooldown. After three seconds without usable scenery, the director can try an eligible creature without claiming that scenic footage was shown. Successfully shown creatures retain the separate five-minute repeat cooldown. Ready players preempt normal idle coverage; the observed-idle wildlife policy below is the bounded exception.
+
+## Observed-idle wildlife cutaways
+
+`Idle.WildlifeCutaways` defaults to `true` in an authorized autonomous observer session. A cutaway requires a fresh, complete server roster showing **every connected ordinary player** observed idle for at least 60 seconds, including players outside the broadcaster's loaded area. Missing, stale, unspawned or otherwise unknown activity blocks it. Local observation of a loaded player's movement or action can veto the cutaway sooner than the next server reply.
+
+The server observes existing replicated movement and action evidence, including attack/block/emote, station/crafting state and health changes. It does not receive raw keyboard/mouse input or reliably identify quiet inventory/menu use. **Observed idle does not mean AFK.** A motionless player may still be engaged with the game; diagnostics describe the evidence rather than claiming intent. Ordinary players need no mod.
+
+Only eligible living creatures already loaded within the smaller of `Idle.CreatureRadius` and 30 metres of the selected player can be used. Selection retains the existing creature repeat/failure cooldowns, shared Cinemachine framing and default 25 seconds of usable creature footage. Cutaways also have a wall-time limit of `Idle.CreatureSeconds`, so repeated presentation gaps cannot extend one indefinitely. No suitable creature means continue player coverage. Activity, stale/incomplete evidence, roster changes, or loss of the creature ends the cutaway and resumes player coverage/acquisition. At least 60 seconds must pass before another cutaway can start, with all-player inactivity still required. Manual hold, self-follow, probe and solo route operations suppress cutaways.
+
+This feature does not seek distant wildlife, spawn creatures, activate dormant simulation or change world time. Broadcaster-only sessions continue the existing scenic/creature idle behavior. `broadcast wildlife status` reports the blocking reason, minimum observed idle duration and remaining rearm interval; it distinguishes an unsupported server from players who are active or not yet observed long enough.
 
 ## Deliberate actor composition
 
@@ -114,13 +125,13 @@ Scenic diagnostics report the environmental style and phase, current path/progre
 
 ## Optional server context and compatibility
 
-Observer admission remains **protocol 3**. Version 0.8.16 changes no server behavior or wire schema and requires no new server deployment. Existing protocol-3 servers can continue serving this client. Damping, local activity evidence and cooperative framing work without optional telemetry. Ordinary players still need no mod.
+Observer admission remains **protocol 3**, discovery remains **protocol 2**, and optional camera context remains **protocol 1**. Version 0.8.17 adds a separate optional `ActivityRequest1` / `ActivityReply1` exchange for complete server-observed player inactivity. The 0.8.17 companion is required for wildlife cutaways while players are connected. Older protocol-3 servers continue normal player coverage; missing activity support disables only these cutaways and supplies a diagnostic reason. Damping, local activity evidence and cooperative framing still work without optional telemetry. Ordinary players need no mod.
 
 The companion added in 0.8.13 can supply observation ages, coarse velocity and recent replicated health-loss hints through a separate optional context exchange. `Observer.ContextEnabled` defaults to `true`; observer authorization and position-sharing policy still apply. It reads existing player ZDOs without activating remote creatures, generating terrain or assigning simulation ownership. Health loss has no damage-source attribution.
 
 The client probes support after observer authorization. An older server that does not reply falls back to local context after six seconds. Freshness, character identity and packet bounds are checked; stale or invalid optional context does not revoke an approved observer role. The camera currently uses fresh primary health-loss hints as supporting evidence, not as sufficient proof of combat.
 
-Install the client's three DLLs and included `ThirdParty` notices together, preserving configuration. A server still predating that optional context capability can be upgraded for those extra hints; if doing so, replace its server/core pair together during the operator's normal restart. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
+For the new wildlife feature, install the 0.8.17 client's three DLLs and included `ThirdParty` notices together, and replace the dedicated server's server/core pair together during its normal restart. Preserve configuration on both. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
 
 ## Reused Cinemachine components
 
@@ -140,10 +151,15 @@ Vegetation renderer bounds approximate leaves and transparency; custom vegetatio
 
 ## Runtime validation
 
-**The 0.8.16 visual cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect.
+**The 0.8.17 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect.
 
 | Exercise | Expected result to verify |
 | --- | --- |
+| Updated client/server: one ordinary player idle near an eligible loaded creature; inspect wildlife status | No cutaway before 60 seconds of observed inactivity; a bounded creature shot can follow, then player coverage and at least 60 seconds before another cutaway |
+| Two ordinary players, one nearby and idle, one distant and moving/acting | No cutaway until both have fresh confirmed inactivity for at least 60 seconds; the loaded roster alone cannot authorize it |
+| During a cutaway, move, attack, block, emote, craft or change station state; separately join/leave, respawn or interrupt activity delivery | Return to player coverage/acquisition when action or incomplete/stale evidence appears; no permission persists across roster/character changes |
+| Use an older protocol-3 server, then disable cutaways; separately test manual hold, self-follow, probe and solo route | Normal player coverage remains usable; each suppression or unsupported-feature reason is explicit |
+| No eligible loaded creature, a hidden/dead/unloaded creature, then a broadcaster-only server | No wildlife-seeking travel or simulation changes; return to player coverage when required, and retain normal empty-server scenic behavior |
 | Broadcaster alone: leave scenic coverage running through several plans and at least one region interval | Different non-looping shot styles and locations; camera and aim do not translate in lockstep; scenery does not settle into one repeated anchor orbit |
 | Scenic hillside, coast/open terrain, dense forest and near structures | Readable environmental framing; actual camera orientation/lens guide foliage scoring; solid overlap is rejected while foliage lowers quality and prompts alternatives |
 | During a developed scenic shot, compare `steady`, `dynamic`, `motion 0`, `motion 1` and `composition off/on` | Each control affects scenery; no snap back to the plan origin; resumption develops from the retained viewpoint |

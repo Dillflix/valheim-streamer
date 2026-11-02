@@ -13,7 +13,8 @@ namespace ValheimBroadcaster.Core
         public string? SubjectId { get; private set; }
         public bool AwaitingPlayers { get; private set; }
         public long Revision { get; private set; }
-        private double elapsed, unshownSeconds;
+        public bool IsWildlifeCutaway { get; private set; }
+        private double elapsed, unshownSeconds, cutawaySeconds;
         private bool creaturePresented;
         private double scenicSeconds = 45, creatureSeconds = 25;
         private string? lastCreature;
@@ -40,12 +41,13 @@ namespace ValheimBroadcaster.Core
             elapsed = 0;
             lastCreature = null;
             clock = 0; recentCreatures.Clear(); failedCreatures.Clear();
-            unshownSeconds = 0; creaturePresented = false;
+            unshownSeconds = cutawaySeconds = 0; creaturePresented = IsWildlifeCutaway = false;
             AwaitingPlayers = false;
         }
 
         public void Tick(double dt, string? readyPlayerId, int connectedOthers,
-            bool idleSceneReady, IReadOnlyList<string> readyCreatures, bool holding = false, bool usableFootage = true)
+            bool idleSceneReady, IReadOnlyList<string> readyCreatures, bool holding = false,
+            bool usableFootage = true, bool allowWildlifeCutaway = false, string? retainedPlayerId = null)
         {
             if (double.IsNaN(dt) || double.IsInfinity(dt) || dt < 0) throw new ArgumentOutOfRangeException(nameof(dt));
             if (connectedOthers < 0) throw new ArgumentOutOfRangeException(nameof(connectedOthers));
@@ -53,32 +55,42 @@ namespace ValheimBroadcaster.Core
             Duration(CreatureCooldownSeconds);
             clock += Math.Min(dt, 86400);
             AwaitingPlayers = connectedOthers > 0 && readyPlayerId == null;
-            if (readyPlayerId != null) { Change(CoverageMode.Player, readyPlayerId); return; }
+            if (IsWildlifeCutaway && readyPlayerId == null && retainedPlayerId != null)
+            {
+                // Selection can return before presentation is ready. The camera
+                // still validates the retained actor/scene and may show recovery.
+                Change(CoverageMode.Player, retainedPlayerId); return;
+            }
+            if (readyPlayerId != null)
+            {
+                bool mayCutaway = allowWildlifeCutaway && connectedOthers > 0 && idleSceneReady && !holding;
+                if (IsWildlifeCutaway)
+                {
+                    cutawaySeconds += Math.Min(dt, 86400);
+                    if (!mayCutaway || !Contains(readyCreatures, SubjectId) ||
+                        !TickCreature(dt, false, usableFootage) || cutawaySeconds >= CreatureSeconds)
+                        Change(CoverageMode.Player, readyPlayerId);
+                    return;
+                }
+                if (mayCutaway && TrySelectCreature(readyCreatures))
+                { IsWildlifeCutaway = true; cutawaySeconds = 0; return; }
+                Change(CoverageMode.Player, readyPlayerId); return;
+            }
+            // If the player itself is unavailable, preserve the ordinary idle /
+            // recovery behavior rather than inventing a ready return target.
+            IsWildlifeCutaway = false; cutawaySeconds = 0;
             if (!idleSceneReady) { Change(CoverageMode.Recovery, null); return; }
             if (Mode != CoverageMode.Scenic && Mode != CoverageMode.Creature)
             { Change(CoverageMode.Scenic, null); return; }
             if (Mode == CoverageMode.Creature && !Contains(readyCreatures, SubjectId))
             { Change(CoverageMode.Scenic, null); return; }
-            if (usableFootage) unshownSeconds = 0;
-            else unshownSeconds += Math.Min(dt, 86400);
             if (Mode == CoverageMode.Creature)
             {
-                if (usableFootage)
-                {
-                    if (!creaturePresented)
-                    { Remember(recentCreatures, SubjectId!, clock); creaturePresented = true; }
-                }
-                else
-                {
-                    // A loaded actor can still have no usable camera. This is a
-                    // failed local view, not evidence requiring observer travel.
-                    if (unshownSeconds >= CreaturePresentationTimeout)
-                    {
-                        Remember(failedCreatures, SubjectId!, clock);
-                        Change(CoverageMode.Scenic, null); return;
-                    }
-                }
+                if (!TickCreature(dt, holding, usableFootage)) Change(CoverageMode.Scenic, null);
+                return;
             }
+            if (usableFootage) unshownSeconds = 0;
+            else unshownSeconds += Math.Min(dt, 86400);
             if (Mode == CoverageMode.Scenic && !usableFootage && unshownSeconds >= ScenicPresentationTimeout)
             {
                 // A failed landscape must not starve a loaded local creature.
@@ -89,15 +101,30 @@ namespace ValheimBroadcaster.Core
             }
             // Holding means an operator-held live shot, never a compositor image.
             if (holding || !usableFootage) return;
-            elapsed = Math.Min(Mode == CoverageMode.Scenic ? ScenicSeconds : CreatureSeconds, elapsed + dt);
-            if (Mode == CoverageMode.Creature)
-            {
-                if (elapsed >= CreatureSeconds) Change(CoverageMode.Scenic, null);
-                return;
-            }
+            elapsed = Math.Min(ScenicSeconds, elapsed + dt);
             if (elapsed < ScenicSeconds) return;
             if (!TrySelectCreature(readyCreatures))
             { elapsed = 0; Revision++; } // New scenic path, not a repeated orbit.
+        }
+
+        private bool TickCreature(double dt, bool holding, bool usableFootage)
+        {
+            if (usableFootage)
+            {
+                unshownSeconds = 0;
+                if (!creaturePresented)
+                { Remember(recentCreatures, SubjectId!, clock); creaturePresented = true; }
+                if (!holding) elapsed = Math.Min(CreatureSeconds, elapsed + dt);
+            }
+            else
+            {
+                unshownSeconds += Math.Min(dt, 86400);
+                // A loaded actor may have no usable local camera. This never
+                // authorizes travel, including during a player cutaway.
+                if (unshownSeconds >= CreaturePresentationTimeout)
+                { Remember(failedCreatures, SubjectId!, clock); return false; }
+            }
+            return holding || elapsed < CreatureSeconds;
         }
 
         private bool TrySelectCreature(IReadOnlyList<string> readyCreatures)
@@ -134,7 +161,8 @@ namespace ValheimBroadcaster.Core
         private void Change(CoverageMode mode, string? id)
         {
             if (Mode == mode && SubjectId == id) return;
-            Mode = mode; SubjectId = id; elapsed = unshownSeconds = 0; creaturePresented = false; Revision++;
+            Mode = mode; SubjectId = id; elapsed = unshownSeconds = cutawaySeconds = 0;
+            creaturePresented = IsWildlifeCutaway = false; Revision++;
         }
         private static bool Contains(IReadOnlyList<string> values, string? id)
         {

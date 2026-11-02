@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.16";
+    public const string PluginVersion = "0.8.17";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -54,6 +54,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly BroadcastDirector acquisition = new BroadcastDirector();
     private readonly AcquisitionWindow acquisitionWindow = new AcquisitionWindow();
     private readonly IdleShots idle = new IdleShots();
+    private readonly WildlifeCutaways wildlife = new WildlifeCutaways();
     private float nextCreatureRefresh;
     private float nextScenicSearch;
     private readonly TargetRoster roster = new TargetRoster();
@@ -215,8 +216,24 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 (coverage.Mode != CoverageMode.Scenic || presentedScenicPlan == idle.PlanId);
             bool usableIdlePicture = currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable;
             RecordVisibleCoverage(recentPicture);
+            bool cutawayAllowed = wildlife.Update(roster, remote,
+                !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding ||
+                !observer.RemoteSession || observer.Phase != ObserverPhase.Watching || automatic?.ControlsSelection != true ||
+                automatic.RouteActive, coverage.IsWildlifeCutaway);
+            // Select the cutaway before the automatic director can rotate or
+            // acquire a different player on this same threshold-crossing frame.
+            TargetRoster.Target? priorTarget = CurrentTarget();
+            if (cutawayAllowed && !coverage.IsWildlifeCutaway && automatic?.CanStartWildlifeCutaway == true &&
+                recentPicture && frameHold.HasRecentLiveFrame && presentedMode == CoverageMode.Player &&
+                priorTarget != null && presentedPlayerId == priorTarget.Identity.Id && CanShow(priorTarget))
+            {
+                idle.Refresh(Mathf.Min(30f, settings.CreatureRadius.Value), priorTarget.LoadedPlayer!.transform.position);
+                nextCreatureRefresh = Time.unscaledTime + 1f;
+                coverage.Tick(0, priorTarget.Identity.Id, roster.ConnectedOthers, true, idle.ReadyIds(),
+                    false, false, true);
+            }
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
-                usableIdlePicture);
+                usableIdlePicture && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
             if (automatic?.ControlsSelection == true && automatic.TargetId != null) director.Select(automatic.TargetId);
@@ -236,7 +253,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             TargetRoster.Target? current = CurrentTarget();
             // A lost/dead subject must not block another ready player until its dwell expires.
             if (current != null && !IsReady(current)) { RefreshRoster(); current = CurrentTarget(); }
-            if (automatic?.ControlsSelection != true) director.Tick(Time.unscaledDeltaTime, IsReady(current));
+            if (automatic?.ControlsSelection != true && !coverage.IsWildlifeCutaway) director.Tick(Time.unscaledDeltaTime, IsReady(current));
             current = CurrentTarget();
             bool readyPlayer = CanShow(current);
             bool preserveShot = coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
@@ -244,7 +261,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 ResetShot();
             if (Time.unscaledTime >= nextCreatureRefresh)
             {
-                idle.Refresh(settings.CreatureRadius.Value);
+                bool nearPlayer = current?.LoadedPlayer && roster.ConnectedOthers > 0;
+                idle.Refresh(nearPlayer ? Mathf.Min(30f, settings.CreatureRadius.Value) : settings.CreatureRadius.Value,
+                    nearPlayer ? current!.LoadedPlayer!.transform.position : (Vector3?)null);
                 nextCreatureRefresh = Time.unscaledTime + 1f;
             }
             if (!probe.Active && coverage.Mode == CoverageMode.Scenic &&
@@ -257,7 +276,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             // still requires a ready scene; frame hold/slate handles missing footage.
             if (!preserveShot)
                 coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
-                    roster.ConnectedOthers, !selfTest && idle.SceneReady, idle.ReadyIds(), director.IsHolding, usableIdlePicture);
+                    roster.ConnectedOthers, !selfTest && (coverage.IsWildlifeCutaway ? readyPlayer : idle.SceneReady),
+                    idle.ReadyIds(), director.IsHolding, usableIdlePicture,
+                    coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id);
             if (coverage.Revision != lastRevision)
             {
                 lastRevision = coverage.Revision;
@@ -319,6 +340,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private bool CanShow(TargetRoster.Target? target) => IsReady(target) && (!observer.RemoteSession || automatic?.CanFrame(target) == true);
     private void ResetShot()
     {
+        wildlife.Reset();
         playerShots.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null;
@@ -347,6 +369,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     }
     private void MoveTarget(int direction)
     {
+        wildlife.CancelForManual();
         if (automatic?.ControlsSelection == true) automatic.Next(direction);
         else if (direction > 0) director.Next(); else director.Previous();
     }
@@ -408,6 +431,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop(bool force = false, bool parked = false)
     {
+        wildlife.Reset();
         playerShots.Reset();
         if (observer.Active && !force)
         {
@@ -680,7 +704,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private string Status()
     {
-        if (observer.Active) return observer.Status + " | " + coverage.Mode + " | RTMP: " + (output?.Status ?? "Stopped") +
+        if (observer.Active) return observer.Status + " | " + (coverage.IsWildlifeCutaway ? "Wildlife cutaway" : coverage.Mode.ToString()) + " | RTMP: " + (output?.Status ?? "Stopped") +
             (observer.RemoteSession ? "\n" + automatic?.Status + " | " + remote.DiscoveryStatus : "");
         if (acquisitionFailure != null) return acquisitionFailure;
         if (probe.Active) return $"SOLO DISTANT SCENE TEST | {probe.State} | {probe.Elapsed:F0}s | RTMP: {output?.Status ?? "Stopped"}";
@@ -876,7 +900,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
@@ -976,7 +1000,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -987,6 +1011,17 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 switch (action)
                 {
                     case "camera": plugin.CameraCommand(args, context); return;
+                    case "wildlife":
+                        if (args.Length != 2) { context?.AddString("broadcast wildlife on|off|status"); return; }
+                        switch (args[1].ToLowerInvariant())
+                        {
+                            case "on": plugin.settings.WildlifeCutaways.Value = true; break;
+                            case "off": plugin.settings.WildlifeCutaways.Value = false; break;
+                            case "status": break;
+                            default: context?.AddString("broadcast wildlife on|off|status"); return;
+                        }
+                        context?.AddString("Wildlife cutaways " + (plugin.settings.WildlifeCutaways.Value ? "enabled" : "disabled") + ". " + plugin.wildlife.Diagnostics);
+                        return;
                     case "framehold":
                         context?.AddString(args.Length == 2 && args[1].Equals("test", StringComparison.OrdinalIgnoreCase)
                             ? plugin.frameHold.Test() : "broadcast framehold test");

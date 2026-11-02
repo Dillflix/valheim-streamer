@@ -35,6 +35,9 @@ internal sealed class AutonomousBroadcast
     internal string? TargetId => ControlsSelection ? policy.TargetId : null;
     internal bool Holding => policy.Held;
     internal bool RouteActive => policy.RouteTestActive;
+    internal bool WildlifeCutawayActive => policy.WildlifeCutawayActive;
+    internal bool CanStartWildlifeCutaway => ControlsSelection && observer.Active &&
+        observer.Phase == ObserverPhase.Watching && !recovering && policy.CanStartWildlifeCutaway;
     internal string Status => paused ? "Automatic direction paused for manual control" : !WantsEnabled ? "Automatic direction off" :
         recovering ? "Recovering travel: " + recoveryReason : policy.Reason;
     internal string Diagnostics => "Director: " + Status + " | state " + policy.State +
@@ -88,7 +91,7 @@ internal sealed class AutonomousBroadcast
         return movement >= 0 && movement < CameraReachability.ImmediateLimit;
     }
 
-    internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady)
+    internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false)
     {
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
@@ -189,7 +192,8 @@ internal sealed class AutonomousBroadcast
         }
         IReadOnlyList<ScenicRegion> destinations = remote.DiscoveryFresh && settings.ScenicTravel.Value ? regions : Array.Empty<ScenicRegion>();
         policy.Tick(now, dt, players, destinations, Convert(Player.m_localPlayer.transform.position),
-            presentedId, idleReady, observer.Phase == ObserverPhase.Travelling);
+            presentedId, idleReady, observer.Phase == ObserverPhase.Travelling,
+            wildlifeCutaway && observer.Phase == ObserverPhase.Watching);
         targetDiagnostics = "none";
         foreach (AutonomyPlayer player in players)
             if (player.Id == policy.TargetId)

@@ -16,7 +16,7 @@ internal sealed class IdleShots
     private readonly Queue<ShownPlace> recentPlaces = new Queue<ShownPlace>(12);
     private readonly ScenicVisibility visibility = new ScenicVisibility();
     private float radius = 50;
-    private Vector3 surveyOrigin, selectedPlace, bestPlace;
+    private Vector3 surveyOrigin, creatureOrigin, selectedPlace, bestPlace;
     private int sample, attemptsLeft, attemptsMade, viablePlans;
     private long nextPlanId;
     private ScenicShotPlan? bestPlan;
@@ -60,10 +60,11 @@ internal sealed class IdleShots
         internal CreatureCandidate(string id, Character actor, float distance) { Id = id; Actor = actor; Distance = distance; }
     }
 
-    internal void SetRegion(Vector3 origin) { Clear(); surveyOrigin = origin; HasRegion = TargetRoster.Finite(origin); }
+    internal void SetRegion(Vector3 origin) { Clear(); surveyOrigin = creatureOrigin = origin; HasRegion = TargetRoster.Finite(origin); }
     internal void Clear()
     {
         creatures.Clear(); readyIds.Clear(); nearby.Clear(); recentPlaces.Clear();
+        creatureOrigin = default;
         HasRegion = NeedsReplacement = false; Plan = bestPlan = null;
         sample = attemptsLeft = attemptsMade = viablePlans = 0;
         blockedSince = presentationAt = -1; nextViewCheck = lastFraction = shownSeconds = 0;
@@ -248,16 +249,19 @@ internal sealed class IdleShots
         return Ready(ground);
     }
 
-    internal void Refresh(float searchRadius)
+    internal void Refresh(float searchRadius, Vector3? creatureSearchOrigin = null)
     {
         radius = searchRadius;
         creatures.Clear(); nearby.Clear();
-        if (!SceneReady) return;
+        // A wildlife cutaway searches the selected player's already loaded area.
+        // It must not relocate the scenic survey or erase its paths/history.
+        creatureOrigin = creatureSearchOrigin ?? surveyOrigin;
+        if (creatureSearchOrigin.HasValue ? !Ready(creatureOrigin) : !SceneReady) return;
         foreach (Character actor in Character.GetAllCharacters())
         {
             if (!Eligible(actor) || actor.GetZDOID().IsNone()) continue;
             string id = actor.GetZDOID().ToString();
-            var candidate = new CreatureCandidate(id, actor, (actor.transform.position - surveyOrigin).sqrMagnitude);
+            var candidate = new CreatureCandidate(id, actor, (actor.transform.position - creatureOrigin).sqrMagnitude);
             int insert = 0;
             while (insert < nearby.Count && (nearby[insert].Distance < candidate.Distance ||
                 nearby[insert].Distance == candidate.Distance && StringComparer.Ordinal.Compare(nearby[insert].Id, id) < 0)) insert++;
@@ -277,7 +281,7 @@ internal sealed class IdleShots
     }
     internal Character? Find(string? id) => id != null && creatures.TryGetValue(id, out Character? actor) && Eligible(actor) ? actor : null;
     private bool Eligible(Character actor, bool checkScene = true) => actor && actor.isActiveAndEnabled && !actor.IsPlayer() && !actor.IsDead() &&
-        TargetRoster.Finite(actor.transform.position) && (actor.transform.position - surveyOrigin).sqrMagnitude <= radius * radius && (!checkScene || Ready(actor.transform.position));
+        TargetRoster.Finite(actor.transform.position) && (actor.transform.position - creatureOrigin).sqrMagnitude <= radius * radius && (!checkScene || Ready(actor.transform.position));
     internal static bool Ready(Vector3 position) => TargetRoster.Finite(position) && ZNetScene.instance && ZNetScene.instance.IsAreaReady(position);
     private static Vector3 FromCore(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);
     private static AutonomyPosition ToCore(Vector3 value) => new AutonomyPosition(value.x, value.y, value.z);
