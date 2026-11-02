@@ -9,6 +9,35 @@ namespace ValheimBroadcaster.Plugin;
 internal static class FoliageGeometryMath
 {
     internal const int MaximumVertices = 16384, MaximumIndices = 36000, MaximumCells = 64;
+    internal const float MaximumCanopyLift = 32f;
+
+    // A bounded proposal for a different immutable route, never a live camera
+    // correction or proof of visibility. Use the whole nearby vertical column
+    // so escaping one leaf cell does not merely enter another cell above it.
+    internal static bool TryCanopyLift(Vector3 camera, Bounds[] occupied, int count,
+        bool surveyComplete, float foregroundRange, out float lift)
+    {
+        lift = 0;
+        if (!surveyComplete || !Finite(camera) || occupied == null || count <= 0 || count > occupied.Length ||
+            !Finite(foregroundRange) || foregroundRange <= 0 || foregroundRange > 16f) return false;
+        bool inside = false;
+        float top = camera.y, radiusSquared = foregroundRange * foregroundRange;
+        for (int i = 0; i < count; i++)
+        {
+            Bounds bounds = occupied[i];
+            if (!Valid(bounds)) return false;
+            Vector3 min = bounds.min, max = bounds.max;
+            float dx = camera.x < min.x ? min.x - camera.x : camera.x > max.x ? camera.x - max.x : 0;
+            float dz = camera.z < min.z ? min.z - camera.z : camera.z > max.z ? camera.z - max.z : 0;
+            if (dx == 0 && dz == 0 && camera.y >= min.y && camera.y <= max.y) inside = true;
+            if (dx * dx + dz * dz <= radiusSquared) top = Math.Max(top, max.y);
+        }
+        float required = top + 1f - camera.y;
+        // Do not cap an excessive lift down to a height that remains in canopy.
+        if (!inside || !Finite(required) || required <= 0 || required > MaximumCanopyLift) return false;
+        lift = required;
+        return true;
+    }
 
     internal static bool TryBuild(Vector3[] vertices, int[] indices, out Bounds[] cells)
     {

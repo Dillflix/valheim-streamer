@@ -26,6 +26,9 @@ Version 0.8.26 adds the missing scenic surface-placement invariant. `ScenicSurfa
 
 
 
+Version 0.8.27 makes scenic rejection useful planning evidence. `ScenicRouteWindow` extracts contiguous readable intervals without bridging unknown poses or blocked corridors. `ScenicSplinePath.ProposeMeasuredSlice` fits a new immutable candidate through actual native endpoints and a measured middle point, avoiding the native-distance/authored-parameter mismatch. One bounded canopy-height alternative is available when complete local evidence places the camera inside retained vegetation. Both alternatives repeat full route validation. `ScenicRecoveryPolicy` separately bounds on-air missing output across plans, searches and temporary coverage changes; source acceptance does not renew it. Automatic roaming receives an explicit expiry, preserving existing travel restrictions without adding a second loading timeout. No observer or network protocol changes occur.
+
+
 ## Components
 
 | Component | Responsibility |
@@ -52,7 +55,7 @@ Version 0.8.26 adds the missing scenic surface-placement invariant. `ScenicSurfa
 | `ScenicFeatureSurvey` / `ScenicFeature` | Loaded terrain/water/object observations and bounded geometric environmental subject hints |
 | `ScenicShotFactory` / `ScenicShotPlan` | Immutable feature/role routes, fixed lens, aim/placement, travel/change estimates and route-derived duration |
 | `ScenicDirector` | Proposal/actual-presentation progress, shown-feature/role history, staged next shot and bounded blocked-motion recovery |
-| `ScenicProduction` | Incremental subject/route search, prefix revalidation, preparation/admission, retry and readiness integration |
+| `ScenicProduction` | Incremental subject/route search, measured-section/elevation revalidation, preparation/admission, retry and readiness integration |
 | `ScenicPoseSolver` / `ScenicPathEvaluator` | Identical selected Body/authored-aim solve for acquisition/playback, adaptive route screening and typed rejection evidence |
 | `ScenicCameraRig` | Execute one directed plan, validate actual pose/corridor, retain only the same plan's safe pose and cut on shot changes |
 | `CinematicShotDirector` | Usable-footage pacing, recent shot/movement history and constrained-space settling |

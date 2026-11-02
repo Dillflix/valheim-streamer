@@ -55,6 +55,10 @@ internal static class Program
         yield return ("Directed dolly-off samples follow the authored route at every tested point", DirectedAuthoredPath);
         yield return ("Trimming an authored scenic route preserves dolly-off and fixed lens", DirectedAuthoredPrefix);
         yield return ("Terrain-fitted scenic routes retain native distance parity without moving their subjects", RaisedNativeRoutes);
+        yield return ("Interior scenic slices rebuild native distance paths with selected authored endpoints", DirectedInteriorNativeSlice);
+        yield return ("Interior authored scenic slices retain body ownership and fixed composition", DirectedInteriorAuthoredSlice);
+        yield return ("Measured native scenic sections preserve validated body endpoints and original endpoint aims", MeasuredNativeSection);
+        yield return ("Measured scenic section proposals preserve authored ownership and reject invalid ranges", MeasuredSectionValidation);
         foreach (var test in FoliageGeometryTests.Cases()) yield return test;
     }
 
@@ -267,6 +271,106 @@ internal static class Program
                 "The same-ID fitted route reused its below-surface spline cache.");
             Near(original.Sample(.4f).CameraPosition, raised.Sample(.4f).CameraPosition);
         }
+    }
+
+    private static void DirectedInteriorNativeSlice()
+    {
+        ScenicShotPlan source = Directed(ScenicShotRole.Reveal), slice = source.Slice(.2, .82);
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(source, 1), "Source path was not prepared.");
+        var originalSpline = path.Spline;
+        Check(path.Prepare(slice, 1) && !ReferenceEquals(originalSpline, path.Spline),
+            "An interior same-ID slice reused the original complete spline.");
+        Near(path.Sample(0).CameraPosition, source.Sample(.2).CameraPosition, .0001);
+        Near(path.Sample(1).CameraPosition, source.Sample(.82).CameraPosition, .0001);
+        Near(path.Sample(0).AimPosition, source.Sample(.2).AimPosition, .0001);
+        Near(path.Sample(1).AimPosition, source.Sample(.82).AimPosition, .0001);
+        for (int i = 0; i <= 100; i++)
+        {
+            float progress = i / 100f;
+            float normalized = path.Spline!.ConvertIndexUnit(path.Distance(progress), PathIndexUnit.Distance, PathIndexUnit.Normalized);
+            Vector3 native = path.Spline.EvaluatePosition(normalized);
+            ScenicShotSample actual = path.Sample(progress), authored = slice.Sample(progress);
+            Near(actual.CameraPosition, P(native.x, native.y, native.z));
+            Near(actual.AimPosition, authored.AimPosition, .0001);
+            Check(actual.ScreenX == authored.ScreenX && actual.ScreenY == authored.ScreenY,
+                "A sliced native path replaced deliberate composition.");
+        }
+        // This is a regenerated spline over the exact authored subcurve. It
+        // must be revalidated; original native-distance samples do not prove
+        // collision equivalence for the newly generated knots/parameterization.
+    }
+
+    private static void DirectedInteriorAuthoredSlice()
+    {
+        ScenicShotPlan source = Directed(ScenicShotRole.Reveal, false), slice = source.Slice(.2, .82);
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(slice, 1) && !slice.UseNativeSpline && slice.FieldOfView == source.FieldOfView,
+            "Slicing changed authored-body ownership or the fixed lens.");
+        for (int i = 0; i <= 100; i++)
+        {
+            float p = i / 100f;
+            Near(path.Sample(p).CameraPosition, slice.Sample(p).CameraPosition, 0);
+            Near(path.Sample(p).AimPosition, slice.Sample(p).AimPosition, 0);
+        }
+    }
+
+    private static void MeasuredNativeSection()
+    {
+        ScenicShotPlan source = Directed(ScenicShotRole.Reveal);
+        using var original = new ScenicSplinePath();
+        Check(original.Prepare(source, 1), "Original native route was unavailable.");
+        const float firstProgress = .13f, lastProgress = .79f;
+        ScenicShotSample first = original.Sample(firstProgress), last = original.Sample(lastProgress);
+        ScenicShotPlan section = original.ProposeMeasuredSlice(firstProgress, lastProgress);
+        Check(source.Sample(firstProgress).CameraPosition.Distance(first.CameraPosition) > .01,
+            "Fixture does not expose the native-distance versus authored-parameter mismatch.");
+        Near(section.Sample(0).CameraPosition, first.CameraPosition, 0);
+        Near(section.Sample(1).CameraPosition, last.CameraPosition, .0001);
+        Near(section.Sample(0).AimPosition, first.AimPosition, 0);
+        Near(section.Sample(1).AimPosition, last.AimPosition, .0001);
+        Vector3 middle = original.Spline!.EvaluatePosition((float)((ScenicMotionProfile.Progress(firstProgress) +
+            ScenicMotionProfile.Progress(lastProgress)) * .5));
+        Near(section.Sample(.5).CameraPosition, P(middle.x, middle.y, middle.z), .0001);
+        Check(section.Id == source.Id && section.Role == source.Role && section.Feature == source.Feature &&
+            section.FieldOfView == source.FieldOfView && section.UseNativeSpline == source.UseNativeSpline &&
+            section.Sample(0).ScreenX == first.ScreenX && section.Sample(1).ScreenY == last.ScreenY,
+            "Measured section changed its subject, lens, engine or composition identity.");
+        using var generated = new ScenicSplinePath();
+        Check(generated.Prepare(section, 1), "Measured section failed native preparation.");
+        Near(generated.Sample(0).CameraPosition, first.CameraPosition, 0);
+        Near(generated.Sample(1).CameraPosition, last.CameraPosition, .0001);
+        for (int i = 0; i <= 100; i++)
+        {
+            float progress = i / 100f;
+            float normalized = generated.Spline!.ConvertIndexUnit(generated.Distance(progress), PathIndexUnit.Distance, PathIndexUnit.Normalized);
+            Vector3 actual = generated.Spline.EvaluatePosition(normalized);
+            Near(generated.Sample(progress).CameraPosition, P(actual.x, actual.y, actual.z));
+        }
+    }
+
+    private static void MeasuredSectionValidation()
+    {
+        using var path = new ScenicSplinePath();
+        Throws(() => path.ProposeMeasuredSlice(.2f, .8f));
+        var source = Directed(ScenicShotRole.Reveal, false);
+        path.Prepare(source, 1);
+        var proposal = path.ProposeMeasuredSlice(.2f, .8f);
+        var exact = source.Slice(.2f, .8f);
+        Check(!proposal.UseNativeSpline, "An authored section silently enabled native Dolly.");
+        for (int i = 0; i <= 100; i++)
+        {
+            Near(proposal.Sample(i / 100d).CameraPosition, exact.Sample(i / 100d).CameraPosition, 0);
+            Near(proposal.Sample(i / 100d).AimPosition, exact.Sample(i / 100d).AimPosition, 0);
+        }
+        Throws(() => path.ProposeMeasuredSlice(float.NaN, .8f));
+        Throws(() => path.ProposeMeasuredSlice(.2f, float.PositiveInfinity));
+        Throws(() => path.ProposeMeasuredSlice(-.1f, .8f));
+        Throws(() => path.ProposeMeasuredSlice(.2f, 1.1f));
+        Throws(() => path.ProposeMeasuredSlice(.8f, .2f));
+        Throws(() => path.ProposeMeasuredSlice(.2f, .2f));
+        path.Prepare(Plan(), 1);
+        Throws(() => path.ProposeMeasuredSlice(.2f, .8f));
     }
     private static void Throws(Action action)
     {

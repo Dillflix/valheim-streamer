@@ -18,6 +18,8 @@ internal sealed class IdleShots
     internal bool Searching => scenic.Searching;
     internal bool NeedsReplacement => scenic.NeedsReplacement;
     internal bool RecoveryExhausted => scenic.RecoveryExhausted;
+    internal bool RecoveryExpired => scenic.RecoveryExpired;
+    internal bool HasUsableScenicPicture => scenic.HasUsablePicture;
     internal ScenicVisibility Visibility => scenic.Visibility;
     internal ScenicShotPlan? Plan => scenic.Plan;
     internal long PlanId => Plan?.Id ?? 0;
@@ -51,6 +53,8 @@ internal sealed class IdleShots
     internal bool ViewClear(Vector3 camera, Vector3 focus, float fov) => scenic.Visibility.Clear(camera, focus, fov, out _);
     internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held) =>
         scenic.Observe(ready, usable, planId, progress, blocked, held, reason);
+    internal void UpdateRecovery(bool onAir, bool usableLive, long planId, bool held) =>
+        scenic.UpdateRecovery(onAir, usableLive, planId, held);
 
     internal void Refresh(float searchRadius, Vector3? creatureSearchOrigin = null)
     {

@@ -13,6 +13,7 @@ internal sealed class ScenicProduction
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
     private readonly ScenicShotReadiness readiness = new ScenicShotReadiness();
     private readonly ScenicShotReadiness liveSceneReadiness = new ScenicShotReadiness();
+    private readonly ScenicRecoveryPolicy recovery = new ScenicRecoveryPolicy();
     private ScenicShotPlan? lastPresentedPlan;
     private Vector3 lastPresentedFocus;
     internal readonly ScenicVisibility Visibility = new ScenicVisibility();
@@ -21,8 +22,8 @@ internal sealed class ScenicProduction
     private Vector3 origin;
     private long nextId;
     private ScenicShotPlan? testing, best;
-    private bool searching, trimmed, forceReplacement, revalidating;
-    private int attempts, accepted, sweep;
+    private bool searching, trimmed, elevated, forceReplacement, revalidating, deadlineHandled;
+    private int attempts, accepted, sweep, sections, elevations;
     private double bestScore;
     private float retryAt, preparedAt, proposed, bestValidatedAt;
     private string lastRejection = "none";
@@ -33,20 +34,26 @@ internal sealed class ScenicProduction
     internal bool Searching => HasRegion && (!survey.Complete || searching);
     internal bool NeedsReplacement => forceReplacement || director.Current == null || director.NeedsReplacement;
     internal bool RecoveryExhausted { get; private set; }
+    internal bool RecoveryExpired => recovery.Expired;
+    internal bool HasUsablePicture { get; private set; }
     internal bool CanContinue => Plan != null && readiness.CanContinue(Plan.Id, Focus((float)director.Progress));
     internal bool SceneReady => HasRegion && (CanContinue || lastPresentedPlan != null &&
         liveSceneReadiness.CanContinue(lastPresentedPlan.Id, lastPresentedFocus)
         ? PlayerShotReadiness.PositionReady(origin, true) : IdleShots.Ready(origin));
     internal string Reason { get; private set; } = "Awaiting scenic region";
-    internal string SearchStatus => !survey.Complete ? survey.Diagnostics :
-        Reason + "; routes " + attempts + ", accepted " + accepted + "; last rejection " + lastRejection;
+    private string RecoveryStatus => recovery.Active ?
+        $"; no usable idle picture {recovery.ElapsedSeconds:F1}s; " +
+        (recovery.Expired ? "local recovery budget exhausted" : $"recovery budget {recovery.RemainingSeconds:F1}s") : "";
+    internal string SearchStatus => (!survey.Complete ? survey.Diagnostics :
+        Reason + "; routes " + attempts + ", accepted " + accepted + ", clear sections " + sections +
+        ", canopy alternatives " + elevations + "; last rejection " + lastRejection) + RecoveryStatus;
     internal int RejectedViews { get; private set; }
     internal string Diagnostics => $"Scenic director: {Reason}; {director.Reason}; " +
         $"feature {Plan?.FeatureKind.ToString() ?? "none"}/{Plan?.FeatureId ?? "none"}; role {Plan?.Role.ToString() ?? "none"}; " +
         $"shot {Plan?.Id ?? 0}; progress {director.Progress:P0}; shown {director.ElapsedSeconds:F1}/{Plan?.DurationSeconds ?? 0:F1}s; " +
         $"lens {Plan?.FieldOfView ?? 0:F0}; blocked {director.BlockedSeconds:F1}s; staged {director.Prepared?.Id ?? 0}; " +
         $"search {Searching}, routes {attempts}, accepted {accepted}, rejected {RejectedViews}; last rejection {lastRejection}; " +
-        $"recovery exhausted {RecoveryExhausted}; {survey.Diagnostics}";
+        $"recovery exhausted {RecoveryExhausted}{RecoveryStatus}; {survey.Diagnostics}";
 
     internal void SetRegion(Vector3 value)
     {
@@ -55,10 +62,12 @@ internal sealed class ScenicProduction
     }
     internal void Clear()
     {
-        director.Reset(); survey.Reset(); evaluator.Dispose(); readiness.Reset(); liveSceneReadiness.Reset();
+        director.Reset(); survey.Reset(); evaluator.Dispose(); readiness.Reset(); liveSceneReadiness.Reset(); recovery.Reset();
         lastPresentedPlan = null; lastPresentedFocus = default; Visibility.Reset(); planningVisibility.Reset();
-        HasRegion = searching = trimmed = forceReplacement = RecoveryExhausted = hasSettings = revalidating = false;
+        HasRegion = searching = trimmed = elevated = forceReplacement = RecoveryExhausted = hasSettings = revalidating = deadlineHandled = false;
+        HasUsablePicture = false;
         testing = best = null; attempts = accepted = sweep = RejectedViews = 0;
+        sections = elevations = 0;
         retryAt = preparedAt = proposed = 0; lastRejection = "none"; Reason = "Awaiting scenic region";
         // Plan identities remain unique across region/world resets.
     }
@@ -115,9 +124,27 @@ internal sealed class ScenicProduction
         return !requested && director.NeedsReplacement;
     }
 
+    internal void UpdateRecovery(bool onAir, bool usableLive, long planId, bool held)
+    {
+        bool knownPicture = planId > 0 && (Plan?.Id == planId || lastPresentedPlan?.Id == planId);
+        HasUsablePicture = onAir && usableLive && knownPicture;
+        recovery.Observe(Time.unscaledTime, onAir && HasRegion, HasUsablePicture, held);
+        if (!recovery.Active) deadlineHandled = false;
+        if (usableLive && knownPicture) RecoveryExhausted = false;
+        else if (recovery.Expired) RecoveryExhausted = true;
+    }
+
     internal bool TickSearch(BroadcastSettings settings, bool moveCarrier, bool held, bool allowActivate = true)
     {
         if (!HasRegion || !SceneReady) return false;
+        // Finish the outstanding sweep once the on-air search budget expires.
+        // Region travel may be unavailable/cooling down; bounded later sweeps
+        // may still find footage, but never renew the expired output deadline.
+        if (allowActivate && recovery.Expired && !deadlineHandled)
+        {
+            deadlineHandled = true;
+            return FinishSearch(held, allowActivate);
+        }
         if (!hasSettings || plannedFov != settings.FieldOfView.Value ||
             plannedComposition != settings.DeliberateComposition.Value || plannedNative != settings.NativeSplineDolly.Value)
         {
@@ -138,12 +165,14 @@ internal sealed class ScenicProduction
             // Runtime repeats exact-pose checks. An old staged path is screened
             // again before admission rather than trusting stale loaded objects.
             if (NeedsReplacement && Time.unscaledTime - preparedAt <= 6f) return Activate(staged);
-            testing = staged; trimmed = revalidating = true; searching = true; attempts = 0; accepted = 0; best = null; bestScore = double.NegativeInfinity;
+            testing = staged; revalidating = true; trimmed = elevated = false; searching = true; attempts = 0; accepted = 0; best = null; bestScore = double.NegativeInfinity;
+            sections = elevations = 0;
             BeginEvaluation(settings, moveCarrier); return false;
         }
         if (!searching && director.Prepared == null && (NeedsReplacement || director.ShouldPrefetch || director.ElapsedSeconds >= 2) && Time.unscaledTime >= retryAt)
         {
             searching = true; revalidating = false; testing = best = null; attempts = accepted = 0; bestScore = double.NegativeInfinity;
+            sections = elevations = 0;
             Reason = NeedsReplacement ? "Planning a readable moving shot" : "Preparing the next environmental shot";
         }
         if (!searching) return false;
@@ -153,10 +182,10 @@ internal sealed class ScenicProduction
                 return FinishSearch(held, allowActivate);
             testing = NextCandidate(settings);
             if (testing == null) return false;
-            trimmed = false;
+            trimmed = elevated = false;
             BeginEvaluation(settings, moveCarrier);
         }
-        if (!evaluator.Step(6)) return false;
+        if (!evaluator.Step(recovery.Active && allowActivate ? 12 : 6)) return false;
         // Surface fitting produces a new immutable route. Keep that exact
         // route for ranking, trimming, staging and playback, never the original
         // below-surface proposal that was used to begin the search.
@@ -175,23 +204,38 @@ internal sealed class ScenicProduction
         {
             revalidating = false;
             RejectedViews++; lastRejection = evaluator.FailureKind + ": " + evaluator.Reason;
-            // A useful prefix is a new immutable route and gets its own full
-            // native screening. Never replay unexamined geometry after trimming.
-            if (!trimmed && evaluator.ValidatedFraction >= .45f)
+            // Find movement from measured clear space, including an interior
+            // or suffix after an obstructed opening. Never bridge an invalid
+            // pose/corridor, and fully validate the regenerated native segment.
+            if (!trimmed && evaluator.ReadableWindow.HasWindow && evaluator.ReadableWindow.TravelMetres >= 5)
             {
                 try
                 {
-                    ScenicShotPlan prefix = testing!.Trim(Math.Max(.1, evaluator.ValidatedFraction - .04));
-                    if (prefix.TravelMetres >= 5 && prefix.VisualChange >= .12)
+                    ScenicShotPlan section = evaluator.ProposeReadableSection();
+                    if (section.TravelMetres >= 5 && section.VisualChange >= .12)
                     {
-                        testing = prefix; trimmed = true; BeginEvaluation(settings, moveCarrier); return false;
+                        testing = section; trimmed = true; sections++; BeginEvaluation(settings, moveCarrier); return false;
                     }
+                }
+                catch (ArgumentException) { }
+            }
+            // A canopy intersection supplies a measured alternative elevation,
+            // rather than repeating every azimuth at the same guessed height.
+            // This is a proposal, not permission to show a known-obscured view.
+            if (!elevated && evaluator.SuggestedCanopyLift > 0)
+            {
+                try
+                {
+                    ScenicShotPlan raised = testing!.RaiseCamera(evaluator.SuggestedCanopyLift);
+                    if (raised.VisualChange >= .12)
+                    { testing = raised; elevated = true; elevations++; BeginEvaluation(settings, moveCarrier); return false; }
                 }
                 catch (ArgumentException) { }
             }
         }
         testing = null;
-        if (best != null && (Plan == null || revalidating || attempts >= 4 && bestScore >= .6)) return FinishSearch(held, allowActivate);
+        if (best != null && (recovery.Active && allowActivate || Plan == null || revalidating || attempts >= 4 && bestScore >= .6))
+            return FinishSearch(held, allowActivate);
         revalidating = false;
         return false;
     }
@@ -233,7 +277,7 @@ internal sealed class ScenicProduction
         searching = revalidating = false; testing = null; evaluator.Reset(); sweep = (sweep + 1) % 8;
         if (best == null)
         {
-            RecoveryExhausted = NeedsReplacement;
+            RecoveryExhausted = recovery.Expired || NeedsReplacement;
             Reason = "No fully readable moving route; " + lastRejection;
             retryAt = Time.unscaledTime + 3f;
             return false;
@@ -250,7 +294,9 @@ internal sealed class ScenicProduction
         if (!director.CanOffer(selected))
         { retryAt = 0; Reason = "Prepared view already covered; planning a fresh feature"; return false; }
         director.Accept(selected, Time.unscaledTime); readiness.Reset();
-        RecoveryExhausted = forceReplacement = false; proposed = 0;
+        // Acceptance is only a proposed cut. Only rendered readable output may
+        // renew the on-air recovery budget or clear its exhausted state.
+        RecoveryExhausted = recovery.Expired; forceReplacement = false; proposed = 0;
         Reason = "Cut to " + selected.FeatureKind + " / " + selected.Role;
         return true;
     }

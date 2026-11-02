@@ -189,7 +189,7 @@ namespace ValheimBroadcaster.Core
         public void Tick(double now, double dt, IReadOnlyList<AutonomyPlayer> players, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false,
             bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
-            bool? idleSceneAvailable = null)
+            bool? idleSceneAvailable = null, bool idleSearchExpired = false)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (players == null) throw new ArgumentNullException(nameof(players));
@@ -341,11 +341,11 @@ namespace ValheimBroadcaster.Core
                 // A connected player without a usable position does not freeze idle coverage.
             }
             TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady,
-                idleSceneAvailable ?? idleShotReady);
+                idleSceneAvailable ?? idleShotReady, idleSearchExpired);
         }
 
         private void TickScenery(double now, double footage, int connected, IReadOnlyList<ScenicRegion> regions,
-            AutonomyPosition currentPosition, bool ready, bool available)
+            AutonomyPosition currentPosition, bool ready, bool available, bool searchExpired)
         {
             // Useful footage advances dwell. A live picture recovering its
             // composition is not evidence that its loaded region is unavailable.
@@ -366,11 +366,16 @@ namespace ValheimBroadcaster.Core
             State = available ? AutonomyState.Scenic : AutonomyState.Waiting;
             Reason = connected > 0 ? "Scenery while waiting for an available player" : ready ? "Exploring the current scenic region" :
                 available ? "Retaining the loaded scenic region while local composition recovers" : "Waiting for a valid scenic shot";
+            if (!ready && searchExpired)
+            { State = AutonomyState.Waiting; Reason = "No readable scenic output within the local recovery budget"; }
             if (available) idleUnreadyBegan = -1;
             else if (idleUnreadyBegan < 0) idleUnreadyBegan = now;
             if (Held) { Reason += " (held)"; return; }
             if (ready) idleDwell += footage;
-            bool exhausted = idleUnreadyBegan >= 0 && now - idleUnreadyBegan >= UnreadyScenicSeconds;
+            // A loaded region can still fail to produce a picture. The client
+            // reports a separate, actual-output recovery deadline; do not add
+            // another scene-loading timeout after that deadline has elapsed.
+            bool exhausted = !ready && searchExpired || idleUnreadyBegan >= 0 && now - idleUnreadyBegan >= UnreadyScenicSeconds;
             if (idleDwell < RegionSeconds && !exhausted) return;
             if (now - lastTravelAt < MinimumTravelSeconds) { Reason = "Waiting for the travel cooldown"; return; }
             ScenicRegion? chosen = null; double oldest = double.PositiveInfinity, nearestChoice = double.PositiveInfinity;

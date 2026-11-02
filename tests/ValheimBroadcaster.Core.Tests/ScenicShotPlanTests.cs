@@ -13,6 +13,10 @@ internal static class ScenicShotPlanTests
         yield return ("Environmental path inputs reject invalid geometry and bound world outputs", Validation);
         yield return ("Terrain fitting raises the whole scenic route without moving its subject or changing the lens", RaisedRoutePreservesComposition);
         yield return ("Raised curved scenic routes retain their authored shape after trimming", RaisedCurveTrim);
+        yield return ("Interior scenic slices preserve the entire authored quadratic and aim subcurve", InteriorCurveSlice);
+        yield return ("Interior scenic slices preserve straight routes and composition identity", InteriorLineSlice);
+        yield return ("Scenic slice intervals reject malformed, reversed and degenerate input", SliceValidation);
+        yield return ("Scenic prefix slicing and immutable elevation fitting commute", SliceCompatibility);
     }
 
     private static AutonomyPosition P(float x = 0, float y = 0, float z = 0) => new AutonomyPosition(x, y, z);
@@ -157,6 +161,93 @@ internal static class ScenicShotPlanTests
             ScenicShotSample a = fitThenTrim.Sample(i / 50d), b = trimThenFit.Sample(i / 50d);
             Check(a.CameraPosition.Distance(b.CameraPosition) < .0001 && a.AimPosition.Distance(b.AimPosition) < .0001,
                 "Terrain fit/trim changed the curved reveal rather than preserving its useful prefix.");
+        }
+    }
+
+    private static void InteriorCurveSlice()
+    {
+        ScenicShotPlan original = DirectedReveal();
+        foreach (var interval in new[] { (Start: .15, End: .85), (Start: 0d, End: .63), (Start: .2, End: 1d) })
+        {
+            ScenicShotPlan slice = original.Slice(interval.Start, interval.End);
+            AssertSubcurve(original, slice, interval.Start, interval.End);
+            Check(slice.TravelMetres < original.TravelMetres && slice.TravelMetres >= 1 && slice.DurationSeconds >= 8,
+                "Interior segment lost meaningful bounded movement or a developed shot duration.");
+        }
+    }
+
+    private static void InteriorLineSlice()
+    {
+        ScenicShotPlan original = ScenicShotPlan.Directed(57, DirectedReveal().Feature!, ScenicShotRole.Traverse,
+            P(80, 30, 80), P(112, 35, 80), P(98, 23, 100), P(103, 24, 100), 61, -.12f, -.07f, null, true);
+        ScenicShotPlan slice = original.Slice(.2, .8);
+        Check(!ReferenceEquals(original, slice) && original.Id == slice.Id && original.Feature == slice.Feature &&
+            original.FeatureId == slice.FeatureId && original.FeatureKind == slice.FeatureKind && original.Role == slice.Role &&
+            original.FieldOfView == slice.FieldOfView && original.UseNativeSpline == slice.UseNativeSpline,
+            "Slicing mutated the source or changed its authored subject/role/lens/engine identity.");
+        AssertSubcurve(original, slice, .2, .8);
+    }
+
+    private static void AssertSubcurve(ScenicShotPlan original, ScenicShotPlan slice, double fromFraction, double toFraction)
+    {
+        double from = ScenicMotionProfile.Progress(fromFraction), to = ScenicMotionProfile.Progress(toFraction);
+        for (int i = 0; i <= 100; i++)
+        {
+            double p = i / 100d;
+            double sourceProgress = InverseProfile(from + (to - from) * ScenicMotionProfile.Progress(p));
+            ScenicShotSample expected = original.Sample(sourceProgress), actual = slice.Sample(p);
+            Check(expected.CameraPosition.Distance(actual.CameraPosition) < .0001 &&
+                expected.AimPosition.Distance(actual.AimPosition) < .0001 &&
+                actual.ScreenX == expected.ScreenX && actual.ScreenY == expected.ScreenY,
+                "A sliced route deviated from its original interior geometry or composition.");
+        }
+    }
+
+    private static double InverseProfile(double value)
+    {
+        double low = 0, high = 1;
+        for (int i = 0; i < 60; i++)
+        {
+            double mid = (low + high) * .5;
+            if (ScenicMotionProfile.Progress(mid) < value) low = mid; else high = mid;
+        }
+        return (low + high) * .5;
+    }
+
+    private static void SliceValidation()
+    {
+        ScenicShotPlan source = DirectedReveal();
+        Reject(() => source.Slice(double.NaN, .8));
+        Reject(() => source.Slice(.2, double.PositiveInfinity));
+        Reject(() => source.Slice(-.1, .8));
+        Reject(() => source.Slice(.2, 1.1));
+        Reject(() => source.Slice(.7, .3));
+        Reject(() => source.Slice(.5, .5));
+        Reject(() => source.Slice(1, 1));
+        Reject(() => source.Slice(.5, .50001));
+        try { Plan(ScenicShotStyle.Arc).Slice(.2, .8); }
+        catch (InvalidOperationException) { return; }
+        throw new Exception("A legacy environmental route accepted directed slicing.");
+    }
+
+    private static void SliceCompatibility()
+    {
+        ScenicShotPlan original = DirectedReveal();
+        ScenicShotPlan prefix = original.Trim(.7), explicitPrefix = original.Slice(0, .7);
+        ScenicShotPlan fitThenSlice = original.RaiseCamera(8).Slice(.2, .85);
+        ScenicShotPlan sliceThenFit = original.Slice(.2, .85).RaiseCamera(8);
+        ScenicShotPlan whole = original.Slice(0, 1);
+        for (int i = 0; i <= 100; i++)
+        {
+            double p = i / 100d;
+            Check(prefix.Sample(p).CameraPosition.Distance(explicitPrefix.Sample(p).CameraPosition) < .0001,
+                "Trim no longer delegates equivalent prefix geometry.");
+            Check(fitThenSlice.Sample(p).CameraPosition.Distance(sliceThenFit.Sample(p).CameraPosition) < .0001 &&
+                fitThenSlice.Sample(p).AimPosition.Distance(sliceThenFit.Sample(p).AimPosition) < .0001,
+                "Slice and rigid elevation fitting changed the selected subcurve.");
+            Check(whole.Sample(p).CameraPosition.Distance(original.Sample(p).CameraPosition) < .0001 &&
+                whole.Sample(p).AimPosition.Distance(original.Sample(p).AimPosition) < .0001,
+                "A full interval changed the original route.");
         }
     }
     private static void Reject(Action action)

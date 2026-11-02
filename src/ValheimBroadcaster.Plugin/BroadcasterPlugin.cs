@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.26";
+    public const string PluginVersion = "0.8.27";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -234,8 +234,17 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     recentPicture && frameHold.HasRecentLiveFrame,
                     recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
                     presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding);
-            bool idleSceneAvailable = currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame &&
-                (coverage.Mode != CoverageMode.Scenic || !idle.RecoveryExhausted) ||
+            // Selecting a creature is not proof that it rendered. Preserve an
+            // existing idle blackout until that cutaway supplies usable output.
+            bool pendingIdleCreature = coverage.Mode == CoverageMode.Creature && !coverage.IsWildlifeCutaway && !usableIdlePicture;
+            idle.UpdateRecovery(!probe.Active && (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Recovery || pendingIdleCreature) &&
+                (!observer.Active || observer.Phase == ObserverPhase.Watching),
+                presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
+                recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable,
+                presentedScenicPlan, director.IsHolding);
+            bool idleSceneAvailable = idle.HasUsableScenicPicture ||
+                currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame &&
+                coverage.Mode != CoverageMode.Scenic ||
                 coverage.Mode == CoverageMode.Scenic && idle.Searching && idle.SceneReady && !idle.RecoveryExhausted;
             bool usablePlayerPicture = recentPicture && frameHold.HasRecentLiveFrame && presentedPlayerUsable &&
                 presentedMode == CoverageMode.Player && presentedPlayerId == CurrentTarget()?.Identity.Id;
@@ -262,8 +271,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     false, false, true);
             }
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
-                usableIdlePicture && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
-                localActivities, usablePlayerPicture, idleSceneAvailable);
+                (usableIdlePicture || idle.HasUsableScenicPicture) && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
+                localActivities, usablePlayerPicture, idleSceneAvailable, idle.RecoveryExpired);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
             if (automatic?.ControlsSelection == true && automatic.TargetId != null) director.Select(automatic.TargetId);

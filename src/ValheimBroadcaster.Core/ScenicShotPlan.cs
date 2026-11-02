@@ -107,14 +107,29 @@ namespace ValheimBroadcaster.Core
 
         /// <summary>Restrict a route to its useful prefix. This is a new route
         /// definition and must pass native-curve/visibility validation again.</summary>
-        public ScenicShotPlan Trim(double endFraction)
+        public ScenicShotPlan Trim(double endFraction) => Slice(0, endFraction);
+
+        /// <summary>Extract an authored route interval and develop it as a new
+        /// finite shot with its own smooth entry/exit. Fractions use the source
+        /// plan's motion profile. The linear/quadratic body and linear aim are
+        /// restricted exactly; regenerated native spline geometry must still
+        /// receive complete pose/corridor validation before presentation.</summary>
+        public ScenicShotPlan Slice(double startFraction, double endFraction)
         {
-            if (!IsDirected) throw new InvalidOperationException("Only directed routes can be shortened.");
-            if (double.IsNaN(endFraction) || double.IsInfinity(endFraction) || endFraction <= 0 || endFraction > 1)
+            if (!IsDirected) throw new InvalidOperationException("Only directed routes can be restricted.");
+            if (double.IsNaN(startFraction) || double.IsInfinity(startFraction) || startFraction < 0 || startFraction >= 1)
+                throw new ArgumentOutOfRangeException(nameof(startFraction));
+            if (double.IsNaN(endFraction) || double.IsInfinity(endFraction) || endFraction <= startFraction || endFraction > 1)
                 throw new ArgumentOutOfRangeException(nameof(endFraction));
-            double u = ScenicMotionProfile.Progress(endFraction);
-            return Directed(Id, Feature!, Role, cameraStart, Body(u), start, Lerp(start, end, u), FieldOfView,
-                screenX, screenY, curved ? Lerp(cameraStart, cameraControl, u) : (AutonomyPosition?)null, UseNativeSpline);
+            double from = ScenicMotionProfile.Progress(startFraction), to = ScenicMotionProfile.Progress(endFraction);
+            // Quadratic blossom at (from,to) is the middle control of the
+            // restricted curve. Keeping the old control would distort an
+            // interior interval even if both selected endpoints were correct.
+            AutonomyPosition? control = curved
+                ? Lerp(Lerp(cameraStart, cameraControl, from), Lerp(cameraControl, cameraEnd, from), to)
+                : (AutonomyPosition?)null;
+            return Directed(Id, Feature!, Role, Body(from), Body(to), Lerp(start, end, from), Lerp(start, end, to),
+                FieldOfView, screenX, screenY, control, UseNativeSpline);
         }
 
         /// <summary>Fit a proposed route above observed terrain as one rigid

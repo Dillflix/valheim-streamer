@@ -13,6 +13,10 @@ internal static class FoliageGeometryTests
         yield return ("Malformed and over-budget foliage geometry is rejected before refinement", InvalidGeometry);
         yield return ("Foliage bounds transform correctly through rotation and signed nonuniform scale", TransformedBounds);
         yield return ("Thin leaf surfaces retain their measured extent", ThinLeaves);
+        yield return ("Canopy escape proposes clearance above stacked nearby leaf cells", CanopyEscape);
+        yield return ("Canopy escape requires complete camera-inside evidence", CanopyEvidence);
+        yield return ("Canopy escape rejects excessive lifts instead of clamping inside leaves", CanopyBounded);
+        yield return ("Canopy escape ignores distant crowns and unused array entries", CanopyNeighborhood);
     }
 
     private static void TrunkAndCrown()
@@ -99,6 +103,55 @@ internal static class FoliageGeometryTests
         Check(FoliageGeometryMath.TryBuild(vertices, new[] { 0, 1, 2 }, out Bounds[] cells), "A planar leaf was treated as missing geometry.");
         Check(cells.Length == 1 && FoliageGeometryMath.Valid(cells[0]), "Planar bounds were invalid.");
         Check(Any(cells, new Vector3(0, 7, 0)) && !Any(cells, new Vector3(0, 7, 1)), "Planar leaf extent was changed.");
+    }
+
+    private static void CanopyEscape()
+    {
+        Bounds[] canopy = { new Bounds(new Vector3(0, 8, 0), new Vector3(8, 4, 8)),
+            new Bounds(new Vector3(0, 14, 0), new Vector3(10, 4, 10)),
+            new Bounds(new Vector3(7, 18, 0), new Vector3(4, 4, 4)) };
+        Vector3 camera = new Vector3(0, 8, 0);
+        Check(FoliageGeometryMath.TryCanopyLift(camera, canopy, canopy.Length, true, 6, out float lift),
+            "Measured camera-inside rejection did not offer an alternate elevation.");
+        Check(Math.Abs(lift - 13) < .0001f, "Escape stopped in a higher or nearby crown.");
+        Check(!FoliageGeometryMath.TryCanopyLift(camera + Vector3.up * lift, canopy, canopy.Length, true, 6, out _),
+            "Clear elevated point produced another repeated lift.");
+        Check(canopy[0].center.y == 8 && canopy[2].max.y == 20, "Proposal mutated scene bounds.");
+    }
+
+    private static void CanopyEvidence()
+    {
+        Bounds[] canopy = { new Bounds(new Vector3(0, 8, 0), new Vector3(8, 4, 8)) };
+        Check(!FoliageGeometryMath.TryCanopyLift(new Vector3(0, 8, 0), canopy, 1, false, 6, out float lift) && lift == 0,
+            "Incomplete coverage invented an escape.");
+        Check(!FoliageGeometryMath.TryCanopyLift(Vector3.zero, canopy, 1, true, 6, out _),
+            "A camera below leaves but not intersecting them was treated as inside.");
+        Check(!FoliageGeometryMath.TryCanopyLift(new Vector3(float.NaN, 8, 0), canopy, 1, true, 6, out _), "Malformed camera was accepted.");
+        Check(!FoliageGeometryMath.TryCanopyLift(new Vector3(0, 8, 0), canopy, 2, true, 6, out _), "Count exceeded available evidence.");
+        Check(!FoliageGeometryMath.TryCanopyLift(new Vector3(0, 8, 0), canopy, 1, true, float.PositiveInfinity, out _), "Invalid foreground radius was accepted.");
+    }
+
+    private static void CanopyBounded()
+    {
+        Vector3 camera = new Vector3(0, 8, 0);
+        Bounds[] canopy = { new Bounds(camera, new Vector3(8, 4, 8)),
+            new Bounds(new Vector3(0, 40, 0), new Vector3(8, 4, 8)) };
+        Check(!FoliageGeometryMath.TryCanopyLift(camera, canopy, 2, true, 6, out float lift) && lift == 0,
+            "Over-budget canopy was clamped to an unsafe intermediate height.");
+        canopy[1] = new Bounds(new Vector3(0, 37, 0), new Vector3(8, 4, 8));
+        Check(FoliageGeometryMath.TryCanopyLift(camera, canopy, 2, true, 6, out lift) && lift == 32,
+            "Exact bounded escape was rejected.");
+        canopy[1] = new Bounds(new Vector3(float.NaN, 0, 0), Vector3.one);
+        Check(!FoliageGeometryMath.TryCanopyLift(camera, canopy, 2, true, 6, out _), "Malformed nearby evidence was ignored.");
+    }
+
+    private static void CanopyNeighborhood()
+    {
+        Vector3 camera = new Vector3(100, 8, -100);
+        Bounds[] canopy = { new Bounds(camera, new Vector3(8, 4, 8)),
+            new Bounds(camera + new Vector3(20, 50, 0), new Vector3(4, 4, 4)), default };
+        Check(FoliageGeometryMath.TryCanopyLift(camera, canopy, 2, true, 6, out float lift) && lift == 3,
+            "A distant crown or unused array entry inflated the local proposal.");
     }
 
     private static void Box(List<Vector3> vertices, List<int> indices, Vector3 min, Vector3 max)

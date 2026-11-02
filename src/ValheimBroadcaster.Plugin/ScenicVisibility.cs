@@ -243,6 +243,21 @@ internal sealed class ScenicVisibility
         bound.Expand(.4f); activeBounds[activeCount++] = bound;
     }
 
+    // Only a measured camera-inside-canopy rejection may propose this alternate
+    // elevation. A missing/throttled survey cannot invent an escape. The caller
+    // must validate the entire raised route, including surface, foreground,
+    // focus, corridor and observer reach, before displaying any of it.
+    internal bool TryCanopyLift(Vector3 camera, out float lift)
+    {
+        lift = 0;
+        if (!TargetRoster.Finite(camera)) return false;
+        Refresh(camera); RefreshActive();
+        float requiredRadius = Vector3.Distance(camera, origin) + ForegroundRange;
+        bool complete = requiredRadius < coveredRadius && requiredRadius < DetailRadius;
+        return FoliageGeometryMath.TryCanopyLift(camera, activeBounds, activeCount,
+            complete, ForegroundRange, out lift);
+    }
+
     // Explicit legacy/fixed camera comparison still uses a centered view.
     internal bool Clear(Vector3 camera, Vector3 focus, float fov, out string reason)
     {

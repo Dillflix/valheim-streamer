@@ -128,7 +128,7 @@ internal static class ScenicPoseValidation
         score = view.Score;
         if (!view.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, view.Reason, out kind, out reason);
         if (!view.SurveyComplete) return Reject(ScenicRejectionKind.SurveyIncomplete, view.Reason, out kind, out reason);
-        if (!view.FocusVisible) return Reject(ScenicRejectionKind.Focus, view.Reason, out kind, out reason);
+        if (!view.FocusVisible) return Reject(ScenicRejectionKind.Focus, "Scenic feature is outside the frame or hidden", out kind, out reason);
         if (!PictureQuality.Scenic(view.CameraClear, view.FocusVisible, view.Score, view.ForegroundOcclusion, view.SurveyComplete).Readable)
             return Reject(ScenicRejectionKind.Foliage, view.Reason, out kind, out reason);
         return true;
@@ -161,10 +161,12 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private readonly ScenicPoseSolver solver = new ScenicPoseSolver();
     private readonly ScenicSplinePath path = new ScenicSplinePath();
     private readonly Stack<float> pending = new Stack<float>();
+    private readonly ScenicRouteWindow window = new ScenicRouteWindow();
     private ScenicShotPlan? plan;
     private ScenicVisibility? visibility;
     private ScenicPose previous;
-    private bool hasPrevious, moveCarrier, fitting;
+    private bool hasPrevious, previousReadable, moveCarrier, fitting, routeRejected;
+    private double measuredTravel;
     private float fitLift, totalLift;
     private int fitPasses;
     private float aspect, nearClip, minimumScore, surveyWaitSeconds;
@@ -175,6 +177,10 @@ internal sealed class ScenicPathEvaluator : IDisposable
     internal ScenicShotPlan? EvaluatedPlan => plan;
     internal float Score => hasPrevious ? minimumScore : 0;
     internal float ValidatedFraction { get; private set; }
+    internal ScenicRouteWindow ReadableWindow => window;
+    internal ScenicShotPlan ProposeReadableSection() =>
+        path.ProposeMeasuredSlice((float)window.Start, (float)window.End);
+    internal float SuggestedCanopyLift { get; private set; }
     internal ScenicRejectionKind FailureKind { get; private set; }
     internal string Reason { get; private set; } = "No scenic route prepared";
 
@@ -198,6 +204,10 @@ internal sealed class ScenicPathEvaluator : IDisposable
             if (++samples > MaximumSamples) { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route exceeds bounded survey effort"); return true; }
             float fraction = pending.Pop();
             ScenicPose pose = solver.Solve(path, plan, fraction, aspect, nearClip);
+            if (!TargetRoster.Finite(pose.Position) || !TargetRoster.Finite(pose.Focus) ||
+                !Finite(pose.Rotation.x) || !Finite(pose.Rotation.y) ||
+                !Finite(pose.Rotation.z) || !Finite(pose.Rotation.w))
+            { Fail(ScenicRejectionKind.InvalidPlan, "Native scenic solver returned a non-finite pose"); return true; }
             if (hasPrevious && (Vector3.Distance(previous.Position, pose.Position) > .75f ||
                 Vector3.Distance(previous.Focus, pose.Focus) > 1f || Quaternion.Angle(previous.Rotation, pose.Rotation) > 3f))
             {
@@ -237,8 +247,9 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 }
                 continue;
             }
-            if (!ScenicPoseValidation.Check(pose, plan, visibility, aspect, nearClip, false, moveCarrier,
-                out float score, out ScenicRejectionKind kind, out string reason))
+            bool readable = ScenicPoseValidation.Check(pose, plan, visibility, aspect, nearClip, false, moveCarrier,
+                out float score, out ScenicRejectionKind kind, out string reason);
+            if (!readable)
             {
                 // A cache whose recenter is throttled is missing evidence, not
                 // evidence that this route is obscured. Retry this exact sample
@@ -257,20 +268,37 @@ internal sealed class ScenicPathEvaluator : IDisposable
                     }
                     reason += " after 2s of bounded survey retries";
                 }
-                Fail(kind, reason); return true;
+                // Rejection describes this measured pose, not every point on
+                // the route. Continue looking for a connected usable section;
+                // an occluded opening must not hide a clear middle or ending.
+                routeRejected = true; FailureKind = kind; Reason = reason;
+                if ((kind == ScenicRejectionKind.Foliage || kind == ScenicRejectionKind.Focus) &&
+                    visibility.TryCanopyLift(pose.Position, out float lift))
+                    SuggestedCanopyLift = Mathf.Max(SuggestedCanopyLift, lift);
             }
             if (Finite(surveyWaitStarted))
             {
                 surveyWaitSeconds += Mathf.Max(0, Time.unscaledTime - surveyWaitStarted);
                 surveyWaitStarted = float.NegativeInfinity;
-                Reason = "Screening native scenic route";
+                if (!routeRejected) Reason = "Screening native scenic route";
             }
-            if (hasPrevious && !ScenicPoseValidation.Corridor(previous, pose, visibility, aspect, nearClip, out kind, out reason))
-            { Fail(kind, reason); return true; }
-            previous = pose; hasPrevious = true; ValidatedFraction = fraction; minimumScore = Mathf.Min(minimumScore, score);
+            bool corridor = readable && previousReadable;
+            if (hasPrevious)
+            {
+                measuredTravel += Vector3.Distance(previous.Position, pose.Position);
+                if (corridor && !ScenicPoseValidation.Corridor(previous, pose, visibility, aspect, nearClip, out kind, out reason))
+                { corridor = false; routeRejected = true; FailureKind = kind; Reason = reason; }
+            }
+            window.Observe(fraction, measuredTravel, readable, corridor);
+            previous = pose; hasPrevious = true; previousReadable = readable;
+            if (!routeRejected) ValidatedFraction = fraction;
+            if (readable) minimumScore = Mathf.Min(minimumScore, score);
         }
         if (pending.Count == 0)
-        { Complete = Accepted = true; Reason = "Entire native scenic route is supported and readable"; }
+        {
+            Complete = true; Accepted = !routeRejected;
+            if (Accepted) Reason = "Entire native scenic route is supported and readable";
+        }
         return Complete;
     }
 
@@ -278,7 +306,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     { Complete = true; Accepted = false; FailureKind = kind; Reason = reason; pending.Clear(); }
     private void StartPass()
     {
-        pending.Clear(); hasPrevious = false; fitLift = 0;
+        pending.Clear(); hasPrevious = previousReadable = false; fitLift = 0;
         for (int i = 16; i >= 0; i--) pending.Push(i / 16f);
     }
     internal void Reset()
@@ -286,6 +314,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
         pending.Clear(); path.Reset(); solver.Reset(); plan = null; visibility = null;
         Complete = Accepted = hasPrevious = false; minimumScore = ValidatedFraction = 0; samples = 0;
         fitting = false; fitLift = totalLift = 0; fitPasses = 0;
+        routeRejected = previousReadable = false; measuredTravel = 0; SuggestedCanopyLift = 0; window.Reset();
         surveyWaitSeconds = 0; surveyWaitStarted = float.NegativeInfinity;
         FailureKind = ScenicRejectionKind.None; Reason = "No scenic route prepared";
     }

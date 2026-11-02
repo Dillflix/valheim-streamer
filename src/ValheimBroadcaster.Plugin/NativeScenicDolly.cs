@@ -71,6 +71,28 @@ internal sealed class ScenicSplinePath : IDisposable
         return Length * Ease(Mathf.Clamp01(progress));
     }
 
+    /// <summary>Propose a finite shot through measured readable native poses.
+    /// Native arc-length progress is not the authored quadratic parameter, so
+    /// passing it directly to ScenicShotPlan.Slice would shift both endpoints.
+    /// A three-point fitted proposal preserves measured endpoints/aims and a
+    /// half-distance body point. Its new native curve must be fully validated;
+    /// clear samples alone never certify the paths between them.</summary>
+    internal ScenicShotPlan ProposeMeasuredSlice(float startProgress, float endProgress)
+    {
+        if (!Ready || !plan!.IsDirected) throw new InvalidOperationException("No directed scenic route is prepared.");
+        if (!Finite(startProgress) || !Finite(endProgress) || startProgress < 0 || endProgress > 1 || startProgress >= endProgress)
+            throw new ArgumentOutOfRangeException(nameof(startProgress));
+        if (!plan.UseNativeSpline) return plan.Slice(startProgress, endProgress);
+        ScenicShotSample first = Sample(startProgress), last = Sample(endProgress);
+        // SplineUtility's normalized spline coordinate is distance normalized
+        // over the entire spline, matching Sample and the selected Dolly Body.
+        Vector3 middle = SplineUtility.EvaluatePosition(Spline!, (Ease(startProgress) + Ease(endProgress)) * .5f);
+        Vector3 control = 2f * middle - .5f * (FromCore(first.CameraPosition) + FromCore(last.CameraPosition));
+        return ScenicShotPlan.Directed(plan.Id, plan.Feature!, plan.Role,
+            first.CameraPosition, last.CameraPosition, first.AimPosition, last.AimPosition,
+            plan.FieldOfView, first.ScreenX, first.ScreenY, ToCore(control), plan.UseNativeSpline);
+    }
+
     // Short smooth ramps and a steady cruise apply to distance, not knot parameter. Unequal
     // knot spacing therefore cannot produce accidental acceleration or stalls.
     private static float Ease(float value) => (float)ScenicMotionProfile.Progress(value);
