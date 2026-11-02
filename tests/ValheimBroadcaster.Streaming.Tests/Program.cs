@@ -90,7 +90,11 @@ internal static class Program
         options.FlipVertical = true;
         string hardware = options.Arguments(12345);
         Check(hardware.Contains("-c:v h264_nvenc -preset p4 -tune ll -rc cbr -gpu 1") && !hardware.Contains("libx264") && !hardware.Contains("zerolatency"), "NVENC uses its own low-latency settings and explicit device");
-        Check(hardware.Contains("-c:a aac") && hardware.Contains("-vf vflip") && hardware.Contains("-pix_fmt yuv420p -bf 0 -g 60"), "hardware mode preserves audio, flip and compatible H.264 output");
+        Check(hardware.Contains("-c:a aac") && !hardware.Contains("-vf vflip") && hardware.Contains("-pix_fmt yuv420p -bf 0 -g 60"), "automatic orientation cannot be double-flipped by a legacy setting");
+        options.AutomaticOrientation = false;
+        Check(options.Arguments(12345).Contains("-vf vflip"), "explicit manual orientation retains the legacy FFmpeg flip");
+        options.FlipVertical = false;
+        Check(!options.Arguments(12345).Contains("-vf vflip"), "manual unflipped output remains available");
         options.VideoEncoder = (VideoEncoderKind)100;
         Reject(options.Validate, "unknown encoder is rejected");
         options.VideoEncoder = VideoEncoderKind.h264_nvenc;
@@ -138,7 +142,8 @@ internal static class Program
         try
         {
             Thread.Sleep(500); // FFmpeg must bind before the publisher connects.
-            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder, Executable = executable };
+            var options = new StreamOptions { Url = url, Width = 320, Height = 180, Fps = 20, BitrateKbps = 500, VideoEncoder = videoEncoder, Executable = executable,
+                AutomaticOrientation = true, FlipVertical = true }; // A persisted screenshot-era workaround must not invert calibrated rows.
             encoder = new EncoderSession(options);
             byte[] frame = new byte[320 * 180 * 4];
             float[] audio = new float[1920];
@@ -152,6 +157,15 @@ internal static class Program
                     frame[i] = frame[i + 1] = frame[i + 2] = tick >= 100 ? (byte)255 : (byte)0;
                     frame[i + 3] = 255;
                 }
+                // Asymmetric markers verify the encoder's actual top-row-first
+                // interpretation after the GPU stage supplies normalized RGBA.
+                for (int y = 0; y < 32; y++)
+                    for (int x = 0; x < 32; x++)
+                    {
+                        int top = (y * 320 + x) * 4, bottom = ((179 - y) * 320 + x) * 4;
+                        frame[top] = 255; frame[top + 1] = frame[top + 2] = 0;
+                        frame[bottom] = frame[bottom + 1] = 0; frame[bottom + 2] = 255;
+                    }
                 frame = encoder.SubmitVideo(frame);
                 for (int i = 0; i < 960; i++)
                 {
@@ -199,6 +213,11 @@ internal static class Program
                 }
             }
             Check(video && sound, "remote RTMP receiver records H.264 plus 48kHz stereo AAC");
+            byte[] oriented = Decode(recording, "-ss 3 -frames:v 1 -vf scale=32:18 -pix_fmt rgb24 -f rawvideo");
+            int topMarker = (1 * 32 + 1) * 3, bottomMarker = (16 * 32 + 1) * 3;
+            Check(oriented.Length == 32 * 18 * 3 && oriented[topMarker] > 150 && oriented[topMarker + 2] < 80 &&
+                oriented[bottomMarker + 2] > 150 && oriented[bottomMarker] < 80,
+                "decoded RTMP keeps top/bottom markers upright despite a legacy FlipVertical setting");
             byte[] rawVideo = Decode(recording, "-map 0:v:0 -vf scale=1:1 -pix_fmt gray -f rawvideo");
             byte[] rawAudio = Decode(recording, "-map 0:a:0 -f f32le -ac 2 -ar 48000");
             int videoStart = Array.FindIndex(rawVideo, x => x > 128);

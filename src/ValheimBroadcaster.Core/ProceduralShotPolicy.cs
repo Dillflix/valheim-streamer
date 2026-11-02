@@ -30,7 +30,7 @@ namespace ValheimBroadcaster.Core
         /// physically valid picture remains a candidate while alternatives are sought.
         /// Candidate indices must retain their meaning until Reset is called.</summary>
         public int Select(double now, IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
-            IReadOnlyList<bool>? readable = null)
+            IReadOnlyList<bool>? readable = null, IShotCandidateRanker? ranker = null)
         {
             if (!Finite(now) || now < 0 || lastTime >= 0 && now < lastTime)
             {
@@ -55,9 +55,8 @@ namespace ValheimBroadcaster.Core
             lastTime = now;
 
             bool currentEligible = SelectedIndex >= 0 && eligible[SelectedIndex];
-            int best = currentEligible ? SelectedIndex : -1;
-            for (int i = 0; i < scores.Count; i++)
-                if (eligible[i] && (best < 0 || Better(i, best, scores, readable))) best = i;
+            int best = ShotCandidateRanking.Best(scores, eligible, readable,
+                currentEligible ? SelectedIndex : -1, ranker);
 
             if (best < 0)
             {
@@ -95,14 +94,6 @@ namespace ValheimBroadcaster.Core
             else if ((readable != null ? readable[SelectedIndex] : scores[SelectedIndex] >= HealthyScore) &&
                 now - selectedAt < HealthyDwellSeconds) return SelectedIndex;
             return Switch(best, now);
-        }
-
-        private static bool Better(int candidate, int incumbent, IReadOnlyList<float> scores, IReadOnlyList<bool>? readable)
-        {
-            // Picture health is lexicographic: editorial score bonuses cannot
-            // make an unreadable view defeat a supported readable alternative.
-            if (readable != null && readable[candidate] != readable[incumbent]) return readable[candidate];
-            return scores[candidate] > scores[incumbent];
         }
 
         /// <summary>Standby geometry changed: its previous comparison cannot

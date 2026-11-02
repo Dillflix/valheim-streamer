@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <CinemachineAssemblyPath Condition="'$(CinemachineAssemblyPath)' == ''">$(MSBuildThisFileDirectory)../../third_party/Cinemachine/bin/Release/net48/ValheimBroadcaster.Cinemachine.dll</CinemachineAssemblyPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ValheimBroadcaster.Core/ValheimBroadcaster.Core.csproj" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/NativeScenicDolly.cs" Link="NativeScenicDolly.cs" />
+    <Reference Include="ValheimBroadcaster.Cinemachine"><HintPath>$(CinemachineAssemblyPath)</HintPath><Private>true</Private></Reference>
+    <Reference Include="$(ValheimManagedDir)/UnityEngine.CoreModule.dll;$(ValheimManagedDir)/Unity.Mathematics.dll;$(ValheimManagedDir)/Unity.Collections.dll"><Private>true</Private></Reference>
+  </ItemGroup>
+  <Target Name="RequireActualSplineDependencies" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(CinemachineAssemblyPath)')" Text="Build the isolated Cinemachine runtime before these native spline math tests." />
+    <Error Condition="!Exists('$(ValheimManagedDir)/UnityEngine.CoreModule.dll')" Text="Set ValheimManagedDir to matching real Valheim references. These tests use real spline/math code, not engine stubs." />
+  </Target>
+</Project>

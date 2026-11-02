@@ -13,6 +13,10 @@ internal sealed class StreamCapture : MonoBehaviour
     private AudioListener? listener;
     private RenderTexture? output;
     private FrameHold? program;
+    private ProgramOrientationProbe? orientation;
+    private StreamOptions? awaitingCalibration;
+    private string preflightFailure = "", orientationDiagnostics = "Orientation has not been measured.";
+    private bool preflightPermanent;
     private ProgramFrameStamp pendingFrame;
     private byte[] pixels = Array.Empty<byte>();
     private bool active, pending;
@@ -25,13 +29,15 @@ internal sealed class StreamCapture : MonoBehaviour
     private bool failureReported;
     internal bool Active => active;
     internal bool IsPublishing => active && session?.IsPublishing == true;
-    internal bool HasCompletedFailure => session?.IsClosed == true && session.FailureDetails.Length != 0;
-    internal bool PermanentFailure => session?.PermanentFailure == true;
+    internal bool HasCompletedFailure => preflightFailure.Length != 0 || session?.IsClosed == true && session.FailureDetails.Length != 0;
+    internal bool PermanentFailure => preflightPermanent || session?.PermanentFailure == true;
     internal bool CleanupBlocked => session?.CleanupBlocked == true;
     internal long Generation { get; private set; }
-    internal bool CanStart => !active && !pending && (session == null || session.IsClosed);
-    internal string Status => session?.Status ?? "Stopped";
-    internal string Diagnostics => session == null ? "No encoder session." : session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails;
+    internal bool CanStart => !active && !pending && orientation?.Pending != true && (session == null || session.IsClosed);
+    internal string Status => awaitingCalibration != null ? "Calibrating video orientation" :
+        preflightFailure.Length != 0 ? preflightFailure : session?.Status ?? "Stopped";
+    internal string Diagnostics => (preflightFailure.Length != 0 ? preflightFailure : session == null ? "No encoder session." :
+        session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails) + "\n" + orientationDiagnostics;
 
     internal void Begin(StreamOptions options, AudioListener gameListener, FrameHold programSource, Action<string>? onFailure = null)
     {
@@ -44,22 +50,32 @@ internal sealed class StreamCapture : MonoBehaviour
         try
         {
             ReportFailure();
-            session = new EncoderSession(options);
+            session = null;
             Generation++;
             reportFailure = onFailure;
             failureReported = false;
+            preflightFailure = ""; preflightPermanent = false;
             program = programSource ?? throw new ArgumentNullException(nameof(programSource));
             listener = gameListener;
             normalRotation = listener.transform.localRotation;
-            AudioSettings.OnAudioConfigurationChanged += AudioConfigurationChanged;
-            tap = listener.gameObject.AddComponent<GameAudioTap>();
-            tap.Session = session;
             pixels = new byte[options.Width * options.Height * 4];
             output = new RenderTexture(options.Width, options.Height, 0, RenderTextureFormat.ARGB32);
-            output.Create();
+            if (!output.Create()) throw new InvalidOperationException("Streaming output texture could not be allocated.");
             fps = options.Fps;
             active = true;
             nextFrame = 0;
+            orientation?.Dispose(); orientation = null;
+            if (options.AutomaticOrientation)
+            {
+                orientation = new ProgramOrientationProbe();
+                awaitingCalibration = options;
+                orientationDiagnostics = orientation.Diagnostics;
+            }
+            else
+            {
+                orientationDiagnostics = "Manual output orientation; raw GPU rows; FFmpeg FlipVertical=" + options.FlipVertical + ".";
+                StartEncoder(options);
+            }
             StartCoroutine(CaptureFrames());
         }
         catch { StopOutput(); throw; }
@@ -77,10 +93,34 @@ internal sealed class StreamCapture : MonoBehaviour
 
     private void AudioConfigurationChanged(bool deviceChanged) => session?.Fail("Audio device configuration changed; restart streaming.");
 
+    private void StartEncoder(StreamOptions options)
+    {
+        if (!listener || !listener.isActiveAndEnabled) throw new InvalidOperationException("The game audio listener is unavailable.");
+        session = new EncoderSession(options);
+        AudioSettings.OnAudioConfigurationChanged += AudioConfigurationChanged;
+        tap = listener.gameObject.AddComponent<GameAudioTap>();
+        tap.Session = session;
+    }
+
     private void Update()
     {
         ReportFailure();
-        if (!active || session == null) return;
+        if (!active) return;
+        if (awaitingCalibration != null)
+        {
+            if (!listener || !listener.isActiveAndEnabled)
+            { FailPreflight("Game audio listener changed during video calibration; restart streaming.", false); return; }
+            orientation!.Tick();
+            orientationDiagnostics = orientation.Diagnostics;
+            if (orientation.Failure.Length != 0) { FailPreflight(orientation.Failure, orientation.PermanentFailure); return; }
+            if (!orientation.Ready) return;
+            StreamOptions options = awaitingCalibration;
+            awaitingCalibration = null;
+            try { StartEncoder(options); }
+            catch (EncoderStartException error) { FailPreflight(error.Message, true); return; }
+            catch { FailPreflight("Game audio capture could not start after video calibration; restart streaming.", false); return; }
+        }
+        if (session == null) return;
         if (!listener || !listener.isActiveAndEnabled || !tap)
             session.Fail("Game audio listener changed; restart streaming.");
         else if (AudioSettings.outputSampleRate != session.SampleRate)
@@ -90,9 +130,17 @@ internal sealed class StreamCapture : MonoBehaviour
 
     private void ReportFailure()
     {
+        if (preflightFailure.Length != 0 && !failureReported)
+        { failureReported = true; reportFailure?.Invoke(preflightFailure); return; }
         if (session == null || !session.IsClosed || failureReported) return;
         failureReported = true;
         if (session.FailureDetails.Length != 0) reportFailure?.Invoke(session.FailureDetails);
+    }
+
+    private void FailPreflight(string reason, bool permanent)
+    {
+        preflightFailure = reason; preflightPermanent = permanent;
+        StopOutput();
     }
 
     private IEnumerator CaptureFrames()
@@ -101,7 +149,7 @@ internal sealed class StreamCapture : MonoBehaviour
         while (active)
         {
             yield return end;
-            if (!active || pending || Time.unscaledTime < nextFrame) continue;
+            if (!active || awaitingCalibration != null || session == null || pending || Time.unscaledTime < nextFrame) continue;
             nextFrame = Time.unscaledTime + 1f / fps;
             try { CaptureFrame(); }
             catch { session?.Fail("GPU frame capture failed; check the graphics backend and restart."); StopOutput(); }
@@ -114,7 +162,7 @@ internal sealed class StreamCapture : MonoBehaviour
         // Copy only the camera compositor's program output. Console, local
         // diagnostic banners and screen-space HUD/UI never become stream input.
         // Missing or stale compositor output supplies an intentional clean slate.
-        pendingFrame = program.CopyProgramFrame(output);
+        pendingFrame = program.CopyProgramFrame(output, orientation?.FlipCamera ?? false, orientation?.FlipSlate ?? false);
         pending = true;
         try { AsyncGPUReadback.Request(output, 0, TextureFormat.RGBA32, ReadbackFinished); }
         catch { pending = false; throw; }
@@ -137,6 +185,8 @@ internal sealed class StreamCapture : MonoBehaviour
     internal void StopOutput()
     {
         active = false;
+        awaitingCalibration = null;
+        orientation?.Dispose();
         AudioSettings.OnAudioConfigurationChanged -= AudioConfigurationChanged;
         StopAllCoroutines();
         if (tap) { tap.Session = null; Destroy(tap); }

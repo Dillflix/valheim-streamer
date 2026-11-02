@@ -20,6 +20,10 @@ internal sealed class CinemachineShotRig : IDisposable
     private readonly ShotSequencePolicy sequence = new ShotSequencePolicy();
     private readonly ShotContinuityPolicy continuity = new ShotContinuityPolicy();
     private readonly ShotLongevityPolicy longevity = new ShotLongevityPolicy(Count);
+    private readonly NativeShotBlend nativeBlend = new NativeShotBlend();
+    private NativeRoomConfiner? roomConfiner;
+    private NativeClearShotRanker? clearShot;
+    private readonly ScenicSplinePath scenicPath = new ScenicSplinePath();
     private readonly Vector3[] forecastPosition = new Vector3[Count];
     private readonly Quaternion[] forecastRotation = new Quaternion[Count];
     private readonly float[] forecastFov = new float[Count], forecastTime = new float[Count];
@@ -42,7 +46,8 @@ internal sealed class CinemachineShotRig : IDisposable
     private ScenicVisibility LandscapeVisibility => input.ScenicVisibility ?? ownedLandscapeVisibility;
     private CinematicShotInput input;
     private ScenicShotSample scenicSample;
-    private float scenicProgress, previousScenicProgress, scenicStrength = 1, scenicSampleAt = -1;
+    private float scenicProgress, previousScenicProgress, scenicStrength = 1, nativePathStrength = 1, scenicSampleAt = -1;
+    private bool nativeScenicPath;
     private bool pendingHandoff;
     private bool IsScenic => input.Kind == CinematicShotKind.Scenic;
     private readonly float[] scores = new float[Count];
@@ -128,10 +133,12 @@ internal sealed class CinemachineShotRig : IDisposable
         internal Vector2 RecoveryScreen, AppliedScreen;
         internal string RecoveryReason = "none";
         internal readonly FoliageShotQuality Quality;
+        internal readonly NativeScenicDolly Dolly;
         internal bool GroupShot, InterestReadable = true;
         internal Candidate(CinemachineCamera camera, CinemachineOrbitalFollow orbit,
-            CinemachineRotationComposer aim, CinematicLensFraming framing, FoliageShotQuality quality, Transform trackingPoint, Transform aimPoint)
-        { Camera = camera; Orbit = orbit; Aim = aim; Framing = framing; Quality = quality; TrackingPoint = trackingPoint; AimPoint = aimPoint; }
+            CinemachineRotationComposer aim, CinematicLensFraming framing, FoliageShotQuality quality, Transform trackingPoint, Transform aimPoint,
+            NativeScenicDolly dolly)
+        { Camera = camera; Orbit = orbit; Aim = aim; Framing = framing; Quality = quality; TrackingPoint = trackingPoint; AimPoint = aimPoint; Dolly = dolly; }
     }
 
     internal bool TrySolve(CinematicShotInput shot, BroadcastSettings settings, float dt, bool continuous, bool moveCarrier,
@@ -194,7 +201,9 @@ internal sealed class CinemachineShotRig : IDisposable
         { position = lastPosition; rotation = lastRotation; fov = lastFov; return lastSucceeded; }
         EnsureCreated();
         solvedFrame = Time.frameCount;
+        bool hadScenicSample = scenicSampleAt >= 0, priorNativeScenic = nativeScenicPath;
         if (IsScenic) focus = UpdateScenicSample(settings, dt, now);
+        bool bodyBackendChanged = IsScenic && hadScenicSample && nativeScenicPath != priorNativeScenic;
         float step = Mathf.Clamp(dt, 0, 0.1f);
         bool priorUsable = lastSucceeded && PictureUsable(lastView);
         bool priorPresented = priorUsable && PresentationConfirmed;
@@ -203,11 +212,19 @@ internal sealed class CinemachineShotRig : IDisposable
                 priorPresented && transitionElapsed >= transitionSeconds &&
                 (IsScenic || !settings.ShotScales.Value || ShotScalePolicy.MatchesScale(lastView.PrimaryFrameHeight, lastScale)));
         bool resumingPresentation = hasPose && (!lastSucceeded || fallbackSince >= 0 || pendingHandoff);
-        bool modeChanged = hasPose && lastDynamic != DynamicEnabled(settings);
+        bool modeChanged = hasPose && (lastDynamic != DynamicEnabled(settings) || bodyBackendChanged);
         if (modeChanged)
         {
             director.Reset(); stableSelection.Reset(); predictionAt = now;
             if (!DynamicEnabled(settings)) { approvedMotion = acceptedMotion; approvedHeading = heading; }
+        }
+        if (bodyBackendChanged)
+        {
+            // The comparison switch keeps the actually displayed source and
+            // developed plan progress. Reset only solver/cache evidence, then
+            // use the same validated transition as any other shot change.
+            evaluateAt = forecastAt = 0; longevity.Reset(); pictureRevision++; PictureContext = default;
+            foreach (Candidate item in candidates) item.Camera.PreviousStateIsValid = false;
         }
         lastDynamic = DynamicEnabled(settings);
         CameraSceneFrame context = IsScenic ? ScenicContext(focus) : input.Kind == CinematicShotKind.Creature
@@ -216,6 +233,8 @@ internal sealed class CinemachineShotRig : IDisposable
         if (observedPlayer != null)
         { playerSceneId = observedPlayer.SceneId; playerContextFrame = observedPlayer; playerContextAt = now; }
         activeContext = context;
+        if (settings.NativeConfiner.Value) roomConfiner!.Update(context, now);
+        else roomConfiner!.Clear();
         confined = interior || context.Environment == ShotEnvironment.Room || context.Environment == ShotEnvironment.Doorway || context.DoorwayTransition;
         ShotSituation observedSituation = Situation(context);
         sequenceCue = sequence.Update(now, step, observedSituation, priorPresented,
@@ -280,12 +299,13 @@ internal sealed class CinemachineShotRig : IDisposable
         }
         else longevity.Reset();
         PrepareSelection(focus, context, priorUsable, modeChanged, settings, now);
-        var selectionEligibility = modeChanged && previousChoice >= 0 && eligible[previousChoice] ? seededEligibility : eligible;
+        var selectionEligibility = modeChanged && previousChoice >= 0 && eligible[previousChoice] && readable[previousChoice]
+            ? seededEligibility : eligible;
         ShotSituation situation = Situation(context);
         int choice = DynamicEnabled(settings)
             ? director.Select(now, step, editorialScores, selectionEligibility, context.Activity, velocity.magnitude,
-                confined, space, priorPresented, readable, situation, requestedRole)
-            : stableSelection.Select(now, editorialScores, selectionEligibility, readable);
+                confined, space, priorPresented, readable, situation, requestedRole, settings.NativeClearShot.Value ? clearShot : null)
+            : stableSelection.Select(now, editorialScores, selectionEligibility, readable, settings.NativeClearShot.Value ? clearShot : null);
         if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
             "No shot camera with loaded geometry and safe physical clearance", out position, out rotation, out fov);
         if (choice != selected && !evaluateAll)
@@ -300,8 +320,9 @@ internal sealed class CinemachineShotRig : IDisposable
                 }
                 for (int i = 0; i < Count; i++) Evaluate(i, NeutralMotion(), context, focus, settings, dt, continuous, moveCarrier);
                 choice = DynamicEnabled(settings)
-                    ? director.Select(now, 0, scores, eligible, context.Activity, velocity.magnitude, confined, space, false, readable, situation, requestedRole)
-                    : stableSelection.Select(now, scores, eligible, readable);
+                    ? director.Select(now, 0, scores, eligible, context.Activity, velocity.magnitude, confined, space, false, readable, situation, requestedRole,
+                        settings.NativeClearShot.Value ? clearShot : null)
+                    : stableSelection.Select(now, scores, eligible, readable, settings.NativeClearShot.Value ? clearShot : null);
                 if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
                     "Alternate shot camera geometry became unavailable", out position, out rotation, out fov);
             }
@@ -395,6 +416,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 transitionFrom.ReferenceLookAt = lastAimAnchor;
                 transitionFocus = focus; transitionElapsed = 0;
                 transitionSeconds = (float)decision.Seconds;
+                nativeBlend.Start(transitionFrom, transitionSeconds);
                 transitionVelocity = resumingPresentation || confined || space < 0.4f
                     ? Vector3.zero : Vector3.ClampMagnitude(lastAnchorVelocity, 12f);
                 if (choice != previousChoice) shotId++;
@@ -425,8 +447,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 from.BlendHint |= CameraState.BlendHints.ScreenSpaceAimWhenTargetsDiffer;
                 to.BlendHint |= CameraState.BlendHints.ScreenSpaceAimWhenTargetsDiffer;
             }
-            float t = Mathf.SmoothStep(0, 1, Mathf.Clamp01(transitionElapsed / transitionSeconds));
-            CameraState blended = CameraState.Lerp(from, to, t);
+            CameraState blended = nativeBlend.Sample(from, to, transitionElapsed, transitionSeconds);
             Vector3 blendedPosition = blended.GetFinalPosition();
             Quaternion blendedRotation = Upright(blended.GetFinalOrientation());
             var blendView = EvaluateView(blendedPosition, blendedRotation, evaluatedSubjects, blended.Lens.FieldOfView, focus);
@@ -508,7 +529,11 @@ internal sealed class CinemachineShotRig : IDisposable
                 $"primary focus ({lastView.PrimaryFocusX - 0.5f:F2},{lastView.PrimaryFocusY - 0.5f:F2}), body height {lastView.PrimaryFrameHeight:F2}, safe {lastView.PrimarySafeFrame:F2}; ") +
             $"{candidate.Composition.Reason}; recovery {candidate.RecoveryReason}; " +
             $"{sequenceCue.Reason}; {continuity.Reason}; {director.Reason}; {lastView.Reason}; " +
-            (PictureMonitor == null ? "pixel feedback unavailable" : PictureMonitor.Feedback(PictureContext.Key, now).Reason);
+            (PictureMonitor == null ? "pixel feedback unavailable" : PictureMonitor.Feedback(PictureContext.Key, now).Reason) + "; " +
+            (settings.NativeClearShot.Value ? clearShot!.Diagnostics : "ClearShot disabled; comparison selector") + "; " +
+            (settings.NativeConfiner.Value ? roomConfiner!.Diagnostics : "Confiner disabled") + "; " +
+            (nativeScenicPath ? $"Spline Dolly: {scenicPath.Length:F1}m path; distance {candidate.Dolly.Distance:F1}m" :
+                IsScenic ? "Spline Dolly unavailable/disabled; scenic fallback" : "Orbital Follow actor body") + "; native validated blend";
         return true;
     }
 
@@ -561,26 +586,42 @@ internal sealed class CinemachineShotRig : IDisposable
         ? FoliageShotQuality.FromLandscape(LandscapeVisibility.Evaluate(camera, rotation, focus, fov, Aspect, NearClipPlane))
         : visibility.Evaluate(camera, rotation, framed, fov, Aspect, NearClipPlane);
 
-    private bool SegmentClear(Vector3 from, Vector3 to) => IsScenic
-        ? LandscapeVisibility.SegmentClear(from, to) : visibility.SegmentClear(from, to);
+    private bool SegmentClear(Vector3 from, Vector3 to) =>
+        (roomConfiner == null || roomConfiner.ValidateSegment(from, to)) &&
+        (IsScenic ? LandscapeVisibility.SegmentClear(from, to) : visibility.SegmentClear(from, to));
 
     private Vector3 UpdateScenicSample(BroadcastSettings settings, float dt, float now)
     {
         if (scenicSampleAt < 0)
+            scenicStrength = settings.ShotMotion.Value > 0 ? settings.ShotMotion.Value : 1f;
+        if (!scenicPath.Ready) nativePathStrength = scenicStrength;
+        bool wasNative = nativeScenicPath;
+        nativeScenicPath = settings.NativeSplineDolly.Value && scenicPath.Prepare(input.ScenicPlan!, scenicStrength);
+        if (scenicSampleAt < 0 || wasNative != nativeScenicPath)
         {
-            scenicSample = input.ScenicPlan!.Sample(scenicProgress, settings.ShotMotion.Value, DynamicEnabled(settings));
+            scenicSample = SampleScenic(scenicProgress);
         }
         else if (DynamicEnabled(settings) && settings.ShotMotion.Value > 0)
         {
-            scenicProgress = Mathf.Clamp01(scenicProgress + Mathf.Max(0, input.Progress - previousScenicProgress));
-            scenicStrength = Mathf.Lerp(scenicStrength, settings.ShotMotion.Value, 1f - Mathf.Exp(-Mathf.Max(0, dt) * 2f));
-            scenicSample = input.ScenicPlan!.Sample(scenicProgress, scenicStrength);
+            scenicProgress = Mathf.Clamp01(scenicProgress + Mathf.Max(0, input.Progress - previousScenicProgress) * ScenicProgressSpeed(settings));
+            // A native path's geometry is immutable for its lifetime. Live
+            // strength changes alter traversal speed instead of moving its
+            // control points under an already displayed camera.
+            if (!nativeScenicPath)
+                scenicStrength = Mathf.Lerp(scenicStrength, settings.ShotMotion.Value, 1f - Mathf.Exp(-Mathf.Max(0, dt) * 2f));
+            scenicSample = SampleScenic(scenicProgress);
         }
         // Steady and motion0 retain the already developed world viewpoint. A
         // control change must not rewind an environmental path to its start.
         previousScenicProgress = Mathf.Clamp01(input.Progress); scenicSampleAt = now;
         return FromCore(scenicSample.AimPosition);
     }
+
+    private float ScenicProgressSpeed(BroadcastSettings settings) => nativeScenicPath
+        ? Mathf.Clamp(settings.ShotMotion.Value, 0, 1.5f) / Mathf.Max(.01f, nativePathStrength) : 1f;
+
+    private ScenicShotSample SampleScenic(float progress) => nativeScenicPath && scenicPath.Ready
+        ? scenicPath.Sample(progress) : input.ScenicPlan!.Sample(progress, scenicStrength);
 
     private CameraSceneFrame ScenicContext(Vector3 focus)
     {
@@ -631,7 +672,8 @@ internal sealed class CinemachineShotRig : IDisposable
         candidate.AnchorVelocity = first || elapsed <= 0 ? Vector3.zero :
             Vector3.ClampMagnitude((candidate.TrackingPoint.position - candidate.PreviousAnchor) / elapsed, 12f);
         if (first) candidate.PreviousAnchor = candidate.TrackingPoint.position;
-        candidate.TrajectoryReason = candidate.TrajectoryBlocked ? "environmental path held for clearance" : "authored world camera and aim paths";
+        candidate.TrajectoryReason = candidate.TrajectoryBlocked ? "environmental path held for clearance" :
+            nativeScenicPath ? "native distance-based spline and independent aim" : "authored world camera and aim paths";
     }
 
     private void ConfigureScenicComposition(Candidate candidate, BroadcastSettings settings, float dt)
@@ -762,6 +804,13 @@ internal sealed class CinemachineShotRig : IDisposable
         UpdateTrajectory(index, context, focus, settings, Time.unscaledTime, dt);
         candidate.Camera.Follow = candidate.TrackingPoint;
         candidate.Camera.LookAt = candidate.GroupShot ? group!.transform : candidate.AimPoint;
+        bool useDolly = IsScenic && nativeScenicPath && scenicPath.Ready;
+        // Exactly one Body component is active. Native spline traversal owns
+        // scenery; OrbitalFollow retains its damped actor tracking behavior.
+        candidate.Orbit.enabled = !useDolly;
+        candidate.Dolly.Enabled = useDolly;
+        if (useDolly)
+            candidate.Dolly.Configure(scenicPath, scenicProgress, ScenicCandidateOffset(index), candidate.TrajectoryBlocked);
         Vector3 offset = IsScenic ? Vector3.zero : Offset(index, motion, settings, confined);
         candidate.Orbit.Radius = offset.magnitude;
         candidate.Orbit.HorizontalAxis.Value = Mathf.Atan2(-offset.x, -offset.z) * Mathf.Rad2Deg;
@@ -802,6 +851,7 @@ internal sealed class CinemachineShotRig : IDisposable
         if (IsScenic && candidate.TrajectoryBlocked) scores[index] *= 0.2f;
         eligible[index] = candidate.Quality.Result.CameraClear && PositionSupported(solved, focus, continuous, moveCarrier);
         readable[index] = eligible[index] && PictureUsable(candidate.Quality.Result);
+        if (useDolly && readable[index]) candidate.Dolly.AcceptPosition();
         candidate.InterestReadable = IsScenic || !context.HasInterest ||
             !(intent.Role == ShotRole.Interaction || intent.Role == ShotRole.Detail) ||
             visibility.InterestVisible(solved, state.GetFinalOrientation(), context.InterestFocus,
@@ -1083,9 +1133,9 @@ internal sealed class CinemachineShotRig : IDisposable
             forecastAimVelocity[index] = TargetRoster.Finite(observedAimVelocity) ? Vector3.ClampMagnitude(observedAimVelocity, 20f) : Vector3.zero;
             if (IsScenic)
             {
-                float progress = Mathf.Clamp01(scenicProgress + (DynamicEnabled(settings) && settings.ShotMotion.Value > 0 ? .5f / Mathf.Max(5f, settings.ScenicDwell.Value) : 0));
+                float progress = Mathf.Clamp01(scenicProgress + (DynamicEnabled(settings) && settings.ShotMotion.Value > 0 ? .5f * ScenicProgressSpeed(settings) / Mathf.Max(5f, settings.ScenicDwell.Value) : 0));
                 ScenicShotSample sample = DynamicEnabled(settings) && settings.ShotMotion.Value > 0
-                    ? input.ScenicPlan!.Sample(progress, scenicStrength) : scenicSample;
+                    ? SampleScenic(progress) : scenicSample;
                 forecastVelocity[index] = (FromCore(sample.CameraPosition) - FromCore(scenicSample.CameraPosition)) * 2f;
                 forecastAimVelocity[index] = (FromCore(sample.AimPosition) - focus) * 2f;
             }
@@ -1107,9 +1157,9 @@ internal sealed class CinemachineShotRig : IDisposable
         futureSubjects.Clear();
         if (IsScenic)
         {
-            float progress = Mathf.Clamp01(scenicProgress + (DynamicEnabled(settings) && settings.ShotMotion.Value > 0 ? seconds / Mathf.Max(5f, settings.ScenicDwell.Value) : 0));
+            float progress = Mathf.Clamp01(scenicProgress + (DynamicEnabled(settings) && settings.ShotMotion.Value > 0 ? seconds * ScenicProgressSpeed(settings) / Mathf.Max(5f, settings.ScenicDwell.Value) : 0));
             ScenicShotSample sample = DynamicEnabled(settings) && settings.ShotMotion.Value > 0
-                    ? input.ScenicPlan!.Sample(progress, scenicStrength) : scenicSample;
+                    ? SampleScenic(progress) : scenicSample;
             future = position + FromCore(sample.CameraPosition) - FromCore(scenicSample.CameraPosition);
             predictedFocus = FromCore(sample.AimPosition);
         }
@@ -1301,9 +1351,10 @@ internal sealed class CinemachineShotRig : IDisposable
             ? Upright(Quaternion.FromToRotation(a, b) * rotation) : rotation;
     }
 
-    private static bool PositionSupported(Vector3 position, Vector3 focus, bool continuous, bool moveCarrier)
+    private bool PositionSupported(Vector3 position, Vector3 focus, bool continuous, bool moveCarrier)
     {
-        if (!TargetRoster.Finite(position) || (position - focus).sqrMagnitude < 0.75f * 0.75f ||
+        if (roomConfiner != null && !roomConfiner.Contains(position) ||
+            !TargetRoster.Finite(position) || (position - focus).sqrMagnitude < 0.75f * 0.75f ||
             Vector3.ProjectOnPlane(position - focus, Vector3.up).sqrMagnitude < 0.25f ||
             !PlayerShotReadiness.PositionReady(position, continuous)) return false;
         if (!moveCarrier) return true;
@@ -1391,6 +1442,8 @@ internal sealed class CinemachineShotRig : IDisposable
         if (owner) return;
         owner = new GameObject("Broadcaster procedural cameras") { hideFlags = HideFlags.HideAndDontSave };
         owner.SetActive(false);
+        roomConfiner = new NativeRoomConfiner(owner.transform);
+        clearShot = new NativeClearShotRanker(owner.transform, Count);
         lookPoint = new GameObject("Subject focus").transform; lookPoint.SetParent(owner.transform, false);
         var groupObject = new GameObject("Cooperative scene targets"); groupObject.transform.SetParent(owner.transform, false);
         group = groupObject.AddComponent<CinemachineTargetGroup>();
@@ -1404,13 +1457,15 @@ internal sealed class CinemachineShotRig : IDisposable
             group.Targets.Add(new CinemachineTargetGroup.Target { Object = subjectPoints[i], Weight = 0, Radius = 0.8f });
         }
         int mask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        var cameraChildren = new CinemachineCamera[Count];
         for (int i = 0; i < Count; i++)
         {
             var child = new GameObject("Player shot " + (i + 1));
-            child.transform.SetParent(owner.transform, false);
+            child.transform.SetParent(clearShot.CameraParent, false);
             var trackingPoint = new GameObject("Shot trajectory " + (i + 1)).transform;
             trackingPoint.SetParent(owner.transform, false);
             var camera = child.AddComponent<CinemachineCamera>();
+            cameraChildren[i] = camera;
             camera.Follow = trackingPoint; camera.LookAt = lookPoint;
             camera.StandbyUpdate = CinemachineVirtualCameraBase.StandbyUpdateMode.Never;
             camera.PreviousStateIsValid = false;
@@ -1434,18 +1489,23 @@ internal sealed class CinemachineShotRig : IDisposable
                 MinimumOcclusionTime = 0.15f, SmoothingTime = 0.4f, Damping = 1.2f, DampingWhenOccluded = 0.15f
             };
             obstacles.ShotQualityEvaluation = new CinemachineDeoccluder.QualityEvaluation { Enabled = false };
+            // Native confinement follows obstacle correction, and the complete
+            // resulting pose is scored below and revalidated before display.
+            roomConfiner.Bind(camera);
             var framing = child.AddComponent<CinematicLensFraming>();
             framing.FramingSize = 0.65f;
             framing.SizeAdjustment = CinemachineGroupFraming.SizeAdjustmentModes.ZoomOnly;
             framing.LateralAdjustment = CinemachineGroupFraming.LateralAdjustmentModes.ChangeRotation;
             framing.Damping = 1.5f;
             var quality = child.AddComponent<FoliageShotQuality>(); quality.Visibility = visibility;
+            var dolly = new NativeScenicDolly(camera, owner.transform);
             var candidate = new Candidate(camera, orbit, aim, framing, quality, trackingPoint,
-                new GameObject("Shot aim " + (i + 1)).transform);
+                new GameObject("Shot aim " + (i + 1)).transform, dolly);
             candidate.AimPoint.SetParent(owner.transform, false);
             framing.BeforeAim = (state, delta) => ConfigureComposition(candidate, state, delta);
             candidates[i] = candidate;
         }
+        clearShot.Bind(cameraChildren);
         owner.SetActive(true);
     }
 
@@ -1461,6 +1521,7 @@ internal sealed class CinemachineShotRig : IDisposable
     private void Reset(bool preservePlayerContext)
     {
         director.Reset(); stableSelection.Reset(); sequence.Reset(); continuity.Reset(); longevity.Reset();
+        roomConfiner?.Clear(); clearShot?.Reset(); scenicPath.Reset(); nativeBlend.Reset();
         pictureEpoch++; pictureRevision = 0; PictureContext = default; shownCueRevision = -1; lastCuePresented = false; forecastAt = 0;
         if (!preservePlayerContext) scene.Reset(); creatureScene.Reset(); visibility.Reset(); ownedLandscapeVisibility.Reset();
         Array.Clear(scores, 0, Count); Array.Clear(eligible, 0, Count); Array.Clear(readable, 0, Count); visiblePlayers.Clear(); subjects.Clear(); primaryOnly.Clear(); futureSubjects.Clear();
@@ -1469,6 +1530,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 if (candidate != null && candidate.Camera)
                 {
                     candidate.Camera.PreviousStateIsValid = false; candidate.Placement.Reset(); candidate.Trajectory.Reset();
+                    candidate.Dolly.Reset();
                     candidate.TrajectoryFrame = -1; candidate.TrajectoryAt = -1; candidate.TrajectoryBlocked = false;
                     candidate.TrajectoryReason = "awaiting trajectory";
                     candidate.RelaxUntil = candidate.NextRecoveryAt = candidate.RecoveryFov = candidate.RecoveryFovUntil = 0; candidate.RecoveryReason = "none";
@@ -1481,13 +1543,16 @@ internal sealed class CinemachineShotRig : IDisposable
         playerSceneId = 0; playerContextFrame = activeContext = null; playerContextAt = -1;
         unreadableSince = readableSince = -1; recoverySearchAt = 0; recoveryEpoch = 0; recoverySearch = confined = false;
         transitionSeconds = 1.4f; intent = director.Intent;
-        shotId = 0; lastDynamic = false; pendingHandoff = LastPictureUsable = false; scenicSampleAt = -1;
+        shotId = 0; lastDynamic = false; pendingHandoff = LastPictureUsable = nativeScenicPath = false; scenicSampleAt = -1;
         LastFailure = "Awaiting player camera"; Diagnostics = "Procedural camera: awaiting player";
     }
 
     public void Dispose()
     {
         Reset();
+        roomConfiner?.Dispose(); roomConfiner = null;
+        foreach (Candidate candidate in candidates) candidate?.Dolly.Dispose();
+        scenicPath.Dispose(); clearShot?.Dispose(); clearShot = null;
         if (owner) { owner.SetActive(false); UnityEngine.Object.Destroy(owner); }
         owner = null; lookPoint = null; group = null;
         Array.Clear(candidates, 0, Count); Array.Clear(subjectPoints, 0, subjectPoints.Length);

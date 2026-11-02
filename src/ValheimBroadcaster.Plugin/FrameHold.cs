@@ -114,7 +114,7 @@ internal sealed class FrameHold
         else NotifyUnavailable();
     }
 
-    internal ProgramFrameStamp CopyProgramFrame(RenderTexture destination)
+    internal ProgramFrameStamp CopyProgramFrame(RenderTexture destination, bool flipCamera = false, bool flipSlate = false)
     {
         SynchronizeBoundary();
         ProgramFrameStamp stamp = program.Select(Time.unscaledTime, Time.frameCount, active(), hardFailure(),
@@ -123,9 +123,11 @@ internal sealed class FrameHold
         bool srgb = GL.sRGBWrite;
         try
         {
-            // Both live and held output follow Unity's regular-texture blit
-            // path. There is no backbuffer/IMGUI copy and no platform-only flip.
-            Blit(stamp.Presentation == FramePresentation.Slate ? slate.Texture : frame!, destination);
+            // Calibration measures each source family through this same blit
+            // path. Only the encoder copy is normalized; local presentation and
+            // picture-analysis textures retain Unity's regular texture layout.
+            bool isSlate = stamp.Presentation == FramePresentation.Slate;
+            Blit(isSlate ? slate.Texture : frame!, destination, isSlate ? flipSlate : flipCamera);
         }
         finally { RenderTexture.active = previousTarget; GL.sRGBWrite = srgb; }
         return stamp;
@@ -181,13 +183,14 @@ internal sealed class FrameHold
         return result;
     }
 
-    private static void Blit(Texture source, RenderTexture destination)
+    internal static void Blit(Texture source, RenderTexture destination, bool flipVertical = false)
     {
         bool srgb = GL.sRGBWrite;
         try
         {
             GL.sRGBWrite = QualitySettings.activeColorSpace == ColorSpace.Linear && (!destination || destination.sRGB);
-            Graphics.Blit(source, destination);
+            if (flipVertical) Graphics.Blit(source, destination, new Vector2(1, -1), new Vector2(0, 1));
+            else Graphics.Blit(source, destination);
         }
         finally { GL.sRGBWrite = srgb; }
         // OnRenderImage must leave its output bound, unlike end-of-frame capture.

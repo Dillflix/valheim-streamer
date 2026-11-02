@@ -85,6 +85,11 @@ jobs:
           --configuration Release -warnaserror
           -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
           -p:BepInExCoreDir="$RUNNER_TEMP/valheim-build-references/bepinex/core"
+      - name: Test actual native spline mathematics
+        run: >-
+          dotnet run --project tests/ValheimBroadcaster.Cinemachine.Tests
+          --configuration Release -warnaserror
+          -p:ValheimManagedDir="$RUNNER_TEMP/valheim-build-references/game/valheim_server_Data/Managed"
       - name: Stage client with its Cinemachine runtime and notices
         run: |
           mkdir -p artifacts/ValheimBroadcaster
@@ -97,6 +102,11 @@ jobs:
             third_party/Cinemachine/obj/upstream/package.json third_party/Cinemachine/obj/upstream/source-record.json \
             artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/
           cp third_party/Cinemachine/README.md artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/BUILD.md
+          mkdir -p artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/Splines
+          cp third_party/Cinemachine/obj/upstream/Splines/LICENSE.md \
+            third_party/Cinemachine/obj/upstream/Splines/package.json \
+            third_party/Cinemachine/obj/upstream/Splines/source-record.json \
+            artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/Splines/
       - name: Upload test build (not a validated game release)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

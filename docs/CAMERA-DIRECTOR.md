@@ -1,10 +1,10 @@
-# Shared camera director (0.8.19)
+# Shared camera director (0.8.20)
 
-Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.19 builds directly on 0.8.18 (`4ecea7d`). It adds future-readability ranking, short activity sequences, deliberate wide/full/qualified medium framing, persistent action geography, clean program output and actual-picture feedback. Existing readable-view recovery, room/opening measurements, group continuity and observer limits remain in force. The 0.8.17 wildlife cutaways remain available under their existing global-idle requirements.
+Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.20 builds directly on 0.8.19 (`6fbfb9d`), adding native Confiner 3D, Spline Dolly, ClearShot and blend curves, plus automatic clean-feed orientation calibration. Existing future-readability ranking, activity sequences, deliberate scales, room/opening measurements, group continuity and observer limits remain active. Wildlife cutaways retain their existing global-idle requirements.
 
 Scenery supplies planned world camera and aim paths; creatures supply their actual dimensions and observed movement. Neither is represented as a fake player. The observer's travel/authorization rules remain separate. Probe viewing stays a fixed acquisition measurement, while travel and recovery use the existing held-frame/slate presentation.
 
-Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.19 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
+Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.20 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
 
 ## Controls and configuration
 
@@ -20,6 +20,9 @@ Use `-console` when launching Valheim, then F5. The operator console remains loc
 | `broadcast camera sequences on` / `off` | Enable/disable short activity sequences; usable live footage fulfills beats, while hold/steady pause editorial development |
 | `broadcast camera scales on` / `off` | Enable wide/full/qualified medium envelopes or use the prior full-body comparison behavior |
 | `broadcast camera picture on` / `off` | Enable/disable low-frequency clean-picture exposure/contrast feedback; geometry remains active |
+| `broadcast camera confiner on` / `off` | Enable/disable native confinement inside verified interior camera cells |
+| `broadcast camera dolly on` / `off` | Enable/disable native scenic spline traversal, with a validated viewpoint handoff |
+| `broadcast camera clearshot on` / `off` | Select native ClearShot ranking or the pure comparison fallback; retain picture and presentation constraints |
 | `broadcast camera groups on` / `off` | Enable/disable player cooperative and opponent group compositions; creature coverage currently frames one primary actor |
 | `broadcast camera motion 0` | Stop decorative movement while retaining tracking, damping and dynamic shot selection |
 | `broadcast camera motion 1` | Restore default decorative movement strength; accepted range is 0–1.5 |
@@ -40,6 +43,9 @@ The camera controls apply to all three production modes. `composition off` eases
 | `ShotSequences` | `true` | Develop observed activities through interruptible beats; manual hold and steady mode pause progress |
 | `ShotScales` | `true` | Explicit wide/full/qualified medium envelopes with whole-body alternatives |
 | `RenderedPictureEvaluation` | `true` | Conservative clean-picture exposure/contrast feedback; no remote image upload or lighting changes |
+| `Confiner3D` | `true` | Native confinement inside fresh, verified local interior camera cells |
+| `SplineDolly` | `true` | Native finite scenic spline traversal and matching forecast positions |
+| `ClearShot` | `true` | Native evaluated-view ranking with custom presentation-aware pacing |
 | `PositionDamping` | `0.8` | Cinemachine damping in seconds for the planned trajectory; increasing it softens position response |
 | `AimDamping` | `1` | Seconds; increasing it softens aim response |
 | `DeadZone` | `0.12` | Screen fraction allowing subject movement before recentering; range 0–0.3 |
@@ -64,6 +70,16 @@ The foliage estimate remains an approximation: renderer bounds are not leaf silh
 Valheim's `Character.InInterior` distinguishes the elevated dungeon layer; it does **not** identify a player-built house. That flag remains unchanged for loading/readiness. A separate local survey measures constructed overhead `Piece` geometry, surrounding walls and supported openings. Tree canopies are excluded from roof evidence. The inferred states are open, sheltered, room, doorway, dungeon or unknown; incomplete measurements remain unknown.
 
 Surveys run at bounded cadence with fixed nonallocating hit buffers. Room/open transitions require persistent evidence, and doorway restraint continues briefly after leaving an opening. A measured ceiling caps optional rise; restricted rooms and doorways favor compact framing, quieter movement and shorter validated handoffs. These are local geometric hints, not named rooms, building ownership, a navigable room graph or proof of complete network delivery. Large halls can retain measured camera freedom. Players and creatures use this survey; scenic plans retain their own validated world paths.
+
+## Native camera mechanics
+
+`Confiner3D` requires a stricter structural survey than the room label. It acquires a conservative convex cell only after compatible fresh measurements establish walls, floor, roof and clear interior space. Open doorways, moving structures, incomplete/overflowed queries and stale geometry release confinement. It does not claim a complete semantic room graph. The native component clamps and slows the camera near verified boundaries; final camera positions, forecasts and transitions still pass physical/readability checks. A separately owned local physics scene holds the volume collider without simulating it or exposing it to gameplay queries or contacts. Specific `ClosestPoint` checks must succeed before the native component is enabled. World/stop cleanup releases the scene and bindings.
+
+`SplineDolly` replaces the scenic Body solver with the upstream component, using finite world-space splines generated from the validated environmental plan. Native Unity Splines evaluation and distance units provide matching developed/forecast positions. Movement begins and ends at rest; the path is open rather than cyclic. Aim remains independently composed with Rotation Composer. Only one Body component is active; actor shots keep Orbital Follow. Pausing holds the developed position, and strength changes adjust traversal speed rather than reshaping the curve beneath a live camera. Native/off changes use an explicitly validated displayed-pose handoff. Full path, foliage and carrier checks remain in force.
+
+`ClearShot` ranks the actual already-solved candidate cameras using native quality comparison. Physical failures are omitted, and disjoint quality bands make every supported readable view outrank an unreadable one. Forecast, continuity, pixel and sequence preferences operate within those limits. The ranker does not run another camera solve or render. A narrow checked dependency bridge temporarily supplies evaluated quality, restoring it after ranking. Native wall-clock dwell is disabled because held/slate footage cannot fulfill this director's shot duration; existing persistent-improvement, actual-presentation timing and transition rollback remain authoritative.
+
+`CinemachineBlend` now replaces the custom smoothstep curve over outgoing/incoming `CameraState` snapshots. The outgoing state starts from the displayed pose. Compatible screen-space aim hints are retained, and the final interpolated point still must satisfy room, path, readability and observer constraints. Invalid transitions use a validated endpoint; no Brain takes ownership of Valheim's real camera.
 
 ## Purpose, scale and locomotion
 
@@ -95,7 +111,7 @@ The action axis is persistent observed geography, not the actor's instantaneous 
 
 ## Clean program output and rendered-picture feedback
 
-RTMP now receives the current post-effects camera-compositor texture before operator IMGUI/overlay UI. F5 console and diagnostic banners are not the stream input. Live and bounded held footage use the same regular-texture copy path; there is no final-screen screenshot fallback. Missing/stale compositor output, travel and recovery produce an owned **VALHEIM BROADCAST / RETURNING TO THE WORLD** card without operational details. Reset, resize, camera replacement and hard boundaries invalidate queued frame identities. Pending GPU reads own separate output buffers until completion. The existing explicit `Streaming.FlipVertical` option remains available; actual local-versus-stream orientation still needs D3D/Vulkan runtime checks.
+RTMP now receives the current post-effects camera-compositor texture before operator IMGUI/overlay UI. F5 console and diagnostic banners are not the stream input. Live and bounded held footage use the same regular-texture copy path; there is no final-screen screenshot fallback. Missing/stale compositor output, travel and recovery produce an owned **VALHEIM BROADCAST / RETURNING TO THE WORLD** card without operational details. Reset, resize, camera replacement and hard boundaries invalidate queued frame identities. Pending GPU reads own separate output buffers until completion. `Streaming.AutomaticOrientation=true` calibrates the actual output-copy/readback path before opening FFmpeg or the audio tap. Camera RenderTextures and the slate Texture2D are measured separately with four bounded 16×16 probe reads, then corrected top-first output is verified. Probes are never displayed or encoded. Calibration failure reports a precise failure and sends no unverified picture. Automatic mode ignores the preserved old `FlipVertical` workaround; set `AutomaticOrientation=false` only for explicit manual output, where `FlipVertical` retains its prior behavior. Restart streaming after changing either setting. Diagnostics report measured camera/slate row order. Actual local-versus-stream orientation still needs D3D/Vulkan runtime checks.
 
 UI already rendered into the world camera, including world-space labels from another mod, remains part of that scene image. The existing HUD-hiding controls still apply. This change does not add another rendering camera, desktop capture, a web controller, automatic exposure adjustment or new audio mixing.
 
@@ -205,7 +221,7 @@ The companion added in 0.8.13 can supply observation ages, coarse velocity and r
 
 The client probes support after observer authorization. An older server that does not reply falls back to local context after six seconds. Freshness, character identity and packet bounds are checked; stale or invalid optional context does not revoke an approved observer role. The camera currently uses fresh primary health-loss hints as supporting evidence, not as sufficient proof of combat.
 
-The 0.8.19 production-camera changes require only the client update: install its three DLLs and included `ThirdParty` notices together, preserving configuration. The 0.8.18 server remains optional for remote event evidence; global-idle wildlife cutaways still require the 0.8.17-or-later activity service. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
+The 0.8.20 production-camera changes require only the client update: install its three DLLs and included `ThirdParty` notices together, preserving configuration. The 0.8.18 server remains optional for remote event evidence; global-idle wildlife cutaways still require the 0.8.17-or-later activity service. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
 
 ## Reused Cinemachine components
 
@@ -213,12 +229,15 @@ The mod compiles selected official **Cinemachine 3.1.7** runtime sources into it
 
 | Component | Use in this mod |
 | --- | --- |
-| [Orbital Follow](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineOrbitalFollow.html) | Damped actor position around an independent world-space anchor, or direct environmental world-path position; controlled actor orbital offsets |
+| [Orbital Follow](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineOrbitalFollow.html) | Damped actor position around an independent world-space anchor, controlled actor orbital offsets; legacy scenic comparison when Dolly is disabled |
 | [Rotation Composer](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineRotationComposer.html) | Aim damping, dead zone and frame limits |
 | [Target Group](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineTargetGroup.html) | Weighted subjects with radii, updated alongside virtual cameras |
 | [Group Framing](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineGroupFraming.html) | Reused bounded lens-size calculation before aim; the adapter suppresses its competing centered rotation |
 | [Deoccluder](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineDeoccluder.html) | Collider-based obstacle correction |
-| CameraState interpolation | Compatible same-scene blends use upstream screen-space aim interpolation; the resulting pose still passes visibility, orientation, path and observer-reachability checks |
+| Confiner 3D | Native boundary clamping/edge slowdown inside a verified isolated interior camera cell |
+| Spline Dolly / Unity Splines | Native scenic Body movement and distance-based path evaluation; independent composed aim |
+| ClearShot | Native ranking of existing evaluated camera candidates, without extra solves or renders |
+| CinemachineBlend | Native blend curve and screen-space aim interpolation between snapshots; the result passes visibility, orientation, path and observer-reachability checks |
 
 Cinemachine supplies geometric camera behavior; the mod adds Valheim scene evidence, foliage scoring, continuity validation, activity/pacing and observer constraints. Virtual cameras are solved manually; the existing main camera remains the only rendering camera. See [the dependency record](../third_party/Cinemachine/README.md) for source pinning, compatibility changes and notices.
 
@@ -226,25 +245,43 @@ Vegetation renderer bounds approximate leaves and transparency; custom vegetatio
 
 ## Cinemachine capability audit
 
-The pinned 3.1.7 runtime already supplies Orbital Follow, Rotation Composer, Target Group/Group Framing, Deoccluder, camera-state interpolation and blend machinery. The new direction keeps those mechanics and adds evidence/presentation policy above them.
+The selected **Cinemachine 3.1.7** runtime supplies Orbital Follow, Rotation Composer, Target Group/Group Framing and Deoccluder. The native integrations below replace additional camera mechanics while keeping Valheim observation, usable-footage pacing and final presentation validation in the adapter. These are implementation choices, not an assertion of in-game visual or performance validation.
 
-| Capability | Current use and remaining opportunity |
+| Integration | Native responsibility and adapter boundary |
 | --- | --- |
-| [ClearShot](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineClearShot.html) | Included in the selected runtime, but not instantiated. Its candidate-quality model is relevant; automatic ownership of cuts does not currently express readable-first recovery, future-evidence confidence and observer reachability together. The existing selection policies retain those requirements. |
-| [Sequencer Camera](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineSequencerCamera.html) | Included but not instantiated. Fixed-duration instructions cannot by themselves credit only actually rendered usable footage or interrupt from uncertain live activity. The core sequence policy performs that role while Cinemachine solves each requested view. |
-| Rotation Composer target offset/lookahead | Composer damping, dead zone and placement are used, with scale-aware upper-body aim for qualified medium shots. Additional upstream lookahead predicts aim rather than visibility and must not duplicate the rig's filtered movement forecast. |
-| [Confiner 3D](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineConfiner3D.html) | Present, but not enabled without a valid bounding volume. Current roof/wall/doorway hints are not a reliable room-volume graph. Explicit validated room volumes would enable deeper reuse. |
-| [Spline Dolly](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineSplineDolly.html) | Eight spline-specific files are intentionally excluded from this build, and Unity Splines is not shipped. Authored scenic paths are a future integration opportunity requiring a compatible dependency and runtime validation. |
-| Timeline and render-pipeline integrations | Optional integrations remain disabled. No Timeline scene, render-pipeline replacement, extra camera or game-asset bundle is introduced. |
+| [ClearShot](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineClearShot.html) | Ranks the actual evaluated child-camera states, with separate quality bands for readable footage. The disabled manager's protected ranking operation is called directly: it does not advance child solvers or take over transitions. The director retains presentation-qualified dwell, scene history, fresh-evidence eligibility and rejection of an unpresentable winner. |
+| [Confiner 3D](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineConfiner3D.html) | Corrects the camera position inside an acquired conservative interior volume and slows movement near its boundary. The adapter must establish and refresh the room evidence, isolate the helper collider from gameplay physics and reject invalid or stale volumes. Confinement does not prove target visibility or complete room topology. |
+| [Spline Dolly](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineSplineDolly.html) | Owns scenic body movement along the prepared Unity spline using distance-based progress. The director supplies finite non-looping plans, validated progress and alternative-view offsets; it still checks the resulting movement for geometry, foliage and observer reachability. Rotation Composer retains damped environmental aim. See [dependency notes](../third_party/Cinemachine/README.md) for the pinned source build and notices. |
+| [Native blends](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineBlending.html) | `CinemachineBlend` and `CinemachineBlendDefinition` interpolate snapshot camera states, including screen-space aim hints. The adapter supplies the actually displayed source and presentation clock, then validates the interpolated position, orientation, framing and active-room constraint before writing the game camera. No Brain competes for that camera. |
 
-The audit is against the pinned package/source selection recorded in [the dependency notes](../third_party/Cinemachine/README.md), not a claim that every upstream feature is packaged or exercised. More Cinemachine components are useful when their scene inputs and lifecycle match this mod; they do not replace Valheim-specific evidence, isolation or clean-feed requirements.
+The most useful remaining opportunities are specific replacements, rather than additional overlapping solvers:
+
+| Capability | Opportunity and prerequisites |
+| --- | --- |
+| [Position Composer](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachinePositionComposer.html) | A restrained fixed-angle shot family could use native body/depth dead zones, hard limits and damping instead of some custom follow correction. This must be an alternative Body owner; it should not stack with Orbital Follow or erase deliberately independent world-space camera trajectories. |
+| [Group Framing: Dolly Then Zoom](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineGroupFraming.html) | Current reuse is lens-only. Bounded native dolly before zoom could preserve lens character as a group spreads in open space. Accepting its position changes requires validating room bounds, clearance, near plane, movement corridor and primary readability; constrained scenes keep the current lens-only/primary-only alternatives. |
+| [FreeLook Modifier](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineFreeLookModifier.html) | Coordinated elevation-dependent lens, distance, damping and composition could improve crane/orbit profiles. Introduce it only after assigning it sole ownership of those parameters for that profile; it must not fight the per-shot scale/composition settings. |
+| [Spline Dolly LookAt Targets](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineSplineDollyLookAtTargets.html) | Path-relative aim landmarks with easing suit selected scenic reveals. Its native Aim stage directly sets orientation, so it is an alternative to Rotation Composer, not an extra Aim solver to enable alongside it. Current scenic composition and damping remain with the composer. |
+| Native camera-manager blend stack | Could replace more interrupted-transition bookkeeping and provide upstream activation events. Current native snapshot blending intentionally preserves the displayed-pose boundary; manager-selected or unvalidated poses must never become the outgoing visual source. |
+| [Decollider](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineDecollider.html) | Terrain-only correction may help selected scenic profiles. Do not add blanket obstacle correction: the current Deoccluder already respects camera radius, while Decollider does not preserve the line of sight and could introduce competing corrections. |
+| [Impulse](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineImpulse.html) / noise | Optional restrained style for qualified impacts or camera texture, not a composition remedy. Any displacement must remain before final pose validation and must not compromise readable footage. Neither effect is currently enabled. |
+
+[Sequencer Camera](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineSequencerCamera.html), animation-driven camera selection and Timeline are not replacements for uncertain observed-activity sequences. Fixed instructions do not by themselves account for usable-footage credit, multiplayer evidence, interrupted activity or failed framing. Timeline remains relevant to future authored intros or replay sequences. Optional render-pipeline integrations remain disabled.
+
+Keep the custom activity/group evidence, foliage and rendered-picture measurements, loading/readiness boundaries, observer isolation and reachability, useful-footage clocks, semantic shot intent and final swept-path/readability checks. Cinemachine consumes that information to solve cameras; it cannot infer those Valheim-specific contracts. Additional aim lookahead must likewise not duplicate the existing filtered motion forecast.
 
 ## Runtime validation
 
-**The 0.8.19 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
+**The 0.8.20 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
 
 | Exercise | Expected result to verify |
 | --- | --- |
+| Start output with default automatic orientation and an existing `FlipVertical=true`; compare live, framehold test and travel slate on local/remote views | Every encoded image is upright; slate letters readable; old manual flip ignored; calibration diagnostics report verified top-first output |
+| Stop/restart during calibration; resize or change graphics backend, then restart | No stale callback starts an encoder, probe pixels never appear, owned GPU resources are released; calibration failure is explicit |
+| Enter a rotated enclosed house or dungeon room; cross doors, remove a wall, leave and re-enter the world | Verified confinement follows current boundaries and retires immediately when evidence changes; no invisible gameplay collisions/trigger effects |
+| Let lateral/arc/lift/reveal/approach scenery develop; pause/resume, change motion strength, toggle Dolly | Native path progresses smoothly without looping/rewinding; forecasts match the developed path; unsafe movement holds or selects a supported view |
+| Compare ClearShot on/off during visibility loss, group changes and held frames | Readable views win; manual/presentation timing remains valid; no extra render/solver cadence, cut churn or damping reset |
+| Interrupt a blend with an obstacle, doorway, target change or new selected view | Native blend starts from the displayed view and never bypasses room, path or readability checks |
 | Run toward a wall/doorway or sustained forest corridor, then reverse abruptly; compare prediction on/off | Future-use comparison reduces avoidable near-term corrections when evidence is stable; sudden turns make stale forecasts neutral, and prediction never starts travel |
 | Observe work, cooperation, combat, travel and scenic coverage long enough to develop a sequence | Beat/role/scale progress follows displayed readable footage; constrained or rejected detail yields safely; no invented outcomes or rigid repeating cycle |
 | Hold, steady, framehold test and a prolonged unavailable scene during an active sequence | Editorial time pauses or re-establishes correctly, while necessary following/recovery remains active |

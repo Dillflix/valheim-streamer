@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(ValheimManagedDir)' != ''">
-    <Reference Include="$(ValheimManagedDir)/assembly_valheim.dll;$(ValheimManagedDir)/assembly_utils.dll;$(ValheimManagedDir)/UnityEngine*.dll;$(ValheimManagedDir)/Unity.Collections.dll">
+    <Reference Include="$(ValheimManagedDir)/assembly_valheim.dll;$(ValheimManagedDir)/assembly_utils.dll;$(ValheimManagedDir)/UnityEngine*.dll;$(ValheimManagedDir)/Unity.Collections.dll;$(ValheimManagedDir)/Unity.Mathematics.dll">
       <Private>false</Private>
     </Reference>
     <Reference Include="$(ValheimManagedDir)/SoftReferenceableAssets.dll" Condition="Exists('$(ValheimManagedDir)/SoftReferenceableAssets.dll')"><Private>false</Private></Reference>

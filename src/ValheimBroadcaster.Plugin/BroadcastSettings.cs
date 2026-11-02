@@ -12,11 +12,12 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
     internal readonly ConfigEntry<bool> PredictiveShots, ShotSequences, ShotScales, RenderedPictureEvaluation;
+    internal readonly ConfigEntry<bool> NativeConfiner, NativeSplineDolly, NativeClearShot;
     internal readonly ConfigEntry<float> PositionDamping, AimDamping, DeadZone, ShotMotion;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
-    internal readonly ConfigEntry<bool> FlipVertical;
+    internal readonly ConfigEntry<bool> FlipVertical, AutomaticOrientation;
     internal readonly ConfigEntry<VideoEncoderKind> VideoEncoder;
     internal readonly ConfigEntry<int> NvencGpu;
     internal readonly ConfigEntry<bool> AutoStream, RetryStream, Automation, ScenicTravel, Unattended;
@@ -45,7 +46,8 @@ internal sealed class BroadcastSettings
         StreamHeight = config.Bind("Streaming", "Height", 720, "Output height: even, 180–1080. Match the game aspect ratio.");
         StreamFps = config.Bind("Streaming", "FPS", 30, "Output frames per second: 10–60.");
         StreamBitrate = config.Bind("Streaming", "VideoBitrateKbps", 4000, "H.264 video bitrate: 250–20000 kbps. Stereo AAC adds 128 kbps.");
-        FlipVertical = config.Bind("Streaming", "FlipVertical", false, "Flip output if the receiver shows an upside-down image with your graphics backend.");
+        AutomaticOrientation = config.Bind("Streaming", "AutomaticOrientation", true, "Calibrate the actual GPU readback path and normalize clean live, held and slate video to upright rows automatically. Ignores the legacy FlipVertical workaround. Restart streaming after changing this setting.");
+        FlipVertical = config.Bind("Streaming", "FlipVertical", false, "Manual output flip, used only when AutomaticOrientation=false. Existing values are preserved but ignored in automatic mode. Restart streaming after changing this setting.");
         StreamToggle = config.Bind("Controls", "StreamToggle", new KeyboardShortcut(KeyCode.F11), "Start/stop RTMP video and game audio. Requires active broadcast camera.");
         ScenicDwell = config.Bind("Idle", "ScenicSeconds", 45f, Range("Seconds of usable scenic footage before choosing another path or fresh creature.", 5f, 600f));
         CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Seconds of usable creature footage. Wildlife cutaways return to players and also use this as a wall-time limit.", 5f, 300f));
@@ -58,6 +60,9 @@ internal sealed class BroadcastSettings
         ShotSequences = config.Bind("Camera", "ShotSequences", true, "Develop short evidence-based sequences across player, creature and scenic coverage. Progress requires usable live footage; manual hold and steady mode pause editorial development.");
         ShotScales = config.Bind("Camera", "ShotScales", true, "Use deliberate wide, full-body and qualified medium compositions. Medium framing validates an intentional upper-body envelope and retains full-body alternatives when inappropriate.");
         RenderedPictureEvaluation = config.Bind("Camera", "RenderedPictureEvaluation", true, "Supplement geometric visibility with low-frequency analysis of the clean live picture for sustained poor exposure/contrast. No extra world render, automatic exposure changes or remote image upload.");
+        NativeConfiner = config.Bind("Camera", "Confiner3D", true, "Use native Cinemachine Confiner 3D inside verified local interior volumes. Uncertain or open spaces retain the existing visibility and physical-clearance checks; no gameplay collider is added to the world.");
+        NativeSplineDolly = config.Bind("Camera", "SplineDolly", true, "Use native Cinemachine Spline Dolly for finite procedural scenic paths, retaining validated movement, independent aim and presentation-qualified progress.");
+        NativeClearShot = config.Bind("Camera", "ClearShot", true, "Use native Cinemachine ClearShot to rank evaluated camera views. Readability, actual-footage pacing, continuity and final pose validation remain required.");
         DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent actor or environmental screen placement from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
         PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));

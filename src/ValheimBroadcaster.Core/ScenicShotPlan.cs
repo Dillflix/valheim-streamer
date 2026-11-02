@@ -11,6 +11,11 @@ namespace ValheimBroadcaster.Core
         public readonly string Phase;
         internal ScenicShotSample(AutonomyPosition camera, AutonomyPosition aim, float x, float y, string phase)
         { CameraPosition = camera; AimPosition = aim; ScreenX = x; ScreenY = y; Phase = phase; }
+
+        /// <summary>Retain the authored aim/composition while a native path solver
+        /// supplies its camera position.</summary>
+        public ScenicShotSample WithCameraPosition(AutonomyPosition camera) =>
+            new ScenicShotSample(camera, AimPosition, ScreenX, ScreenY, Phase);
     }
 
     /// <summary>

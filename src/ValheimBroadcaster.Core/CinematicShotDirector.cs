@@ -31,6 +31,8 @@ namespace ValheimBroadcaster.Core
         private readonly ShotIntentPolicy intent = new ShotIntentPolicy();
         private readonly float[] weighted = new float[ProceduralShotPolicy.MaximumCandidates];
         private readonly bool[] seedEligibility = new bool[ProceduralShotPolicy.MaximumCandidates];
+        private readonly bool[] plannedEligibility = new bool[ProceduralShotPolicy.MaximumCandidates];
+        private readonly float[] plannedScores = new float[ProceduralShotPolicy.MaximumCandidates];
         private readonly double[] lastShown = new double[ProceduralShotPolicy.MaximumCandidates];
         private readonly int[] familyLastUsed = new int[5];
         private readonly Queue<double> corrections = new Queue<double>();
@@ -76,7 +78,8 @@ namespace ValheimBroadcaster.Core
         public int Select(double now, double deltaSeconds, IReadOnlyList<float> scores,
             IReadOnlyList<bool> eligible, CinematicActivity currentActivity, float speed,
             bool confined, float spaceFraction, bool usableFootage = true,
-            IReadOnlyList<bool>? readable = null, ShotSituation? situation = null, ShotRole? roleOverride = null)
+            IReadOnlyList<bool>? readable = null, ShotSituation? situation = null, ShotRole? roleOverride = null,
+            IShotCandidateRanker? ranker = null)
         {
             Validate(now, deltaSeconds, scores, eligible, speed, spaceFraction);
             if (hasCheckpoint && checkpoint.Now != now) hasCheckpoint = false;
@@ -94,7 +97,7 @@ namespace ValheimBroadcaster.Core
             // A gap cannot prove a sustained improvement. Clear its pending
             // comparison, then evaluate newly supplied camera-quality evidence.
             if ((gap || usableFootage && !lastUsable) && previous >= 0 && eligible[previous])
-                SeedCurrent(now, previous, scores);
+                SeedCurrent(now, previous, scores, ranker);
             lastNow = now;
             lastUsable = usableFootage;
             TrimCorrections(now);
@@ -102,13 +105,12 @@ namespace ValheimBroadcaster.Core
             if (situation.HasValue) intent.Update(now, deltaSeconds, situation.Value, usableFootage, roleOverride);
             DesiredSeconds = nominalSeconds * (confined ? 1.5 : 1);
 
-            int best = -1, adequate = 0;
+            int best = ShotCandidateRanking.Best(scores, eligible, readable,
+                previous >= 0 && eligible[previous] ? previous : -1, ranker), adequate = 0;
             for (int i = 0; i < scores.Count; i++)
             {
                 weighted[i] = scores[i];
                 if (!eligible[i]) continue;
-                if (best < 0 || readable != null && readable[i] && !readable[best] ||
-                    (readable == null || readable[i] == readable[best]) && scores[i] > scores[best]) best = i;
                 if ((readable == null || readable[i]) && scores[i] >= MinimumPlannedQuality) adequate++;
             }
             if (previous >= 0 && eligible[previous])
@@ -130,7 +132,7 @@ namespace ValheimBroadcaster.Core
             else
             {
                 if (!AdequateAlternative(plannedIndex, previous, best, scores, eligible, readable))
-                    plannedIndex = ChooseAlternative(now, previous, best, scores, eligible, readable);
+                    plannedIndex = ChooseAlternative(now, previous, best, scores, eligible, readable, ranker);
                 if (plannedIndex >= 0)
                 {
                     // Only already-readable, near-best alternatives receive an
@@ -144,7 +146,7 @@ namespace ValheimBroadcaster.Core
             // Unusable presentation pauses editorial timing, not recovery from
             // an obscured but physically supported camera. Fresh evaluations
             // still pass through the existing improvement persistence/dwell.
-            int chosen = selection.Select(now, new ArraySegment<float>(weighted, 0, scores.Count), eligible, readable);
+            int chosen = selection.Select(now, new ArraySegment<float>(weighted, 0, scores.Count), eligible, readable, ranker);
             if (chosen < 0)
             {
                 ShotAge = motionAge = 0; motionGain = 0; plannedIndex = -1;
@@ -334,18 +336,20 @@ namespace ValheimBroadcaster.Core
         }
 
         private int ChooseAlternative(double now, int current, int best,
-            IReadOnlyList<float> scores, IReadOnlyList<bool> eligible, IReadOnlyList<bool>? readable)
+            IReadOnlyList<float> scores, IReadOnlyList<bool> eligible, IReadOnlyList<bool>? readable,
+            IShotCandidateRanker? ranker)
         {
-            int chosen = -1;
-            double bestRank = double.NegativeInfinity;
+            // The native ranker receives the same bounded history preference
+            // as regular selection. Only already-readable near-best shots may
+            // compete for a deliberate edit; history cannot admit a bad view.
             for (int i = 0; i < scores.Count; i++)
             {
-                if (!AdequateAlternative(i, current, best, scores, eligible, readable)) continue;
+                plannedEligibility[i] = AdequateAlternative(i, current, best, scores, eligible, readable);
                 double away = lastShown[i] < 0 ? HistorySeconds : Math.Min(HistorySeconds, now - lastShown[i]);
-                double rank = scores[i] + away / HistorySeconds * 0.12;
-                if (rank > bestRank) { chosen = i; bestRank = rank; }
+                plannedScores[i] = (float)((scores[i] + away / HistorySeconds * 0.12) / 1.12);
             }
-            return chosen;
+            return ShotCandidateRanking.Best(new ArraySegment<float>(plannedScores, 0, scores.Count),
+                new ArraySegment<bool>(plannedEligibility, 0, scores.Count), readable, -1, ranker);
         }
 
         private static bool AdequateAlternative(int index, int current, int best,
@@ -354,12 +358,12 @@ namespace ValheimBroadcaster.Core
             (readable == null || readable[index]) &&
             scores[index] >= MinimumPlannedQuality && scores[index] >= scores[best] - 0.08f;
 
-        private void SeedCurrent(double now, int previous, IReadOnlyList<float> scores)
+        private void SeedCurrent(double now, int previous, IReadOnlyList<float> scores, IShotCandidateRanker? ranker)
         {
             Array.Clear(seedEligibility, 0, seedEligibility.Length);
             seedEligibility[previous] = true;
             selection.Reset();
-            selection.Select(now, scores, new ArraySegment<bool>(seedEligibility, 0, scores.Count));
+            selection.Select(now, scores, new ArraySegment<bool>(seedEligibility, 0, scores.Count), ranker: ranker);
             plannedIndex = -1;
         }
         private void ClearHistory()
