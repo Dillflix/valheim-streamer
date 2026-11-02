@@ -69,8 +69,8 @@ namespace ValheimBroadcaster.Core
             int previous = selection.SelectedIndex;
             bool gap = lastNow >= 0 && now - lastNow > ProceduralShotPolicy.MaximumEvidenceGapSeconds;
             double step = usableFootage && lastUsable && !gap ? Math.Min(deltaSeconds, 0.25) : 0;
-            // Stale or unseen frames cannot prove a candidate improved. Retain
-            // the current eligible camera while clearing its pending comparison.
+            // A gap cannot prove a sustained improvement. Clear its pending
+            // comparison, then evaluate newly supplied camera-quality evidence.
             if ((gap || usableFootage && !lastUsable) && previous >= 0 && eligible[previous])
                 SeedCurrent(now, previous, scores);
             lastNow = now;
@@ -117,9 +117,10 @@ namespace ValheimBroadcaster.Core
                 }
             }
 
-            int chosen;
-            if (!usableFootage && previous >= 0 && eligible[previous]) chosen = previous;
-            else chosen = selection.Select(now, new ArraySegment<float>(weighted, 0, scores.Count), eligible);
+            // Unusable presentation pauses editorial timing, not recovery from
+            // an obscured but physically supported camera. Fresh evaluations
+            // still pass through the existing improvement persistence/dwell.
+            int chosen = selection.Select(now, new ArraySegment<float>(weighted, 0, scores.Count), eligible);
             if (chosen < 0)
             {
                 ShotAge = motionAge = 0; motionGain = 0; plannedIndex = -1;

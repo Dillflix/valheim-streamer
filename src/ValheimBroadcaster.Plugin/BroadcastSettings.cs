@@ -45,13 +45,13 @@ internal sealed class BroadcastSettings
         StreamBitrate = config.Bind("Streaming", "VideoBitrateKbps", 4000, "H.264 video bitrate: 250–20000 kbps. Stereo AAC adds 128 kbps.");
         FlipVertical = config.Bind("Streaming", "FlipVertical", false, "Flip output if the receiver shows an upside-down image with your graphics backend.");
         StreamToggle = config.Bind("Controls", "StreamToggle", new KeyboardShortcut(KeyCode.F11), "Start/stop RTMP video and game audio. Requires active broadcast camera.");
-        ScenicDwell = config.Bind("Idle", "ScenicSeconds", 45f, Range("Scenic moving-shot duration before choosing another path or fresh creature.", 5f, 600f));
-        CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Creature follow duration before returning to scenery.", 5f, 300f));
+        ScenicDwell = config.Bind("Idle", "ScenicSeconds", 45f, Range("Seconds of usable scenic footage before choosing another path or fresh creature.", 5f, 600f));
+        CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Seconds of usable creature footage before returning to scenery.", 5f, 300f));
         CreatureRadius = config.Bind("Idle", "CreatureRadius", 50f, Range("Loaded-creature search radius around the survey origin in metres.", 5f, 100f));
         AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
-        ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use Cinemachine player-follow candidates with foliage-aware scoring and stable view selection. False restores the fixed-angle player camera; scenery is unchanged.");
+        ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use the shared Cinemachine pipeline for player, creature and scenic coverage. False selects legacy fixed framing for comparison. This existing config key is retained for compatibility.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
-        DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent screen placement and headroom from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
+        DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent actor or environmental screen placement from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
         PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));
         AimDamping = config.Bind("Camera", "AimDamping", 1f, Range("Cinemachine aim settling time in seconds (approximately 99% convergence); larger values soften aiming response to subject movement.", 0.1f, 3f));
@@ -60,7 +60,7 @@ internal sealed class BroadcastSettings
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));
         Height = config.Bind("Camera", "Height", 10f, Range("Height above target in metres.", 1f, 60f));
         FieldOfView = config.Bind("Camera", "FieldOfView", 75f, Range("Vertical camera field of view in degrees.", 30f, 110f));
-        Azimuth = config.Bind("Camera", "Azimuth", 225f, Range("Preferred world-space viewing direction in degrees; procedural player cameras may reframe around obstacles.", 0f, 360f));
+        Azimuth = config.Bind("Camera", "Azimuth", 225f, Range("Preferred world-space viewing direction in degrees; procedural cameras may reframe around obstacles.", 0f, 360f));
         Smoothing = config.Bind("Camera", "Smoothing", 5f, Range("Exponential follow response per second; larger is faster.", 0.1f, 30f));
         Dwell = config.Bind("Director", "DwellSeconds", 30f, Range("Seconds of ready footage before advancing.", 3f, 600f));
         Timeout = config.Bind("Director", "TargetTimeoutSeconds", 20f, Range("Seconds to wait before skipping a target that cannot load.", 3f, 120f));

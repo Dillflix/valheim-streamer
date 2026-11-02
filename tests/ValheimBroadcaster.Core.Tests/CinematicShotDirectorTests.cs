@@ -13,6 +13,7 @@ internal static class CinematicShotDirectorTests
         yield return ("Cinematic confined scenes retain readable coverage with limited motion", Confined);
         yield return ("Cinematic spacious interiors allow slower deliberate variety", SpaciousInterior);
         yield return ("Cinematic pacing counts usable frames and clears stale comparisons", FootageGap);
+        yield return ("Cinematic obscured footage can recover through fresh alternative evaluations", ObscuredRecovery);
         yield return ("Cinematic motion is bounded and previews do not change state", MotionBounds);
         yield return ("Cinematic configured motion strength reaches its bounded upper endpoint", MotionStrength);
         yield return ("Cinematic readable travel retains bounded intentional development", SustainedTravel);
@@ -129,6 +130,32 @@ internal static class CinematicShotDirectorTests
         }
         Check(shown.Count >= 3, "A spacious interior suppressed camera variety indefinitely.");
         Check(firstChange >= 270, "An interior used the same quick pacing as open ground.");
+    }
+
+    private static void ObscuredRecovery()
+    {
+        var director = new CinematicShotDirector();
+        Tick(director, 0, new[] { 0.9f, 0.8f, 0.1f, 0.1f });
+        double age = director.ShotAge;
+        float[] obstructed = { 0.1f, 0.9f, 0.1f, 0.1f };
+        Check(Tick(director, 0.1, obstructed, usable: false) == 0,
+            "One fresh better score bypassed visibility persistence.");
+        Check(Tick(director, 0.4, obstructed, usable: false) == 0,
+            "A brief transient score forced a corrective cut.");
+        Check(director.ShotAge == age, "Recovery evaluations counted as usable footage.");
+        Check(Tick(director, 0.7, obstructed, usable: false) == 1,
+            "Unusable presentation locked the director to an obscured camera indefinitely.");
+        Check(director.ShotAge == 0 && Movement(director.Motion()) == 0,
+            "A corrective switch started decoration before footage resumed.");
+        Check(director.RecentCorrections > 0, "The recovery switch did not trigger settling.");
+
+        var gap = new CinematicShotDirector();
+        Tick(gap, 0, new[] { 0.9f, 0.8f, 0.1f, 0.1f });
+        Tick(gap, 0.1, obstructed, usable: false);
+        Check(Tick(gap, 4, obstructed, usable: false) == 0,
+            "A long gap masqueraded as sustained quality improvement.");
+        Check(Tick(gap, 4.6, obstructed, usable: false) == 1,
+            "Fresh evaluations could not recover after stale evidence was cleared.");
     }
 
     private static void MotionBounds()

@@ -13,11 +13,15 @@ namespace ValheimBroadcaster.Core
         public string? SubjectId { get; private set; }
         public bool AwaitingPlayers { get; private set; }
         public long Revision { get; private set; }
-        private double elapsed;
+        private double elapsed, unshownSeconds;
+        private bool creaturePresented;
         private double scenicSeconds = 45, creatureSeconds = 25;
         private string? lastCreature;
         private double clock;
         private readonly Dictionary<string, double> recentCreatures = new Dictionary<string, double>(StringComparer.Ordinal);
+        private readonly Dictionary<string, double> failedCreatures = new Dictionary<string, double>(StringComparer.Ordinal);
+        public const double CreaturePresentationTimeout = 3, CreatureFailedViewCooldown = 30;
+        public const double ScenicPresentationTimeout = 3;
         public double ShotElapsed => elapsed;
         public double CreatureCooldownSeconds { get; set; } = 300;
         public double ScenicSeconds { get => scenicSeconds; set => scenicSeconds = Duration(value); }
@@ -35,12 +39,13 @@ namespace ValheimBroadcaster.Core
             Change(CoverageMode.Disabled, null);
             elapsed = 0;
             lastCreature = null;
-            clock = 0; recentCreatures.Clear();
+            clock = 0; recentCreatures.Clear(); failedCreatures.Clear();
+            unshownSeconds = 0; creaturePresented = false;
             AwaitingPlayers = false;
         }
 
         public void Tick(double dt, string? readyPlayerId, int connectedOthers,
-            bool idleSceneReady, IReadOnlyList<string> readyCreatures, bool holding = false)
+            bool idleSceneReady, IReadOnlyList<string> readyCreatures, bool holding = false, bool usableFootage = true)
         {
             if (double.IsNaN(dt) || double.IsInfinity(dt) || dt < 0) throw new ArgumentOutOfRangeException(nameof(dt));
             if (connectedOthers < 0) throw new ArgumentOutOfRangeException(nameof(connectedOthers));
@@ -54,7 +59,36 @@ namespace ValheimBroadcaster.Core
             { Change(CoverageMode.Scenic, null); return; }
             if (Mode == CoverageMode.Creature && !Contains(readyCreatures, SubjectId))
             { Change(CoverageMode.Scenic, null); return; }
-            if (holding) return;
+            if (usableFootage) unshownSeconds = 0;
+            else unshownSeconds += Math.Min(dt, 86400);
+            if (Mode == CoverageMode.Creature)
+            {
+                if (usableFootage)
+                {
+                    if (!creaturePresented)
+                    { Remember(recentCreatures, SubjectId!, clock); creaturePresented = true; }
+                }
+                else
+                {
+                    // A loaded actor can still have no usable camera. This is a
+                    // failed local view, not evidence requiring observer travel.
+                    if (unshownSeconds >= CreaturePresentationTimeout)
+                    {
+                        Remember(failedCreatures, SubjectId!, clock);
+                        Change(CoverageMode.Scenic, null); return;
+                    }
+                }
+            }
+            if (Mode == CoverageMode.Scenic && !usableFootage && unshownSeconds >= ScenicPresentationTimeout)
+            {
+                // A failed landscape must not starve a loaded local creature.
+                // No available alternative means continue the adapter's bounded
+                // scenic search, without claiming dwell or authorizing travel.
+                TrySelectCreature(readyCreatures);
+                return;
+            }
+            // Holding means an operator-held live shot, never a compositor image.
+            if (holding || !usableFootage) return;
             elapsed = Math.Min(Mode == CoverageMode.Scenic ? ScenicSeconds : CreatureSeconds, elapsed + dt);
             if (Mode == CoverageMode.Creature)
             {
@@ -62,33 +96,45 @@ namespace ValheimBroadcaster.Core
                 return;
             }
             if (elapsed < ScenicSeconds) return;
+            if (!TrySelectCreature(readyCreatures))
+            { elapsed = 0; Revision++; } // New scenic path, not a repeated orbit.
+        }
+
+        private bool TrySelectCreature(IReadOnlyList<string> readyCreatures)
+        {
             // Ordinal round-robin, independent of provider enumeration order. Retain only
             // the last ID, not an ever-growing history of actors from a long-lived world.
             string? first = null, next = null;
             foreach (string id in readyCreatures)
             {
                 if (recentCreatures.TryGetValue(id, out double shown) && clock - shown < CreatureCooldownSeconds) continue;
+                if (failedCreatures.TryGetValue(id, out double failed) && clock - failed < CreatureFailedViewCooldown) continue;
                 if (first == null || StringComparer.Ordinal.Compare(id, first) < 0) first = id;
                 if ((lastCreature == null || StringComparer.Ordinal.Compare(id, lastCreature) > 0) &&
                     (next == null || StringComparer.Ordinal.Compare(id, next) < 0)) next = id;
             }
             string? selected = next ?? first;
-            if (selected == null) { elapsed = 0; Revision++; return; } // New scenic path, not a repeated orbit.
+            if (selected == null) return false;
             lastCreature = selected;
-            if (recentCreatures.Count >= 64 && !recentCreatures.ContainsKey(selected))
+            Change(CoverageMode.Creature, selected);
+            return true;
+        }
+
+        private static void Remember(Dictionary<string, double> history, string id, double now)
+        {
+            if (history.Count >= 64 && !history.ContainsKey(id))
             {
                 string? oldest = null; double oldestTime = double.MaxValue;
-                foreach (var item in recentCreatures) if (item.Value < oldestTime) { oldest = item.Key; oldestTime = item.Value; }
-                if (oldest != null) recentCreatures.Remove(oldest);
+                foreach (var item in history) if (item.Value < oldestTime) { oldest = item.Key; oldestTime = item.Value; }
+                if (oldest != null) history.Remove(oldest);
             }
-            recentCreatures[selected] = clock;
-            Change(CoverageMode.Creature, selected);
+            history[id] = now;
         }
 
         private void Change(CoverageMode mode, string? id)
         {
             if (Mode == mode && SubjectId == id) return;
-            Mode = mode; SubjectId = id; elapsed = 0; Revision++;
+            Mode = mode; SubjectId = id; elapsed = unshownSeconds = 0; creaturePresented = false; Revision++;
         }
         private static bool Contains(IReadOnlyList<string> values, string? id)
         {

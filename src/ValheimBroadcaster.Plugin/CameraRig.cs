@@ -9,11 +9,19 @@ namespace ValheimBroadcaster.Plugin;
 
 internal sealed class CameraRig
 {
-    private readonly CinemachinePlayerRig playerCamera = new CinemachinePlayerRig();
+    private readonly CinemachineShotRig shotCamera = new CinemachineShotRig();
     private bool proceduralActive;
-    internal string Diagnostics => proceduralActive ? playerCamera.Diagnostics : "Camera: fixed framing / scenic path";
-    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive ? playerCamera.VisiblePlayerIds : Array.Empty<string>();
-    internal RemoteObserverClient? RemoteContext { set => playerCamera.RemoteContext = value; }
+    private string? presentationNotice;
+    private string legacyMode = "awaiting coverage";
+    internal string Diagnostics => presentationNotice != null ? "Camera: " + presentationNotice :
+        proceduralActive ? shotCamera.Diagnostics : "Camera: legacy " + legacyMode;
+    internal bool LastPictureUsable { get; private set; }
+    internal bool IsProcedural => proceduralActive;
+    internal string PictureReason => proceduralActive ? shotCamera.PictureReason : LastFailure;
+    internal float FieldOfView => camera ? camera.fieldOfView : 75f;
+    internal Quaternion Rotation => camera ? camera.transform.rotation : Quaternion.identity;
+    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
+    internal RemoteObserverClient? RemoteContext { set => shotCamera.RemoteContext = value; }
     private Camera? camera;
     private Camera? skyCamera;
     private float savedFov;
@@ -30,10 +38,13 @@ internal sealed class CameraRig
     private int? obstructionMask;
     internal Vector3? Position => camera ? camera.transform.position : (Vector3?)null;
     internal string LastFailure { get; private set; } = "none";
-    private bool Unready(string reason) { LastFailure = reason; return false; }
+    private bool Unready(string reason)
+    { LastFailure = reason; LastPictureUsable = false; presentationNotice = "unavailable: " + reason; return false; }
+    internal void MarkUnavailable(string reason) => Unready(reason);
 
-    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false)
+    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false, Character? creatureTarget = null, ScenicShotPlan? scenicPlan = null, float scenicProgress = 0, ScenicVisibility? scenicVisibility = null)
     {
+        presentationNotice = null; LastPictureUsable = false;
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
         if (!next) next = gameCamera.GetComponentInChildren<Camera>();
@@ -53,22 +64,28 @@ internal sealed class CameraRig
             skyCamera = nextSky;
             if (skyCamera) savedSkyFov = skyCamera.fieldOfView;
         }
-        if (settings.ProceduralPlayers.Value && playerTarget != null)
+        CinematicShotInput? input = playerTarget != null ? CinematicShotInput.ForPlayer(playerTarget, selectionRevision) :
+            creatureTarget ? CinematicShotInput.ForCreature(creatureTarget!, selectionRevision) :
+            scenicPlan != null ? CinematicShotInput.ForScenic(scenicPlan, scenicProgress, selectionRevision, scenicVisibility) : (CinematicShotInput?)null;
+        if (settings.ProceduralPlayers.Value && input.HasValue)
         {
             proceduralActive = true;
-            playerCamera.RenderingCamera = camera;
-            playerCamera.NearClipPlane = camera.nearClipPlane;
-            playerCamera.Aspect = camera.aspect;
-            if (!playerCamera.TrySolve(playerTarget, focus, settings, selectionRevision, dt, continuousPlayer, moveCarrier,
-                    out Vector3 playerPosition, out Quaternion playerRotation, out float playerFov))
-                return Unready(playerCamera.LastFailure);
-            camera.transform.SetPositionAndRotation(playerPosition, playerRotation);
-            camera.fieldOfView = playerFov;
-            if (skyCamera) skyCamera.fieldOfView = playerFov;
+            shotCamera.RenderingCamera = camera;
+            shotCamera.NearClipPlane = camera.nearClipPlane;
+            shotCamera.Aspect = camera.aspect;
+            if (!shotCamera.TrySolve(input.Value, settings, dt, continuousPlayer, moveCarrier,
+                    out Vector3 position, out Quaternion rotation, out float fov))
+                return Unready(shotCamera.LastFailure);
+            camera.transform.SetPositionAndRotation(position, rotation);
+            camera.fieldOfView = fov;
+            if (skyCamera) skyCamera.fieldOfView = fov;
+            LastPictureUsable = shotCamera.LastPictureUsable;
+            LastFailure = "none";
             hasPose = false;
             return true;
         }
-        if (proceduralActive) { playerCamera.Reset(); proceduralActive = false; }
+        if (proceduralActive) { shotCamera.Reset(); proceduralActive = false; }
+        legacyMode = input.HasValue ? input.Value.Kind.ToString().ToLowerInvariant() + " framing" : "probe framing";
         float radians = azimuth * Mathf.Deg2Rad;
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
             settings.Height.Value, Mathf.Cos(radians) * settings.Distance.Value);
@@ -107,6 +124,7 @@ internal sealed class CameraRig
         camera.transform.SetPositionAndRotation(visiblePosition, Quaternion.LookRotation(focus - visiblePosition, Vector3.up));
         camera.fieldOfView = settings.FieldOfView.Value;
         if (skyCamera) skyCamera.fieldOfView = settings.FieldOfView.Value;
+        LastPictureUsable = true; LastFailure = "none";
         return true;
     }
 
@@ -123,14 +141,15 @@ internal sealed class CameraRig
 
     internal double RequiredPlayerCameraMovement(TargetRoster.Target target, Vector3 point, BroadcastSettings settings)
     {
-        if (settings.ProceduralPlayers.Value) return playerCamera.RequiredCarrierMovement(target, point, settings);
+        if (settings.ProceduralPlayers.Value) return shotCamera.RequiredCarrierMovement(target, point, settings);
         if (!Player.m_localPlayer) return double.PositiveInfinity;
         Vector3 offset = point - Player.m_localPlayer.transform.position;
         return CameraReachability.RequiredDisplacement(offset.x, offset.y, offset.z,
             settings.Distance.Value, settings.Height.Value, settings.Azimuth.Value);
     }
 
-    internal void ResetPose() { hasPose = false; playerCamera.Reset(); }
+    internal void ResetPose()
+    { hasPose = false; shotCamera.Reset(); proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
 
     internal void Restore()
     {
@@ -142,7 +161,7 @@ internal sealed class CameraRig
 
     private void RestoreCamera()
     {
-        playerCamera.Dispose(); proceduralActive = false;
+        shotCamera.Dispose(); proceduralActive = false; LastPictureUsable = false; presentationNotice = "inactive";
         if (camera)
         {
             camera.fieldOfView = savedFov;

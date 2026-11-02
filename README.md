@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.16 brings the shared Cinemachine pipeline to scenic and creature coverage.** It builds directly on 0.8.15. Scenery now uses ranked environmental paths with independent camera/aim movement and five non-looping shot styles; creatures use their actual body dimensions and observed movement. Composition, damping, movement controls and validated handoffs now apply across all three production modes. Idle pacing and history require usable live footage, not held images or a successful camera calculation alone. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for mode behavior and pending runtime tests. Replace all three client DLLs and included notices together, preserving configuration. No server update is required.
+
 **0.8.15 separates camera trajectories from player translation.** It builds directly on 0.8.14 and retains its deliberate composition. Each procedural candidate now develops a persistent position in the world while aiming at the current subject, with activity-dependent tracking and bounded corrections. This addresses the target-relative follow point, velocity prediction and blend displacement that made the camera feel attached during movement. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior, diagnostics and pending visual tests. Replace all three client DLLs and included notices together, preserving configuration. The existing protocol-3 server can remain installed.
 
 **0.8.14 adds deliberate screen composition to the damped player director.** It builds directly on 0.8.13: the camera now chooses persistent subject placement, movement lead room and activity space, with coordinated group framing and compact fallbacks. `broadcast camera composition on|off` compares the new placement policy while retaining the same damping and visibility checks. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior and pending visual validation. Replace the three client DLLs and included notices together, preserving configuration. Observer protocol and server behavior are unchanged; this update requires no new server deployment.
@@ -56,7 +58,8 @@ Offline activation rejects dedicated-server connections and hosted worlds, even 
 ## Implemented behavior
 
 - Configurable camera distance, height, FOV, preferred azimuth, independent procedural position/aim damping and a screen-space dead zone.
-- Cinemachine obstacle correction and foliage-aware visibility selection, with bounded deliberate movement, activity-aware pacing and persistent cooperative framing.
+- Shared Cinemachine damping, composition and validated transitions for players, creatures and scenery, with actor body framing, environmental path development and mode-specific foliage scoring.
+- Bounded deliberate movement, usable-footage pacing and persistent cooperative player framing; scenic place/style history and creature repeat/failure cooldowns support idle variety.
 - Stable-ID target selection, next/previous, timed rotation, hold, and disconnect fallback.
 - Continuous coverage: player acquisition takes priority; idle uses changing scenic paths and eligible nearby creatures, with autonomous generated-region travel in the configured read-only mode. A recovery slate appears when no ready shot can be rendered or controlled travel is in progress.
 - Separate connected-player presence and scene readiness, with bounded experimental remote acquisition attempts.
@@ -153,10 +156,10 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
-| `broadcast camera procedural` / `fixed` / `status` | Select Cinemachine or fixed player framing, or inspect candidate/occlusion diagnostics; mode is saved to `Camera.ProceduralPlayers` |
+| `broadcast camera procedural` / `fixed` / `status` | Select shared Cinemachine or legacy fixed framing for player, creature and scenic coverage; inspect mode/quality diagnostics. The existing `Camera.ProceduralPlayers` key is retained for compatibility |
 | `broadcast camera dynamic` / `steady` | Enable/disable deliberate movement and timed composition changes; steady retains procedural visibility, damping and groups |
 | `broadcast camera composition on` / `off` | Enable deliberate screen placement or use the centered comparison preference; retain damping, groups and visibility checks |
-| `broadcast camera groups on` / `off` | Enable/disable cooperative and opponent group framing |
+| `broadcast camera groups on` / `off` | Enable/disable player cooperative and opponent group framing; creature coverage currently uses one primary actor |
 | `broadcast camera motion <0-1.5>` | Set decorative movement strength; zero retains tracking and shot selection |
 | `broadcast camera damping <position> <aim>` | Set independent damping in seconds, each 0.1–3 |
 | `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
@@ -176,9 +179,9 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 
 | Section / key | Default | Meaning |
 | --- | --- | --- |
-| `Camera / ProceduralPlayers` | `true` | Cinemachine player framing with custom foliage-aware scoring; false uses the previous fixed-angle player camera |
+| `Camera / ProceduralPlayers` | `true` | Shared Cinemachine player, creature and scenic coverage; false selects legacy fixed framing. The serialized key name is retained for compatibility |
 | `Camera / DynamicShots` | `true` | Activity/space-aware shot duration and deliberate movement |
-| `Camera / GroupFraming` | `true` | Persistent nearby companions and relevant opponents when a readable composition is available |
+| `Camera / GroupFraming` | `true` | Persistent nearby player companions and relevant opponents when a readable composition is available; not creature-herd inference |
 | `Camera / PositionDamping`, `AimDamping` | `0.8`, `1` | Cinemachine damping in seconds; larger values soften response, range 0.1–3. Position damping smooths the planned trajectory, not a raw player-follow point |
 | `Camera / DeadZone` | `0.12` | Screen fraction allowing movement before recentering, range 0–0.3 |
 | `Camera / ShotMotion` | `1` | Decorative movement strength, range 0–1.5 |
@@ -186,12 +189,12 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 | `Camera / Height` | `10` | Metres above the focus point |
 | `Camera / FieldOfView` | `75` | Vertical degrees |
 | `Camera / Azimuth` | `225` | Preferred world-space direction; procedural shots can reframe around obstructions |
-| `Camera / Smoothing` | `5` | Legacy fixed/scenic camera response per second |
+| `Camera / Smoothing` | `5` | Legacy fixed camera response per second; shared procedural modes use position/aim damping |
 | `Director / DwellSeconds` | `30` | Ready player footage before rotating targets; separate from composition duration |
 | `Director / TargetTimeoutSeconds` | `20` | Maximum experimental remote acquisition attempt |
 | `Director / AcquisitionCooldownSeconds` | `30` | Local-interest interval between remote attempts |
-| `Idle / ScenicSeconds` | `45` | Scenic dwell before trying a creature |
-| `Idle / CreatureSeconds` | `25` | Creature dwell before returning to scenery |
+| `Idle / ScenicSeconds` | `45` | Usable scenic footage before trying a creature or a fresh environmental path |
+| `Idle / CreatureSeconds` | `25` | Usable creature footage before returning to scenery |
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Display / ShowStatus` | `true` | Show the director overlay |

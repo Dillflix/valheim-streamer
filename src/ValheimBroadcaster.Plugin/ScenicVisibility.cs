@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -18,6 +19,19 @@ internal sealed class ScenicVisibility
     private int furthest;
     private float furthestDistance;
     private int obstructionMask;
+    private readonly Collider[] overlaps = new Collider[32];
+    private readonly RaycastHit[] hits = new RaycastHit[24];
+    private readonly bool[] foregroundBounds = new bool[Capacity];
+
+    internal readonly struct Result
+    {
+        internal readonly bool CameraClear, FocusVisible, SurveyComplete;
+        internal readonly float Score, ForegroundOcclusion;
+        internal readonly string Reason;
+        internal Result(bool clear, bool visible, bool complete, float score, float foreground, string reason)
+        { CameraClear = clear; FocusVisible = visible; SurveyComplete = complete;
+          Score = score; ForegroundOcclusion = foreground; Reason = reason; }
+    }
 
     internal void Reset()
     {
@@ -28,6 +42,9 @@ internal sealed class ScenicVisibility
     internal void Refresh(Vector3 surveyOrigin)
     {
         float now = Time.unscaledTime;
+        // Candidate poses must not trigger repeated whole-scene surveys in one
+        // render frame when opposite viewpoints cross the refresh distance.
+        if (now >= refreshedAt && now - refreshedAt < 0.5f) return;
         if (now >= refreshedAt && now - refreshedAt < 5f && (surveyOrigin - origin).sqrMagnitude <= 1600f) return;
         origin = surveyOrigin; refreshedAt = now; coveredRadius = SurveyRadius;
         foliage.Clear(); distances.Clear(); groups.Clear(); furthest = 0; furthestDistance = 0;
@@ -37,7 +54,7 @@ internal sealed class ScenicVisibility
         foreach (Renderer renderer in UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
         {
             if (!renderer || !renderer.enabled || renderer.bounds.SqrDistance(origin) > 112f * 112f ||
-                !Vegetation(renderer.transform)) continue;
+                renderer.GetComponentInParent<Character>() || !Vegetation(renderer.transform)) continue;
             LODGroup? group = renderer.GetComponentInParent<LODGroup>();
             if (group)
             {
@@ -104,45 +121,113 @@ internal sealed class ScenicVisibility
             if (distances[i] >= furthestDistance) { furthest = i; furthestDistance = distances[i]; }
     }
 
+    // Landscape quality uses the actual presented orientation/lens. Foliage and
+    // focus visibility are editorial evidence, never physical area readiness.
+    internal Result Evaluate(Vector3 camera, Quaternion rotation, Vector3 focus, float fov, float aspect, float nearClip)
+    {
+        float magnitude = rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w;
+        if (!TargetRoster.Finite(camera) || !TargetRoster.Finite(focus) || !Finite(magnitude) || magnitude < 0.0001f ||
+            !Finite(fov) || fov < 1 || fov > 170 || !Finite(aspect) || aspect <= 0 || !Finite(nearClip) || nearClip <= 0)
+            return Invalid("Invalid scenic camera geometry");
+        Refresh(camera);
+        rotation = rotation.normalized;
+        Vector3 forward = rotation * Vector3.forward, right = rotation * Vector3.right, up = rotation * Vector3.up;
+        float vertical = Mathf.Tan(fov * 0.5f * Mathf.Deg2Rad);
+        int count = Physics.OverlapSphereNonAlloc(camera, 0.25f, overlaps, obstructionMask, QueryTriggerInteraction.Ignore);
+        if (SolidOverlap(count)) return Invalid("Scenic camera intersects solid geometry");
+        count = Physics.OverlapBoxNonAlloc(camera + forward * nearClip,
+            new Vector3(nearClip * vertical * aspect, nearClip * vertical, 0.04f), overlaps,
+            rotation, obstructionMask, QueryTriggerInteraction.Ignore);
+        if (SolidOverlap(count)) return Invalid("Scenic near plane intersects solid geometry");
+
+        Vector3 local = Quaternion.Inverse(rotation) * (focus - camera);
+        ShotProjection.Result projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
+        bool focusVisible = projected.CenterInFrame && FocusClear(camera, focus);
+        bool complete = Vector3.Distance(camera, origin) + ForegroundRange < coveredRadius;
+        float foreground = 0;
+        bool insideLeaves = false;
+        for (int i = 0; i < foliage.Count; i++)
+        {
+            Bounds bound = foliage[i];
+            foregroundBounds[i] = bound.SqrDistance(camera) <= ForegroundRange * ForegroundRange;
+            if (bound.Contains(camera)) insideLeaves = true;
+        }
+        if (insideLeaves) foreground = 1;
+        else
+        {
+            int blocked = 0;
+            for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++)
+            {
+                Vector3 direction = (forward + right * (x * 0.65f * vertical * aspect) + up * (y * 0.65f * vertical)).normalized;
+                Ray ray = new Ray(camera, direction);
+                for (int i = 0; i < foliage.Count; i++)
+                {
+                    if (!foregroundBounds[i] || !foliage[i].IntersectRay(ray, out float hit) || hit > ForegroundRange) continue;
+                    blocked += x == 0 && y == 0 ? 4 : 1;
+                    break;
+                }
+            }
+            foreground = blocked / 12f;
+        }
+        float score = (focusVisible ? 1f : 0.3f) * (1f - 0.85f * foreground) * (complete ? 1f : 0.65f);
+        string reason = !complete ? "Scenic foliage survey incomplete" : insideLeaves ? "Scenic camera is inside vegetation bounds" :
+            foreground >= 0.5f ? "Foreground vegetation dominates the scenic frame" :
+            !focusVisible ? "Scenic feature is outside the frame or hidden" : "Readable scenic composition";
+        return new Result(true, focusVisible, complete, Mathf.Clamp01(score), foreground, reason);
+    }
+
+    // Explicit legacy/fixed camera comparison still uses a centered view.
     internal bool Clear(Vector3 camera, Vector3 focus, float fov, out string reason)
     {
-        reason = "clear";
-        if (!TargetRoster.Finite(camera) || !TargetRoster.Finite(focus) || float.IsNaN(fov) || float.IsInfinity(fov) || fov <= 0 || fov >= 180)
-        { reason = "Invalid scenic camera geometry"; return false; }
-        if (Vector3.Distance(camera, origin) + ForegroundRange >= coveredRadius)
-        { reason = "Scenic position outside surveyed foliage coverage"; return false; }
-        if (Physics.CheckSphere(camera, 0.6f, obstructionMask, QueryTriggerInteraction.Ignore))
-        { reason = "Scenic camera intersects solid geometry"; return false; }
-        Vector3 view = focus - camera;
-        float distance = view.magnitude;
-        if (distance < 2f) { reason = "Scenic shot is too compressed"; return false; }
-        Vector3 forward = view / distance;
-        // Match the live rig's full focus-to-camera clearance test so a chosen
-        // path is not immediately rejected by a different radius or endpoint.
-        if (Physics.SphereCast(focus, 0.3f, -forward, out RaycastHit _, distance, obstructionMask, QueryTriggerInteraction.Ignore))
-        { reason = "Scenic subject is hidden by solid geometry"; return false; }
-        foreach (Bounds bound in foliage)
-            if (bound.Contains(camera)) { reason = "Scenic camera is inside vegetation bounds"; return false; }
-        Vector3 right = Vector3.Cross(Vector3.up, forward);
-        if (right.sqrMagnitude < 0.001f) right = Vector3.right;
-        right.Normalize();
-        Vector3 up = Vector3.Cross(forward, right).normalized;
-        float vertical = Mathf.Tan(fov * 0.5f * Mathf.Deg2Rad);
+        if ((focus - camera).sqrMagnitude < 0.01f) { reason = "Invalid scenic camera direction"; return false; }
         float aspect = Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
-        int blocked = 0;
-        for (int y = -1; y <= 1; y++)
-        for (int x = -1; x <= 1; x++)
-        {
-            Vector3 direction = (forward + right * (x * 0.65f * vertical * aspect) + up * (y * 0.65f * vertical)).normalized;
-            Ray ray = new Ray(camera, direction);
-            foreach (Bounds bound in foliage)
-            {
-                if (bound.SqrDistance(camera) > ForegroundRange * ForegroundRange || !bound.IntersectRay(ray, out float hit) || hit > ForegroundRange) continue;
-                blocked += x == 0 && y == 0 ? 4 : 1;
-                break;
-            }
-            if (blocked >= 6) { reason = "Foreground vegetation covers most of the scenic frame"; return false; }
-        }
+        Result result = Evaluate(camera, Quaternion.LookRotation(focus - camera, Vector3.up), focus, fov, aspect, 0.3f);
+        reason = result.Reason;
+        return result.CameraClear && result.FocusVisible && result.Score >= 0.5f;
+    }
+
+    internal bool SegmentClear(Vector3 from, Vector3 to)
+    {
+        if (!TargetRoster.Finite(from) || !TargetRoster.Finite(to)) return false;
+        if (obstructionMask == 0) obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        Vector3 delta = to - from;
+        if (delta.sqrMagnitude <= 0.0001f) return true;
+        int count = Physics.SphereCastNonAlloc(from, 0.25f, delta.normalized, hits, delta.magnitude,
+            obstructionMask, QueryTriggerInteraction.Ignore);
+        if (count == hits.Length) return false;
+        for (int i = 0; i < count; i++) if (Solid(hits[i].collider)) return false;
         return true;
     }
+
+    internal static Quaternion Compose(Vector3 camera, Vector3 focus, float screenX, float screenY, float fov, float aspect)
+    {
+        Quaternion centered = Quaternion.LookRotation(focus - camera, Vector3.up);
+        float tangent = Mathf.Tan(fov * Mathf.Deg2Rad * 0.5f);
+        return centered * Quaternion.Euler(Mathf.Atan(2 * screenY * tangent) * Mathf.Rad2Deg,
+            -Mathf.Atan(2 * screenX * tangent * aspect) * Mathf.Rad2Deg, 0);
+    }
+
+    private bool FocusClear(Vector3 camera, Vector3 focus)
+    {
+        Vector3 delta = focus - camera;
+        float distance = delta.magnitude;
+        if (distance < 0.5f) return false;
+        int count = Physics.RaycastNonAlloc(camera, delta / distance, hits, Mathf.Max(0, distance - 0.25f),
+            obstructionMask, QueryTriggerInteraction.Ignore);
+        if (count == hits.Length) return false;
+        for (int i = 0; i < count; i++) if (Solid(hits[i].collider)) return false;
+        return true;
+    }
+
+    private bool SolidOverlap(int count)
+    {
+        if (count == overlaps.Length) return true;
+        for (int i = 0; i < count; i++) if (Solid(overlaps[i])) return true;
+        return false;
+    }
+    private static bool Solid(Collider collider) => collider && collider.enabled && !collider.isTrigger &&
+        !collider.GetComponentInParent<Character>();
+    private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+    private static Result Invalid(string reason) => new Result(false, false, false, 0, 0, reason);
 }

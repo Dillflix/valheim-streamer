@@ -9,31 +9,6 @@ namespace ValheimBroadcaster.Plugin;
 // not player intent: an attack near a resource is only a work hint, for example.
 internal sealed class PlayerSceneContext
 {
-    internal sealed class Subject
-    {
-        internal Character Actor = null!;
-        internal Player? Player;
-        internal string Id = "", CharacterId = "";
-        internal Vector3 Focus, Velocity;
-        internal float Weight, Radius, Height, BottomOffset;
-        internal bool IsPrimary, IsOpponent;
-    }
-
-    internal sealed class Frame
-    {
-        internal readonly List<Subject> Subjects = new List<Subject>(6);
-        internal Vector3 PrimaryFocus, Focus, Velocity, GroupVelocity;
-        // Body orientation is observable, but is not a claim about eye gaze or intent.
-        internal Vector3 FacingDirection, InterestFocus;
-        internal float FacingConfidence, InterestConfidence;
-        internal bool HasInterest;
-        internal string InterestKind = "none";
-        internal float Spread, Confidence;
-        internal bool Interior;
-        internal CinematicActivity Activity;
-        internal string Description = "Awaiting loaded player context";
-    }
-
     private sealed class Observation
     {
         internal Character Actor = null!;
@@ -48,7 +23,7 @@ internal sealed class PlayerSceneContext
     private readonly List<string> stale = new List<string>();
     private readonly List<Observation> opponents = new List<Observation>();
     private readonly RaycastHit[] hits = new RaycastHit[24];
-    private readonly Frame frame = new Frame();
+    private readonly CameraSceneFrame frame = new CameraSceneFrame { Description = "Awaiting loaded player context" };
     private Player? primaryActor;
     private ZNet? world;
     private string primaryId = "", primaryCharacter = "";
@@ -63,7 +38,7 @@ internal sealed class PlayerSceneContext
     private bool facingInitialized;
     internal Func<string, string, ObserverPlayerContext?>? RemoteContext { get; set; }
 
-    internal Frame Update(TargetRoster.Target primary, bool groupsEnabled = true)
+    internal CameraSceneFrame Update(TargetRoster.Target primary, bool groupsEnabled = true)
     {
         Player? player = primary.LoadedPlayer;
         float now = Time.unscaledTime;
@@ -95,7 +70,7 @@ internal sealed class PlayerSceneContext
         Vector3 sum = Vector3.zero, velocity = Vector3.zero;
         for (int i = frame.Subjects.Count - 1; i >= 0; i--)
         {
-            Subject subject = frame.Subjects[i];
+            CameraSceneSubject subject = frame.Subjects[i];
             if (!subject.Actor || !subject.Actor.gameObject.activeInHierarchy || subject.Actor.IsDead() || !TargetRoster.Finite(subject.Actor.transform.position))
             { frame.Subjects.RemoveAt(i); continue; }
             subject.Focus = Focus(subject.Actor);
@@ -141,8 +116,8 @@ internal sealed class PlayerSceneContext
             }
         Vector3 position = player.transform.position;
         IReadOnlyList<string> members = grouping.Update(now, primaryCharacter, new AutonomyPosition(position.x, position.y, position.z), companions);
-        var old = new Dictionary<string, Subject>(StringComparer.Ordinal);
-        foreach (Subject subject in frame.Subjects) old[subject.CharacterId] = subject;
+        var old = new Dictionary<string, CameraSceneSubject>(StringComparer.Ordinal);
+        foreach (CameraSceneSubject subject in frame.Subjects) old[subject.CharacterId] = subject;
         frame.Subjects.Clear();
         Add(player, primary.Identity.Id, true, false, old);
         foreach (string id in members)
@@ -150,7 +125,7 @@ internal sealed class PlayerSceneContext
                 Add(observation.Actor, id, false, false, old);
 
         bool attack = false, damaged = false;
-        foreach (Subject subject in frame.Subjects)
+        foreach (CameraSceneSubject subject in frame.Subjects)
             if (observations.TryGetValue(subject.CharacterId, out Observation? observation))
             { attack |= observation.AttackUntil > now; damaged |= observation.DamageUntil > now; }
         opponents.Clear();
@@ -171,17 +146,17 @@ internal sealed class PlayerSceneContext
             ZNetView? view = actor.GetComponent<ZNetView>();
             Character? target = ai && view && view.IsOwner() ? ai.GetTargetCreature() : null;
             bool targetsGroup = false;
-            foreach (Subject subject in frame.Subjects) if (target && target == subject.Actor) targetsGroup = true;
+            foreach (CameraSceneSubject subject in frame.Subjects) if (target && target == subject.Actor) targetsGroup = true;
             float nearest = float.MaxValue;
-            foreach (Subject subject in frame.Subjects) nearest = Mathf.Min(nearest, Vector3.Distance(subject.Focus, Focus(actor)));
+            foreach (CameraSceneSubject subject in frame.Subjects) nearest = Mathf.Min(nearest, Vector3.Distance(subject.Focus, Focus(actor)));
             bool nearbyAction = nearest <= 12f && (observed.AttackUntil > now || attack || damaged && observed.DamageUntil > now);
             if (targetsGroup || nearbyAction) observed.OpponentUntil = now + 3f;
             if (observed.OpponentUntil > now && nearest <= 20f) opponents.Add(observed);
         }
         opponents.Sort((a, b) =>
         {
-            bool oldA = old.TryGetValue(a.Actor.GetZDOID().ToString(), out Subject? sa) && sa.IsOpponent;
-            bool oldB = old.TryGetValue(b.Actor.GetZDOID().ToString(), out Subject? sb) && sb.IsOpponent;
+            bool oldA = old.TryGetValue(a.Actor.GetZDOID().ToString(), out CameraSceneSubject? sa) && sa.IsOpponent;
+            bool oldB = old.TryGetValue(b.Actor.GetZDOID().ToString(), out CameraSceneSubject? sb) && sb.IsOpponent;
             int retained = oldB.CompareTo(oldA);
             return retained != 0 ? retained : (a.Position - position).sqrMagnitude.CompareTo((b.Position - position).sqrMagnitude);
         });
@@ -218,7 +193,7 @@ internal sealed class PlayerSceneContext
         if (desired == frame.Activity || now - activitySince >= (desired == CinematicActivity.Combat ? .5f : 1.5f)) frame.Activity = desired;
         frame.Confidence = confidence;
         int players = 0;
-        foreach (Subject subject in frame.Subjects) if (subject.Player) players++;
+        foreach (CameraSceneSubject subject in frame.Subjects) if (subject.Player) players++;
         string place = player.GetBaseValue() >= 3 ? "; base-area hint" : frame.Interior ? "; interior" : "";
         frame.Description = $"{frame.Activity}; {players} player(s), {Math.Min(2, opponents.Count)} opponent(s); {evidence}{place}" +
             (frame.HasInterest ? $"; {frame.InterestKind} interest {frame.InterestConfidence:F2}" : "");
@@ -358,11 +333,11 @@ internal sealed class PlayerSceneContext
         return true;
     }
 
-    private void Add(Character actor, string id, bool primary, bool opponent, Dictionary<string, Subject> old)
+    private void Add(Character actor, string id, bool primary, bool opponent, Dictionary<string, CameraSceneSubject> old)
     {
         string character = actor.GetZDOID().ToString();
-        if (!old.TryGetValue(character, out Subject? subject) || subject.Actor != actor)
-            subject = new Subject { Actor = actor, Weight = primary ? 2f : .05f };
+        if (!old.TryGetValue(character, out CameraSceneSubject? subject) || subject.Actor != actor)
+            subject = new CameraSceneSubject { Actor = actor, Weight = primary ? 2f : .05f };
         subject.Id = id; subject.CharacterId = character; subject.Player = actor as Player;
         subject.IsPrimary = primary; subject.IsOpponent = opponent; subject.Focus = Focus(actor);
         float radius = actor.GetRadius();

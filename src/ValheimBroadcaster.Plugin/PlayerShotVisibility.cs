@@ -251,7 +251,7 @@ internal sealed class PlayerShotVisibility
         Vector3 bottom = subject.Focus - Vector3.up * subject.BottomOffset;
         // Radius encloses the actor horizontally. Do not shrink one world axis:
         // the actor may turn independently of both the camera and its velocity.
-        float halfWidth = Mathf.Clamp(subject.Radius, 0.15f, 4f);
+        float halfWidth = Mathf.Clamp(subject.Radius, 0.15f, 8f);
         int index = 0;
         for (int y = 0; y < 2; y++)
         for (int z = -1; z <= 1; z += 2)
