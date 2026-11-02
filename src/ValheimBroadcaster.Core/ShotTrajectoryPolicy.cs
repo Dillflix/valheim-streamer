@@ -33,6 +33,7 @@ namespace ValheimBroadcaster.Core
         private long shotId;
         private CinematicActivity activity;
         private ShotTrajectoryKind mode;
+        private ShotLocomotion locomotion;
         private bool initialized, blocked;
 
         private struct Dynamics
@@ -65,14 +66,15 @@ namespace ValheimBroadcaster.Core
         public ShotTrajectoryState Step(double now, double dt, AutonomyPosition subject,
             AutonomyPosition sceneCenter, AutonomyPosition commonVelocity, CinematicActivity currentActivity,
             ShotTrajectoryKind kind, long currentShotId, float allowableLag, float framingPressure,
-            float availableFreedom, bool blocked = false)
+            float availableFreedom, bool blocked = false, ShotLocomotion locomotion = ShotLocomotion.Walk)
         {
             if (!Finite(now) || now < 0 || !Finite(dt) || dt < 0 || lastNow >= 0 && now < lastNow)
             { Reset(); throw new ArgumentOutOfRangeException(nameof(now)); }
             if (!Finite(allowableLag) || allowableLag <= 0 || !Unit(framingPressure) || !Unit(availableFreedom))
                 throw new ArgumentOutOfRangeException(nameof(allowableLag));
             if ((int)kind < 0 || (int)kind > (int)ShotTrajectoryKind.ActivityArea ||
-                (int)currentActivity < 0 || (int)currentActivity > (int)CinematicActivity.Work)
+                (int)currentActivity < 0 || (int)currentActivity > (int)CinematicActivity.Work ||
+                (int)locomotion < 0 || (int)locomotion > (int)ShotLocomotion.Boat)
                 throw new ArgumentOutOfRangeException(nameof(kind));
 
             Vector subjectPoint = new Vector(subject);
@@ -83,6 +85,7 @@ namespace ValheimBroadcaster.Core
             sceneVelocity = new Vector(commonVelocity).Limited(20);
             lagBudget = Math.Max(0.5, Math.Min(24, allowableLag));
             pressure = framingPressure; freedom = availableFreedom; this.blocked = blocked;
+            this.locomotion = locomotion;
             ShotTrajectoryKind nextMode = currentActivity == CinematicActivity.Combat ? ShotTrajectoryKind.Tracking : kind;
             if (reset)
             {
@@ -134,6 +137,7 @@ namespace ValheimBroadcaster.Core
             previousSubject = center = sceneVelocity = default;
             lastNow = -1; lagBudget = 8; pressure = 0; freedom = 1;
             shotId = 0; activity = CinematicActivity.Idle; mode = ShotTrajectoryKind.Establish;
+            locomotion = ShotLocomotion.Walk;
         }
 
         private void Integrate(ref Dynamics value, Vector target, Vector targetVelocity,
@@ -187,7 +191,13 @@ namespace ValheimBroadcaster.Core
                 correction += error * (pressure * Math.Min(12, 2 + speed * 0.6) /
                     Math.Max(distance, Math.Max(1, lagBudget * 0.25)));
             Vector desiredVelocity = (plannedVelocity + correction).Limited(MaximumSpeed);
-            double acceleration = Math.Min(MaximumAcceleration, 8 + speed * 1.5 + pressure * 8);
+            // Moving platforms/water and vertical traversal should not copy
+            // short bobbing/corrections into camera velocity. Framing pressure
+            // can restore responsiveness when the subject approaches the edge.
+            double profileLimit = locomotion == ShotLocomotion.Boat ? 10 :
+                locomotion == ShotLocomotion.Swim ? 12 : locomotion == ShotLocomotion.Vertical ? 14 : MaximumAcceleration;
+            profileLimit += (MaximumAcceleration - profileLimit) * pressure;
+            double acceleration = Math.Min(profileLimit, 8 + speed * 1.5 + pressure * 8);
             Vector nextVelocity = value.Velocity + (desiredVelocity - value.Velocity).Limited(acceleration * step);
             Vector next = value.Anchor + (value.Velocity + nextVelocity) * (0.5 * step);
             // Respect the same finite world-coordinate domain as inputs.

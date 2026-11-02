@@ -11,6 +11,8 @@ internal static class ProceduralCameraGeometryTests
         yield return ("Procedural geometry uses actual lead and rejects distant players", LeadAndDistance);
         yield return ("Procedural interior poses and reachability share the same clamps", InteriorOffsets);
         yield return ("Procedural reachability rejects nonfinite geometry", InvalidGeometry);
+        yield return ("Foliage recovery adds compact lower viewpoints around all sides", RecoveryViews);
+        yield return ("Foliage search does not alter loading reachability", RecoveryDoesNotAuthorizeTravel);
     }
 
     private static void Check(bool value) { if (!value) throw new Exception("Procedural geometry assertion failed."); }
@@ -60,6 +62,39 @@ internal static class ProceduralCameraGeometryTests
         AutonomyPosition close = ProceduralCameraGeometry.Offset(6, 80, 40, 90, true);
         Near(3, close.X); Near(.5, close.Y); Near(0, close.Z);
         Near(0, ProceduralCameraGeometry.RequiredDisplacement(-6, -1.3, 0, 80, 40, 90, true));
+    }
+
+    private static void RecoveryViews()
+    {
+        Check(ProceduralCameraGeometry.TotalCandidateCount <= ProceduralShotPolicy.MaximumCandidates);
+        bool below = false;
+        for (int i = 0; i < ProceduralCameraGeometry.RecoveryCandidateCount; i++)
+        {
+            var view = ProceduralCameraGeometry.RecoveryOffset(i, 0);
+            double radius = Math.Sqrt(view.X * view.X + view.Z * view.Z);
+            Check(radius >= 3.19 && radius <= 4.81);
+            Check(view.Y >= -.21 && view.Y <= 1.21); below |= view.Y < 0;
+            var opposite = ProceduralCameraGeometry.RecoveryOffset(i, 180);
+            Near(-view.X, opposite.X); Near(-view.Z, opposite.Z);
+            var scaled = ProceduralCameraGeometry.RecoveryOffset(i, 0, .5);
+            Near(view.X * .5, scaled.X); Near(view.Y * .5, scaled.Y);
+        }
+        Check(below);
+    }
+
+    private static void RecoveryDoesNotAuthorizeTravel()
+    {
+        // Extra picture-search angles do not enlarge the nominal acquisition
+        // contract or change its meaning when a close view looks attractive.
+        var recovery = ProceduralCameraGeometry.RecoveryOffset(0, 0);
+        double targetX = -recovery.X, targetY = .5 - recovery.Y, targetZ = -recovery.Z;
+        // This recovery endpoint would put the carrier exactly at the origin.
+        Near(0, targetX + recovery.X); Near(0, targetY + 1.5 + recovery.Y - 2);
+        Near(0, targetZ + recovery.Z);
+        // Yet a configured 300m/100m acquisition still reports the nominal
+        // supported candidate distance, rather than silently using that endpoint.
+        Check(ProceduralCameraGeometry.RequiredDisplacement(targetX, targetY, targetZ,
+            300, 100, 0, false) > CameraReachability.ImmediateLimit);
     }
 
     private static void InvalidGeometry()

@@ -22,6 +22,9 @@ internal sealed class CameraRig
     internal Quaternion Rotation => camera ? camera.transform.rotation : Quaternion.identity;
     internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
     internal RemoteObserverClient? RemoteContext { set => shotCamera.RemoteContext = value; }
+    internal CameraSceneFrame? CurrentPlayerScene => proceduralActive ? shotCamera.CurrentPlayerScene : null;
+    internal string? CurrentPlayerId => proceduralActive ? shotCamera.CurrentPlayerId : null;
+    internal float PlayerSceneObservedAt => proceduralActive ? shotCamera.PlayerSceneObservedAt : -1;
     private Camera? camera;
     private Camera? skyCamera;
     private float savedFov;

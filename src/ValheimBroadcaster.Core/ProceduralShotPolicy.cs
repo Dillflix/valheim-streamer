@@ -13,27 +13,38 @@ namespace ValheimBroadcaster.Core
         public const double ImprovementSeconds = 0.5;
         public const double HealthyDwellSeconds = 2;
         public const double MaximumEvidenceGapSeconds = 1;
+        public const double ReadableRecoverySeconds = .35;
+        public const double PoorViewImprovementSeconds = .75;
+        public const float PoorViewImprovementMargin = .05f;
 
         private int candidateCount;
         private double lastTime = -1, selectedAt, pendingSince;
+        private bool pendingReadable;
+        private int rollbackIndex = -1;
+        private double rollbackSelectedAt;
+        private bool canRollback;
         public int SelectedIndex { get; private set; } = -1;
         public int PendingIndex { get; private set; } = -1;
 
         /// <summary>Returns -1 only when no candidate is eligible. An occluded but
         /// physically valid picture remains a candidate while alternatives are sought.
         /// Candidate indices must retain their meaning until Reset is called.</summary>
-        public int Select(double now, IReadOnlyList<float> scores, IReadOnlyList<bool> eligible)
+        public int Select(double now, IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
+            IReadOnlyList<bool>? readable = null)
         {
             if (!Finite(now) || now < 0 || lastTime >= 0 && now < lastTime)
             {
                 Reset();
                 throw new ArgumentOutOfRangeException(nameof(now), "Shot selection requires finite monotonic time.");
             }
-            if (scores == null || eligible == null || scores.Count != eligible.Count || scores.Count > MaximumCandidates)
+            if (scores == null || eligible == null || scores.Count != eligible.Count || scores.Count > MaximumCandidates ||
+                readable != null && readable.Count != scores.Count)
                 throw new ArgumentException("Provide equally sized candidate scores and eligibility, up to 32 entries.");
             for (int i = 0; i < scores.Count; i++)
                 if (!Finite(scores[i]) || scores[i] < 0 || scores[i] > 1)
                     throw new ArgumentOutOfRangeException(nameof(scores), "Picture-quality scores must be finite values from zero to one.");
+
+            if (now != lastTime) canRollback = false;
 
             if (candidateCount != scores.Count)
             {
@@ -46,7 +57,7 @@ namespace ValheimBroadcaster.Core
             bool currentEligible = SelectedIndex >= 0 && eligible[SelectedIndex];
             int best = currentEligible ? SelectedIndex : -1;
             for (int i = 0; i < scores.Count; i++)
-                if (eligible[i] && (best < 0 || scores[i] > scores[best])) best = i;
+                if (eligible[i] && (best < 0 || Better(i, best, scores, readable))) best = i;
 
             if (best < 0)
             {
@@ -57,20 +68,77 @@ namespace ValheimBroadcaster.Core
             // held in place by dwell/hysteresis. Initial selection uses this too.
             if (!currentEligible) return Switch(best, now);
 
-            if (best == SelectedIndex || scores[best] < scores[SelectedIndex] + ImprovementMargin)
+            bool recovery = readable != null && !readable[SelectedIndex];
+            bool restoresReadable = recovery && readable![best];
+            float margin = recovery ? PoorViewImprovementMargin : ImprovementMargin;
+            if (best == SelectedIndex || !restoresReadable && scores[best] < scores[SelectedIndex] + margin)
             {
                 PendingIndex = -1;
                 return SelectedIndex;
             }
-            if (PendingIndex != best)
+            bool candidateReadable = readable != null && readable[best];
+            if (PendingIndex != best || pendingReadable != candidateReadable)
             {
                 PendingIndex = best;
                 pendingSince = now;
+                pendingReadable = candidateReadable;
             }
-            if (now - pendingSince < ImprovementSeconds) return SelectedIndex;
+            double persistence = restoresReadable ? ReadableRecoverySeconds : recovery ? PoorViewImprovementSeconds : ImprovementSeconds;
+            if (now - pendingSince < persistence) return SelectedIndex;
             // Dwell protects a healthy composition, not footage buried in foliage.
-            if (scores[SelectedIndex] >= HealthyScore && now - selectedAt < HealthyDwellSeconds) return SelectedIndex;
+            if (recovery)
+            {
+                // An all-bad search can make measured progress, but cannot
+                // oscillate among nearly equivalent obstructed candidates.
+                if (!restoresReadable && now - selectedAt < PoorViewImprovementSeconds) return SelectedIndex;
+            }
+            else if ((readable != null ? readable[SelectedIndex] : scores[SelectedIndex] >= HealthyScore) &&
+                now - selectedAt < HealthyDwellSeconds) return SelectedIndex;
             return Switch(best, now);
+        }
+
+        private static bool Better(int candidate, int incumbent, IReadOnlyList<float> scores, IReadOnlyList<bool>? readable)
+        {
+            // Picture health is lexicographic: editorial score bonuses cannot
+            // make an unreadable view defeat a supported readable alternative.
+            if (readable != null && readable[candidate] != readable[incumbent]) return readable[candidate];
+            return scores[candidate] > scores[incumbent];
+        }
+
+        /// <summary>Standby geometry changed: its previous comparison cannot
+        /// establish a sustained improvement at the new pose.</summary>
+        public void InvalidatePending()
+        {
+            PendingIndex = -1;
+            pendingSince = 0;
+            pendingReadable = false;
+        }
+
+        /// <summary>Reject this clock tick's proposed replacement after the
+        /// adapter revalidates and retains its previously presented live view.
+        /// Restores the original dwell, not a fictional newly displayed shot.</summary>
+        public bool RejectSelection(int retainedIndex)
+        {
+            if (!canRollback || retainedIndex < 0 || retainedIndex >= candidateCount || retainedIndex != rollbackIndex)
+                return false;
+            SelectedIndex = retainedIndex;
+            selectedAt = rollbackSelectedAt;
+            canRollback = false;
+            InvalidatePending();
+            return true;
+        }
+
+        /// <summary>Adopt an actually displayed source revalidated by the
+        /// adapter after a mode reset left no rollback checkpoint. This is not
+        /// a substitute for endpoint validation; no geometry is tested here.</summary>
+        public bool AdoptValidatedSelection(double now, int index)
+        {
+            if (!Finite(now) || now < 0 || now < lastTime || index < 0 || index >= candidateCount) return false;
+            SelectedIndex = index;
+            selectedAt = lastTime = now;
+            canRollback = false;
+            InvalidatePending();
+            return true;
         }
 
         public void Reset()
@@ -79,10 +147,19 @@ namespace ValheimBroadcaster.Core
             candidateCount = 0;
             lastTime = -1;
             selectedAt = pendingSince = 0;
+            pendingReadable = false;
+            rollbackIndex = -1; rollbackSelectedAt = 0; canRollback = false;
         }
 
         private int Switch(int index, double now)
         {
+            // Multiple same-tick re-evaluations still refer to one displayed
+            // source; preserve that earliest source through the proposal chain.
+            if (!canRollback)
+            {
+                rollbackIndex = SelectedIndex; rollbackSelectedAt = selectedAt;
+                canRollback = rollbackIndex >= 0 && rollbackIndex != index;
+            }
             SelectedIndex = index;
             PendingIndex = -1;
             selectedAt = now;

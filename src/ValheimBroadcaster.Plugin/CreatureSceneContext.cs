@@ -9,6 +9,10 @@ internal sealed class CreatureSceneContext
 {
     private readonly CameraSceneFrame frame = new CameraSceneFrame();
     private readonly CameraSceneSubject subject = new CameraSceneSubject();
+    private readonly LocalRoomSurvey rooms = new LocalRoomSurvey();
+    private readonly LocomotionObservationPolicy locomotion = new LocomotionObservationPolicy();
+    private static readonly int SwimmingKey = unchecked(438569 + ZSyncAnimation.GetHash("inWater"));
+    private long nextSceneId;
     private Character? actor;
     private ZNet? world;
     private ZDOID characterId;
@@ -30,6 +34,7 @@ internal sealed class CreatureSceneContext
             now < frameAt || frameAt >= 0 && (now - frameAt > 1f || Vector3.Distance(position, previousPosition) > 16f))
         {
             Reset();
+            frame.SceneId = ++nextSceneId;
             actor = primary; characterId = primary.GetZDOID(); world = ZNet.instance;
             subject.Actor = primary; subject.Id = subject.CharacterId = characterId.ToString();
             subject.IsPrimary = true; subject.Weight = 2f;
@@ -41,6 +46,7 @@ internal sealed class CreatureSceneContext
         frameAt = now; previousPosition = position;
         frame.PrimaryFocus = frame.Focus = subject.Focus = Focus(primary);
         frame.Interior = Character.InInterior(position);
+        rooms.Update(primary, observedVelocity, now, frame);
         subject.Height = Height(primary); subject.Radius = Radius(primary);
         subject.BottomOffset = subject.Focus.y - position.y;
         if (observedAt < 0 || now - observedAt >= .25f) Observe(primary, position, now);
@@ -64,6 +70,11 @@ internal sealed class CreatureSceneContext
         else observedVelocity = Vector3.zero;
         if (primary.InAttack()) attackUntil = now + 1.5f;
         observedPosition = position; observedAt = now; previousHealth = health;
+        Vector3 planar = observedVelocity; planar.y = 0;
+        ZDO? zdo = primary.GetComponent<ZNetView>()?.GetZDO();
+        locomotion.Observe(now, planar.magnitude, observedVelocity.y,
+            zdo != null && zdo.IsValid() && zdo.GetInt(SwimmingKey, 0) != 0, rooms.SupportingShip);
+        frame.Locomotion = locomotion.Locomotion; frame.LocomotionConfidence = locomotion.Confidence;
 
         CinematicActivity desired;
         string evidence;
@@ -81,9 +92,9 @@ internal sealed class CreatureSceneContext
         if (desired != pendingActivity) { pendingActivity = desired; activitySince = now; }
         if (desired == frame.Activity || now - activitySince >= (desired == CinematicActivity.Combat ? .25f : 1.25f))
             frame.Activity = desired;
-        frame.Confidence = confidence;
+        frame.Confidence = desired == frame.Activity ? confidence : Mathf.Min(.4f, confidence);
         frame.Description = $"{frame.Activity}; one loaded creature; {evidence}; body {subject.Height:F1}m × {subject.Radius * 2f:F1}m" +
-            (frame.Interior ? "; interior" : "");
+            $"; {frame.Environment} {frame.EnvironmentConfidence:F2}; {frame.Locomotion}";
     }
 
     private void UpdateFacing(Vector3 direction, float dt)
@@ -118,6 +129,10 @@ internal sealed class CreatureSceneContext
     internal void Reset()
     {
         frame.Subjects.Clear();
+        rooms.Reset(); locomotion.Reset(); frame.SceneId = 0;
+        frame.Environment = ShotEnvironment.Unknown; frame.Locomotion = ShotLocomotion.Stationary;
+        frame.EnvironmentConfidence = frame.LocomotionConfidence = frame.CeilingHeight = 0;
+        frame.DoorwayTransition = false; frame.OpeningDirection = Vector3.zero;
         frame.PrimaryFocus = frame.Focus = frame.Velocity = frame.GroupVelocity = Vector3.zero;
         frame.FacingDirection = Vector3.forward; frame.InterestFocus = Vector3.zero;
         frame.FacingConfidence = frame.InterestConfidence = frame.Spread = frame.Confidence = 0;

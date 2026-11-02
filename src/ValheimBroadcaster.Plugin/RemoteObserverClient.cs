@@ -64,6 +64,24 @@ internal sealed class RemoteObserverClient
     // all-player decision. This accessor never extrapolates observed idle time.
     internal ObserverPlayerActivity? GetPlayerActivity(string id, string characterId) =>
         Isolated && Approved && !activityUnavailable ? activity.Find(id, characterId, Time.realtimeSinceStartup) : null;
+    private readonly ObserverEventCache events = new ObserverEventCache();
+    private float eventProbeAt = -1, nextEvents;
+    private bool eventsSupported, eventsUnavailable, eventsRejected;
+    internal ObserverEventSnapshot? Events => Isolated && Approved ? events.Snapshot : null;
+    internal double EventAge => events.Age(Time.realtimeSinceStartup);
+    internal string EventStatus => !Isolated || !Approved ? "Events: awaiting authorized observer connection" :
+        eventsUnavailable ? "Events: optional server evidence unavailable; using local activity" :
+        !eventsSupported ? "Events: probing optional server support" : Events?.Enabled != true ? "Events: server evidence disabled" :
+        !events.Fresh(Time.realtimeSinceStartup) ? "Events: server evidence stale; using local activity" :
+        "Events: server evidence available; age " + EventAge.ToString("F1") + "s";
+    // Returned source and event ages already include time since receipt. Generic
+    // Action and HealthLoss are deliberately not labelled as combat or exact intent.
+    internal ObserverPlayerEvents? GetPlayerEvents(string id, string characterId)
+    {
+        if (!Isolated || !Approved || eventsUnavailable) return null;
+        ObserverPlayerEvents? item = events.Find(id, characterId, Time.realtimeSinceStartup);
+        return item?.Elapsed((float)EventAge);
+    }
     internal bool Isolated => requested && world && world == ZNet.instance;
     internal bool Approved { get; private set; }
     internal bool Failed => failed;
@@ -109,6 +127,8 @@ internal sealed class RemoteObserverClient
         client.contextSupported = client.contextUnavailable = client.contextRejected = false;
         client.activity.Reset(); client.activityProbeAt = -1; client.nextActivity = 0;
         client.activitySupported = client.activityUnavailable = client.activityRejected = false;
+        client.events.Reset(); client.eventProbeAt = -1; client.nextEvents = 0;
+        client.eventsSupported = client.eventsUnavailable = client.eventsRejected = false;
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
         if (client.requested)
         {
@@ -116,6 +136,7 @@ internal sealed class RemoteObserverClient
             __0.m_rpc.Register<ZPackage>(ObserverDiscoveryProtocol.Reply, client.DiscoveryReply);
             __0.m_rpc.Register<ZPackage>(ObserverContextProtocol.Reply, client.ContextReply);
             __0.m_rpc.Register<ZPackage>(ObserverActivityProtocol.Reply, client.ActivityReply);
+            __0.m_rpc.Register<ZPackage>(ObserverEventProtocol.Reply, client.EventReply);
         }
     }
     private static bool RequestBeforeAdmission(ZRpc __0)
@@ -238,6 +259,40 @@ internal sealed class RemoteObserverClient
             log("Optional server activity request unavailable: " + error.GetType().Name);
         }
     }
+    private void EventReply(ZRpc rpc, ZPackage package)
+    {
+        if (!Isolated || !Approved || failed || eventsRejected || server == null ||
+            !ReferenceEquals(rpc, server.m_rpc) || !server.IsReady()) return;
+        try
+        {
+            if (package.Size() > ObserverEventProtocol.MaxPacketBytes) throw new ArgumentException("Observer event packet too large.");
+            ObserverEventSnapshot snapshot = ObserverEventProtocol.Decode(package.GetArray());
+            if (snapshot.WorldId != world!.GetWorldUID()) throw new ArgumentException("Observer event world mismatch.");
+            events.Accept(snapshot, Time.realtimeSinceStartup);
+            eventsSupported = true; eventsUnavailable = false;
+        }
+        catch (Exception error)
+        {
+            eventsUnavailable = eventsRejected = true; events.Reset();
+            log("Optional server event evidence rejected after " + error.GetType().Name + "; using local activity.");
+        }
+    }
+    private void TickEvents(float now)
+    {
+        if (!Approved || eventsUnavailable || server == null) return;
+        if (!eventsSupported && eventProbeAt >= 0)
+        {
+            if (now - eventProbeAt >= ObserverEventProtocol.ProbeSeconds)
+            { eventsUnavailable = true; log("Optional server event evidence unavailable; using local activity."); }
+            return;
+        }
+        if (now < nextEvents) return;
+        nextEvents = now + 2;
+        if (eventProbeAt < 0) eventProbeAt = now;
+        try { server.m_rpc.Invoke(ObserverEventProtocol.Request, ObserverEventProtocol.Version); }
+        catch (Exception error)
+        { eventsUnavailable = true; events.Reset(); log("Optional server event request unavailable: " + error.GetType().Name); }
+    }
     internal void Tick()
     {
         if (!Isolated) return;
@@ -262,6 +317,7 @@ internal sealed class RemoteObserverClient
         }
         TickContext(Time.realtimeSinceStartup);
         TickActivity(Time.realtimeSinceStartup);
+        TickEvents(Time.realtimeSinceStartup);
     }
     internal void Spawned() { spawned = true; Status = "Read-only observer connection active"; }
     internal void Fail(string reason, bool terminal = true)
@@ -269,6 +325,7 @@ internal sealed class RemoteObserverClient
         if (failed) return;
         failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); context.Reset(); contextUnavailable = true;
         activity.Reset(); activityUnavailable = true; Status = reason; log(reason);
+        events.Reset(); eventsUnavailable = true;
         if (world && world == ZNet.instance && server != null && world.GetPeers().Contains(server)) world.Disconnect(server);
         // Do not unpin input/network restrictions inside a still-loaded world.
     }

@@ -1,10 +1,10 @@
-# Shared camera director (0.8.17)
+# Shared camera director (0.8.18)
 
-Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.17 builds directly on 0.8.16 and retains its shared camera mechanics. It adds bounded nearby wildlife cutaways during globally observed player inactivity.
+Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.18 builds directly on 0.8.17 (`94fb4a1`). It makes picture readability explicit throughout selection and transitions, adds bounded recovery viewpoints, measures structural rooms/openings, and directs shot purpose, scale and movement using observed context. The 0.8.17 wildlife cutaways remain available under their existing global-idle requirements.
 
 Scenery supplies planned world camera and aim paths; creatures supply their actual dimensions and observed movement. Neither is represented as a fake player. The observer's travel/authorization rules remain separate. Probe viewing stays a fixed acquisition measurement, while travel and recovery use the existing held-frame/slate presentation.
 
-Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.17 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
+Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.18 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
 
 ## Controls and configuration
 
@@ -12,7 +12,7 @@ Use `-console` when launching Valheim, then F5. Close the console to observe the
 
 | Command | Effect |
 | --- | --- |
-| `broadcast camera status` | Show scene/activity evidence, selected shot, quality, available space, movement/settling reason and camera settings |
+| `broadcast camera status` | Show scene/activity evidence, shot role, measured environment/locomotion, readability and reason, normal/expanded recovery search, transition and camera settings |
 | `broadcast camera dynamic` | Enable timed fresh compositions and deliberate movement when space permits |
 | `broadcast camera steady` | Disable that editorial layer; retain procedural visibility selection, damping and group framing |
 | `broadcast camera composition on` / `off` | Enable deliberate subject placement or select the centered comparison preference; preserve the same damping and visibility checks |
@@ -22,7 +22,7 @@ Use `-console` when launching Valheim, then F5. Close the console to observe the
 | `broadcast camera damping 0.8 1` | Set position and aim damping in seconds; each accepts 0.1–3 |
 | `broadcast camera procedural` / `fixed` | Select shared procedural or legacy fixed framing for player, creature and scenic coverage |
 | `broadcast wildlife on` / `off` / `status` | Enable/disable wildlife cutaways or inspect activity freshness, minimum idle time, rearm time and blocking reason |
-| `broadcast diagnostics` | Include observer/discovery/output state, optional server context and wildlife status |
+| `broadcast diagnostics` | Include observer/discovery/output state, optional context/events freshness, activity selection and wildlife status |
 
 The camera controls apply to all three production modes. `composition off` eases actor or environmental placement toward the centered comparison preference without disabling damping or visibility checks. Actor body framing can still require a corrective offset. `steady` retains the developed decorative offset/path sample rather than snapping back to the origin; necessary actor tracking continues. `motion 0` likewise stops discretionary development while keeping tracking and framing. Normal coverage scheduling can still choose another subject or scenic plan; `broadcast hold` pauses that scheduling rather than freezing all camera mechanics. The probe remains a fixed measurement independent of these cinematic controls.
 
@@ -40,6 +40,40 @@ The camera controls apply to all three production modes. `composition off` eases
 Cinemachine's damping parameter is a settling duration, not a pure time delay: `PositionDamping = 0.8` gives approximately 99% convergence in 0.8 seconds for a stationary target. Trajectory planning now determines how camera translation responds to player motion; increasing damping alone is not the independence mechanism.
 
 `Distance`, `Height`, `Azimuth` and `FieldOfView` remain composition preferences. Procedural views can adapt them within limits. `Smoothing` governs legacy fixed response; use the two damping settings for all shared procedural modes. `Director.DwellSeconds` controls player rotation, independently of a composition's duration.
+
+## Readable footage and bounded recovery
+
+Physical eligibility and picture health are distinct. A candidate must first have valid geometry, camera clearance and carrier reach. Its actual solved orientation/lens then determines whether the actor or environmental subject is readable. Actor health includes body framing and scale, solid/foliage visibility, foreground obstruction and survey completeness; a few clear centerline rays cannot by themselves certify a usable actor shot. The same health result governs candidate retention, deliberate movement, transitions and readable-coverage credit.
+
+Healthy views retain ordinary persistence and continuity preferences. When the current view is unreadable, a sustained readable replacement can win without the old 0.15 score-improvement requirement. When every view is poor, a smaller sustained improvement can still advance recovery, with hysteresis to avoid alternating equally bad angles. Physically supported poor footage remains available during the search; foliage alone never reports an unloaded scene or requests observer travel.
+
+The actor rig starts with ten ordinary viewpoints. After 0.6 seconds of unreadable footage it enables eight compact, lower/eye-level alternatives, with creature distances scaled to actual body size. Standby recovery directions advance on a bounded two-second cadence; the live candidate's search direction stays fixed. Four seconds of readable footage disables unused recovery candidates without removing the selected shot. Search can request a throttled foliage refresh. Compact views retain body framing and can temporarily widen the lens within limits when needed. A readable source is retained over an unreadable destination; interpolation that loses visibility can cut to a validated readable endpoint.
+
+The foliage estimate remains an approximation: renderer bounds are not leaf silhouettes or alpha coverage, unfamiliar vegetation can be missed, and dense truncated surveys cannot certify completeness. Expanded search is bounded; it cannot guarantee a clear angle in every scene. Inspect the readability reason and search status when reporting prolonged obscuration.
+
+## Measured rooms, shelter and openings
+
+Valheim's `Character.InInterior` distinguishes the elevated dungeon layer; it does **not** identify a player-built house. That flag remains unchanged for loading/readiness. A separate local survey measures constructed overhead `Piece` geometry, surrounding walls and supported openings. Tree canopies are excluded from roof evidence. The inferred states are open, sheltered, room, doorway, dungeon or unknown; incomplete measurements remain unknown.
+
+Surveys run at bounded cadence with fixed nonallocating hit buffers. Room/open transitions require persistent evidence, and doorway restraint continues briefly after leaving an opening. A measured ceiling caps optional rise; restricted rooms and doorways favor compact framing, quieter movement and shorter validated handoffs. These are local geometric hints, not named rooms, building ownership, a navigable room graph or proof of complete network delivery. Large halls can retain measured camera freedom. Players and creatures use this survey; scenic plans retain their own validated world paths.
+
+## Purpose, scale and locomotion
+
+Shot purpose is separate from decorative movement. The director first establishes a readable scene, then uses persistent, sufficiently confident evidence to choose a role. Nonurgent changes require usable footage; combat and doorway constraints can respond promptly. Roles ease their distance, height, lens, group emphasis and movement preferences instead of snapping to a new scale.
+
+| Role | Purpose |
+| --- | --- |
+| Establish | Show the actor in their surroundings, initially and when activity is uncertain |
+| Tracking | Readable sustained movement with appropriate lead room |
+| Interaction | Emphasize the primary with admitted companions or relevant opponents |
+| Action | Preserve a readable observed encounter with decorative movement suppressed |
+| Detail | A closer **full-body** view with an actual observed work point; no arbitrary limb/head cropping |
+| Interior | Compact framing when a doorway or constrained room limits camera space |
+| Landscape | Retain the environmental plan's independent camera/aim paths |
+
+Locomotion profiles distinguish stationary/slow movement, walking, fast travel, vertical traversal, observed swimming and support on a loaded ship. Player velocity retains its vertical component. Remote running/swimming local fields are not assumed authoritative: speed is measured, swimming uses replicated animation evidence, and boat support uses an actual supporting collider. A vessel can supply a live interest point and heading. Faster travel responds sooner; swimming/boats use steadier response; vertical traversal reduces decoration. These classifications have persistence and confidence, and do not claim keyboard intent or identify stairs semantically.
+
+Transition decisions consider scene identity, readable endpoints, physical path, angle, screen displacement, lens/role change and activity. Small same-scene adjustments can blend; recovery, new scenes, large changes and unsuitable paths use a validated cut. Doorways, rooms and combat shorten permitted blends. Angular-rate restraint applies only while the restrained pose remains readable, so smoothing cannot preserve an obscured image at the expense of a valid correction.
 
 ## Scene-specific direction
 
@@ -97,16 +131,28 @@ Foliage reduces picture quality rather than reporting missing world geometry. Sc
 
 Groups contain the primary and up to three nearby loaded players, plus up to two relevant loaded opponents. The observer is excluded, except when it is the explicit self-follow subject. Membership must persist before joining, retains existing companions preferentially and has a short separation grace. Entry/retention distance, maximum group spread, vertical separation, interior state and structural line of sight prevent chains of distant players or players across walls/floors from pulling the shot apart. Member weights ease in; the group focus stays near the primary. Four compact primary-only alternatives remain available when a group cannot fit safely. Group views use a smaller placement offset and bias the shared composition toward the primary player. Cinemachine determines bounded group lens size before the aim composer applies the placement guide, so a second group-centering rotation cannot overwrite the intended composition. If the solved view loses the primary or crowds its safe frame/headroom, the adapter relaxes placement toward a primary-centered view only as far as needed. It preserves position damping and holds the corrected composition for three seconds before easing back toward the preference.
 
-Activity points have their own short-lived evidence. A relevant observed opponent can supply combat space; gathering uses the actual nearby tree/rock collider hit during an attack, not a guessed resource center. Competing points must persist before replacing the current point, and absent evidence expires. Local placement/crafting state can support a work label without inventing a work target. Remote build/craft intent remains unknown.
+Activity points have their own short-lived evidence. A relevant observed opponent can supply combat space; gathering uses the actual nearby tree/rock collider hit during an attack, not a guessed resource center. A directly supporting loaded ship can supply a vessel interest. Competing points must persist before replacing the current point, and absent evidence expires. Local placement/crafting state or replicated crafting animation can support a work label without inventing an exact task or work target. Remote build/craft intent remains unknown.
+
+A fresh handoff to an already admitted companion in the same world, within bounded distance/height and clear structural connection, retains the scene identity, observations and member weights. The previous primary can remain a companion while the new primary receives emphasis. The rig preserves that scene's trajectories and editorial history. An unrelated selection, respawn, teleport, world change, stale frame gap or separated floor/room resets the binding. This is continuity for a supported loaded group, not permanent party membership or an inferred shared objective.
 
 Activity labels describe available evidence:
 
 - **Travel:** filtered sustained movement. **Idle:** no stronger activity evidence.
 - **Combat:** relevant hostile activity, owner-valid AI targeting, or combined attack/health-loss proximity evidence. An enemy merely existing nearby does not establish a fight.
-- **Work:** observed local placement/crafting state, or an attack aimed at a recognized tree/rock resource. Resource gathering is an inference. Remote build/craft intent is not assumed to be replicated.
+- **Work:** observed local placement/crafting state, replicated crafting animation, or an attack aimed at a recognized tree/rock resource. Resource gathering is an inference. Exact remote build/craft intent is not assumed to be replicated.
 - Health loss alone remains **cause unknown**. Replicated base value is only a **base-area hint**, not ownership. Unclassified actions stay explicitly uncertain in diagnostics.
 
 Group framing does not automatically count everyone as watched. A player earns recent-coverage credit only after six continuous seconds of readable live footage. Held frames, slates, hidden members and failed poses earn none. Automatic scheduling can then avoid immediately revisiting a recently visible companion; manual next/previous and exact follow remain explicit controls.
+
+## Activity selection and encounter retention
+
+At an ordinary player-rotation boundary, fresh activity sustained for at least two seconds can influence the next selection. Observed combat/action, work and movement receive progressively lower interest weights; already-loaded candidates and supported members of the current scene receive a continuity preference. This does not preemptively chase every remote event. Unknown evidence keeps ordinary stable rotation available. An unshown player waiting 120 seconds receives priority over activity/retention; this is a fairness threshold, not a guaranteed maximum wait with many unavailable players.
+
+Readable locally evidenced combat can extend a completed dwell by at most 20 seconds of wall time, including up to three seconds of aftermath. The extension does not renew indefinitely as new participants become primary. An overdue alternative, stale/uncertain evidence, unreadable footage or manual control ends retention. `next`, `previous`, exact selection and hold retain their existing authority. After 12 seconds of continuously unreadable player footage, the director can try another already-loaded, directly reachable player and avoid retrying the failed view for 30 seconds. This fallback does not authorize travel for picture quality; with no suitable local alternative it keeps bounded camera search and diagnostics. A readable image or manual hold resets that failed-view timing.
+
+The optional 0.8.18 companion supplies `EventRequest1` / `EventReply1` when `Observer.EventsEnabled=true`. It reuses passive replicated movement, generic action, health-loss and crafting observations, with source/heartbeat/receipt freshness and bounded history. Generic action or health loss is never labeled proof of combat. Specific work evidence precedes generic action; fresh remote activity can supplement uncertain local observation. Exact targets, intent and private input are not invented. Server policy for private positions still applies.
+
+Older compatible protocol-3 servers simply omit this feed: local camera direction, loaded-group continuity and locally observed activity remain available. Admission stays at protocol 3, discovery at 2, and existing context/idle activity extensions at 1. Server 0.8.18 is optional for richer remote activity; server 0.8.17 or later is still needed for the separate global-idle wildlife eligibility feature. Ordinary players require no mod.
 
 ## Reading camera diagnostics
 
@@ -147,14 +193,22 @@ The mod compiles selected official **Cinemachine 3.1.7** runtime sources into it
 
 Cinemachine supplies geometric camera behavior; the mod adds Valheim scene evidence, foliage scoring, continuity validation, activity/pacing and observer constraints. Virtual cameras are solved manually; the existing main camera remains the only rendering camera. See [the dependency record](../third_party/Cinemachine/README.md) for source pinning, compatibility changes and notices.
 
-Vegetation renderer bounds approximate leaves and transparency; custom vegetation can be missed. Physics line of sight is not semantic room detection. Activity inference cannot establish player intent or remote AI targets that are not replicated. Pure tests and compilation cannot establish composition quality, GPU cost, absence of visual flicker or multiplayer behavior.
+Vegetation renderer bounds approximate leaves and transparency; custom vegetation can be missed. Structural room/opening measurements are bounded geometric inferences, not semantic architecture recognition. Activity inference cannot establish player intent or remote AI targets that are not replicated. Pure tests and compilation cannot establish composition quality, GPU cost, absence of visual flicker or multiplayer behavior.
 
 ## Runtime validation
 
-**The 0.8.17 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect.
+**The 0.8.18 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
 
 | Exercise | Expected result to verify |
 | --- | --- |
+| Stand/walk beneath dense foliage; then briefly pass a branch across the image; repeat with a creature and scenic feature | Actual readability reflects foreground/body coverage; transient obstruction does not churn, sustained obscuration enables recovery search, and selected recovery viewpoints remain stable once clear |
+| Keep one player unframeable with another loaded nearby, then repeat with only a distant alternative and with one player total | After the failed-view budget, try only a directly reachable local alternative; cooldown applies; foliage never causes a teleport/loading trip; solo search diagnostics remain truthful |
+| Enter/exit a player-built house, pass under an open-sided roof and tree canopy, cross a doorway, then enter a dungeon | Structural room/shelter/opening states are distinct from dungeon-layer readiness; canopy is not a roof; transitions settle without rapid classification chatter |
+| Stand, sprint, stop, reverse, traverse slopes/stairs, swim and ride a moving ship | Profiles use observed motion/support, preserve vertical travel, and keep the full actor readable while angular/lens response remains bounded |
+| Establish a scene, gather a recognized resource, fight near allies, then resume travel | Purpose/scale changes follow evidence and usable footage; Detail retains the full body; uncertain activity does not manufacture an action target |
+| Cycle the primary between admitted nearby companions; then split across a wall/floor, teleport, respawn and rejoin | Supported handoffs retain scene/trajectory history; discontinuities reset it; no stale companion positions or cross-scene continuity |
+| Reach player dwell during a locally evidenced fight; then use manual next/hold and create an overdue alternative | Encounter retention is bounded, aftermath is brief, manual control wins, and fairness prevents indefinite event monopoly |
+| Updated server events on/off, older server, stale/malformed event reply and ordinary nonobserver session | Local operation remains available; optional event failure does not break admission, wildlife evidence or manual controls; generic damage/action is not asserted as combat |
 | Updated client/server: one ordinary player idle near an eligible loaded creature; inspect wildlife status | No cutaway before 60 seconds of observed inactivity; a bounded creature shot can follow, then player coverage and at least 60 seconds before another cutaway |
 | Two ordinary players, one nearby and idle, one distant and moving/acting | No cutaway until both have fresh confirmed inactivity for at least 60 seconds; the loaded roster alone cannot authorize it |
 | During a cutaway, move, attack, block, emote, craft or change station state; separately join/leave, respawn or interrupt activity delivery | Return to player coverage/acquisition when action or incomplete/stale evidence appears; no permission persists across roster/character changes |

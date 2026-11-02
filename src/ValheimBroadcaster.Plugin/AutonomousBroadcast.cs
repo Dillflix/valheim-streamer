@@ -18,6 +18,7 @@ internal sealed class AutonomousBroadcast
     private readonly Action<string> log;
     private readonly AutonomousDirector policy = new AutonomousDirector();
     private readonly List<AutonomyPlayer> players = new List<AutonomyPlayer>(64);
+    private readonly List<PlayerActivityEvidence> activity = new List<PlayerActivityEvidence>(128);
     private readonly List<ScenicRegion> regions = new List<ScenicRegion>(1024);
     private readonly List<ScenicRegion> route = new List<ScenicRegion>(32);
     private long sequence = -1, worldId;
@@ -42,6 +43,7 @@ internal sealed class AutonomousBroadcast
         recovering ? "Recovering travel: " + recoveryReason : policy.Reason;
     internal string Diagnostics => "Director: " + Status + " | state " + policy.State +
         "\nTarget: " + (policy.TargetName ?? "none") + "; ready dwell " + policy.ReadyDwellSeconds.ToString("F1") + "s; retry in " + policy.RetryAfterSeconds(Time.realtimeSinceStartup).ToString("F0") + "s" +
+        "\nActivity direction: " + policy.ActivityReason + "; " + remote.EventStatus +
         "\nTarget readiness: " + targetDiagnostics + "; retaining shot " + policy.PresentationGraceActive +
         "\nLast travel decision: " + lastTravelReason +
         "\nRegion: " + (policy.CurrentRegionName ?? "initial area") + " / " + (policy.CurrentRegionId ?? "unknown") +
@@ -91,7 +93,7 @@ internal sealed class AutonomousBroadcast
         return movement >= 0 && movement < CameraReachability.ImmediateLimit;
     }
 
-    internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false)
+    internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true)
     {
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
@@ -160,7 +162,7 @@ internal sealed class AutonomousBroadcast
         }
         else stableSince = -1;
 
-        players.Clear();
+        players.Clear(); activity.Clear();
         foreach (TargetRoster.Target target in roster.Targets.Values)
         {
             Player? actor = target.LoadedPlayer;
@@ -189,11 +191,21 @@ internal sealed class AutonomousBroadcast
                 position.HasValue ? Convert(position.Value) : (AutonomyPosition?)null,
                 position.HasValue ? now + (live ? ObserverDiscoveryProtocol.FreshSeconds : Math.Max(0, ObserverDiscoveryProtocol.FreshSeconds - remote.DiscoveryAge)) : now,
                 live && areaReady && reachable, movement, reason));
+            PlayerActivityEvidence? local = null;
+            if (live && localActivities != null)
+                foreach (PlayerActivityEvidence item in localActivities)
+                    if (item.Id == target.Identity.Id && item.Fresh(now)) { local = item; break; }
+            ObserverPlayerEvents? events = !dead ? remote.GetPlayerEvents(target.Identity.Id, target.CharacterId) : null;
+            PlayerActivityEvidence? observed = events == null ? null : PlayerActivitySelection.FromEvents(events, now);
+            // A locally identified scene is useful even if this companion's own
+            // action is unknown. Preserve fresh server activity in that case.
+            PlayerActivityEvidence? merged = PlayerActivitySelection.Merge(local, observed, now);
+            if (merged != null) activity.Add(merged);
         }
         IReadOnlyList<ScenicRegion> destinations = remote.DiscoveryFresh && settings.ScenicTravel.Value ? regions : Array.Empty<ScenicRegion>();
         policy.Tick(now, dt, players, destinations, Convert(Player.m_localPlayer.transform.position),
             presentedId, idleReady, observer.Phase == ObserverPhase.Travelling,
-            wildlifeCutaway && observer.Phase == ObserverPhase.Watching);
+            wildlifeCutaway && observer.Phase == ObserverPhase.Watching, activity, usablePlayerFootage);
         targetDiagnostics = "none";
         foreach (AutonomyPlayer player in players)
             if (player.Id == policy.TargetId)

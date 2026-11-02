@@ -26,7 +26,17 @@ internal sealed class CameraSceneFrame
     internal bool HasInterest;
     internal string InterestKind = "none";
     internal float Spread, Confidence;
+    // Interior retains Valheim's dungeon-layer meaning for readiness. Measured
+    // buildings constrain cinematography without changing that physical contract.
     internal bool Interior;
+    internal ShotEnvironment Environment = ShotEnvironment.Unknown;
+    internal ShotLocomotion Locomotion;
+    internal float EnvironmentConfidence, LocomotionConfidence, CeilingHeight;
+    internal bool DoorwayTransition;
+    internal Vector3 OpeningDirection;
+    // Unique within this context lifetime; retained across a validated handoff
+    // to an already admitted companion, never across world/respawn/travel gaps.
+    internal long SceneId;
     internal CinematicActivity Activity;
     internal string Description = "Awaiting loaded scene context";
 }

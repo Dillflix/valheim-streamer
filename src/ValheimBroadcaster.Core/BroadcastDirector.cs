@@ -27,6 +27,9 @@ namespace ValheimBroadcaster.Core
         private double _dwellElapsed;
         private double _waitingElapsed;
         private readonly PlayerCoverageHistory _coverage = new PlayerCoverageHistory();
+        private readonly PlayerActivitySelection _activity = new PlayerActivitySelection();
+        private readonly PlayerPictureRecovery _pictureRecovery = new PlayerPictureRecovery();
+        private readonly List<string> _activityRoster = new List<string>(128);
         private double _coverageNow;
         private bool _coverageRecorded;
 
@@ -53,6 +56,7 @@ namespace ValheimBroadcaster.Core
         public BroadcastState State { get; private set; } = BroadcastState.Disabled;
         public bool IsEnabled { get; private set; }
         public bool IsHolding { get; private set; }
+        public string ActivityReason => _activity.Reason;
 
         /// <summary>Changes when the selected ID changes, including selection becoming empty.</summary>
         public long SelectionRevision { get; private set; }
@@ -101,13 +105,13 @@ namespace ValheimBroadcaster.Core
         {
             if (IsEnabled == enabled) return;
             IsEnabled = enabled;
-            _coverage.Reset(); _coverageNow = 0; _coverageRecorded = false;
+            _coverage.Reset(); _activity.Reset(); _pictureRecovery.Reset(); _coverageNow = 0; _coverageRecorded = false;
             ResetTiming();
             State = InitialState();
         }
 
         /// <summary>Pauses both automatic dwell cycling and unavailable-target skipping.</summary>
-        public void SetHolding(bool holding) => IsHolding = holding;
+        public void SetHolding(bool holding) { if (holding != IsHolding) { _activity.ResetRetention(); _pictureRecovery.ResetCurrent(); } IsHolding = holding; }
 
         public bool Select(string id)
         {
@@ -125,6 +129,7 @@ namespace ValheimBroadcaster.Core
         {
             if (!IsEnabled) return;
             _coverage.Record(now, dt, visibleIds);
+            foreach (string id in visibleIds) if (_coverage.RecentlyCovered(id, now, 1)) _activity.MarkCovered(id, now);
             _coverageNow = now; _coverageRecorded = true;
         }
 
@@ -133,7 +138,7 @@ namespace ValheimBroadcaster.Core
         /// call; excess time is discarded so a stalled frame cannot skip an entire roster.
         /// Losing readiness resets the dwell period. A lone unavailable target is retained.
         /// </summary>
-        public void Tick(double deltaSeconds, bool currentTargetReady)
+        public void Tick(double deltaSeconds, bool currentTargetReady, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true, IReadOnlyList<string>? locallyReadyIds = null)
         {
             if (double.IsNaN(deltaSeconds) || double.IsInfinity(deltaSeconds) || deltaSeconds < 0)
                 throw new ArgumentOutOfRangeException(nameof(deltaSeconds), "Elapsed time must be finite and nonnegative.");
@@ -142,6 +147,9 @@ namespace ValheimBroadcaster.Core
             // Only extrapolate when the adapter supplied no observation at all.
             if (!_coverageRecorded) _coverageNow = Math.Min(double.MaxValue, _coverageNow + deltaSeconds);
             _coverageRecorded = false;
+            _activityRoster.Clear();
+            foreach (PlayerTarget player in _roster) if (_activityRoster.Count < 128) _activityRoster.Add(player.Id);
+            _activity.Update(_coverageNow, _activityRoster, activity);
             if (_currentId == null)
             {
                 State = BroadcastState.WaitingForPlayers;
@@ -151,6 +159,7 @@ namespace ValheimBroadcaster.Core
             if (!currentTargetReady)
             {
                 State = BroadcastState.WaitingForTarget;
+                _pictureRecovery.Observe(_currentId, _coverageNow, false, false);
                 _dwellElapsed = 0;
                 if (IsHolding) return;
 
@@ -161,7 +170,23 @@ namespace ValheimBroadcaster.Core
 
             State = BroadcastState.Following;
             _waitingElapsed = 0;
+            _pictureRecovery.Observe(_currentId, _coverageNow, true, usablePlayerFootage);
             if (IsHolding) return;
+            if (!usablePlayerFootage)
+            {
+                if (_pictureRecovery.ShouldTryAlternative(_coverageNow) && locallyReadyIds != null)
+                {
+                    foreach (PlayerTarget candidate in _roster)
+                    {
+                        if (candidate.Id == _currentId || _pictureRecovery.OnCooldown(candidate.Id, _coverageNow)) continue;
+                        bool ready = false;
+                        foreach (string id in locallyReadyIds) if (id == candidate.Id) { ready = true; break; }
+                        if (!ready) continue;
+                        _pictureRecovery.LeftUnusable(_currentId, _coverageNow); ChangeSelection(candidate.Id); break;
+                    }
+                }
+                return;
+            }
 
             _dwellElapsed = Math.Min(DwellSeconds, _dwellElapsed + deltaSeconds);
             if (_dwellElapsed >= DwellSeconds && _roster.Count > 1) MoveUncovered();
@@ -171,14 +196,22 @@ namespace ValheimBroadcaster.Core
         {
             int index = -1;
             for (int i = 0; i < _roster.Count; i++) if (_roster[i].Id == _currentId) { index = i; break; }
+            PlayerTarget? chosen = null;
+            double best = double.NegativeInfinity;
+            long scene = _activity.SceneId(_currentId, _coverageNow);
             for (int step = 1; step < _roster.Count; step++)
             {
                 PlayerTarget candidate = _roster[(index + step + _roster.Count) % _roster.Count];
-                if (_coverage.RecentlyCovered(candidate.Id, _coverageNow, DwellSeconds)) continue;
-                ChangeSelection(candidate.Id); return;
+                if (_coverage.RecentlyCovered(candidate.Id, _coverageNow, DwellSeconds) || _pictureRecovery.OnCooldown(candidate.Id, _coverageNow)) continue;
+                // Ordinary mode does not expose readiness for other subjects. Do
+                // not claim they are loaded to gain a scheduling bonus.
+                double rank = _activity.Rank(candidate.Id, _coverageNow, false, scene);
+                if (chosen == null || rank > best + .0001) { chosen = candidate; best = rank; }
             }
-            // The entire group is already on screen. Preserve this selection and
-            // let its shot director introduce variety without a target reset.
+            if (chosen != null && (_currentId == null || !_activity.RetainEncounter(_currentId, _coverageNow, true,
+                _activity.Overdue(chosen.Id, _coverageNow)))) ChangeSelection(chosen.Id);
+            // Sustained readable group coverage can preserve this scene while
+            // the shot director shifts emphasis without restarting selection.
         }
 
         private bool Move(int direction)
@@ -203,6 +236,7 @@ namespace ValheimBroadcaster.Core
                 if (id == null) State = InitialState();
                 return;
             }
+            _activity.ResetRetention(); _pictureRecovery.ResetCurrent();
             _currentId = id;
             SelectionRevision++;
             ResetTiming();

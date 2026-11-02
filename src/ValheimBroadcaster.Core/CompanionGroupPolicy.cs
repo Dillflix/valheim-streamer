@@ -31,6 +31,30 @@ namespace ValheimBroadcaster.Core
         private double lastNow = -1;
         public IReadOnlyList<string> Members => members;
 
+        /// <summary>Shift emphasis within an already observed coherent group.
+        /// The adapter must still establish same world, live actor bindings and
+        /// structural line of sight. New/unrelated primaries use ordinary Reset.</summary>
+        public bool TryReanchor(double now, string nextPrimary, AutonomyPosition nextPosition,
+            AutonomyPosition previousPosition, bool clearConnection)
+        {
+            if (double.IsNaN(now) || double.IsInfinity(now) || now < 0 || string.IsNullOrEmpty(nextPrimary))
+                throw new ArgumentException("Reanchoring requires a finite time and primary identity.");
+            if (primary == null || primary == nextPrimary || lastNow < 0 || now < lastNow || now - lastNow > 1 ||
+                !clearConnection || !entries.TryGetValue(nextPrimary, out Entry? next) || !next.Member ||
+                !next.Observation.SameInterior || !next.Observation.ClearConnection ||
+                nextPosition.HorizontalDistance(previousPosition) > ExitDistance ||
+                Math.Abs(nextPosition.Y - previousPosition.Y) > 3.5 ||
+                nextPosition.HorizontalDistance(next.Observation.Position) > 5) return false;
+            string previous = primary;
+            entries.Remove(nextPrimary);
+            entries[previous] = new Entry(new CompanionObservation(previous, previousPosition, true, true,
+                next.Observation.SharedMotion), now - JoinSeconds) { Member = true };
+            primary = nextPrimary; lastNow = now;
+            members.Remove(nextPrimary);
+            if (!members.Contains(previous)) members.Insert(0, previous);
+            return true;
+        }
+
         private sealed class Entry
         {
             internal CompanionObservation Observation;

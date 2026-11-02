@@ -18,12 +18,14 @@ internal sealed class ObserverActivityService
         internal ZDOID Character;
         internal Vector3 PositionAnchor, ReferenceAnchor;
         internal float SampleAt = -1, HeartbeatAt = -1, Health;
+        internal float MovementAt = -1, ActionAt = -1, HealthLossAt = -1, WorkAt = -1;
         internal int EmoteId;
         internal bool HasAnchor;
     }
     private readonly Dictionary<ZNetPeer, Sample> samples = new Dictionary<ZNetPeer, Sample>();
     private readonly Dictionary<ZNetPeer, float> replies = new Dictionary<ZNetPeer, float>();
-    private long sequence;
+    private readonly Dictionary<ZNetPeer, float> eventReplies = new Dictionary<ZNetPeer, float>();
+    private long sequence, eventSequence;
     private static readonly HashSet<int> ManualMethods = new HashSet<int>(new[]
     {
         // Audited player interaction callers, excluding autonomous effects,
@@ -33,8 +35,8 @@ internal sealed class ObserverActivityService
         "RPC_Tap", "RPC_RequestIncinerate", "ToggleEnabled", "TogglePermitted"
     }.Select(name => name.GetStableHashCode()));
 
-    internal void Reset() { Suspend(); sequence = 0; }
-    internal void Suspend() { samples.Clear(); replies.Clear(); }
+    internal void Reset() { Suspend(); sequence = eventSequence = 0; }
+    internal void Suspend() { samples.Clear(); replies.Clear(); eventReplies.Clear(); }
     private Sample? Get(ZNetPeer peer)
     {
         if (samples.TryGetValue(peer, out Sample? sample)) return sample;
@@ -50,13 +52,22 @@ internal sealed class ObserverActivityService
         sample.HeartbeatAt = now;
         if (!Position(peer.m_refPos)) { sample.Clock.Observe(now, false, false); sample.HasAnchor = false; return; }
         if (sample.HasAnchor && Vector3.Distance(sample.ReferenceAnchor, peer.m_refPos) >= .6f)
-        { sample.Clock.Activity(now); sample.ReferenceAnchor = peer.m_refPos; }
+        {
+            sample.Clock.Activity(now); sample.ReferenceAnchor = peer.m_refPos;
+            if (sample.Character == peer.m_characterID) sample.MovementAt = now;
+        }
     }
     internal bool MayReply(ZNetPeer peer, float now)
     {
         if (replies.TryGetValue(peer, out float next)) { if (now < next) return false; }
         else if (replies.Count >= ObserverActivityProtocol.MaxPlayers) return false;
         replies[peer] = now + 1; return true;
+    }
+    internal bool MayReplyEvents(ZNetPeer peer, float now)
+    {
+        if (eventReplies.TryGetValue(peer, out float next)) { if (now < next) return false; }
+        else if (eventReplies.Count >= ObserverEventProtocol.MaxPlayers) return false;
+        eventReplies[peer] = now + 1; return true;
     }
     internal void RoutedAction(ZNetPeer peer, ZPackage package, float now)
     {
@@ -72,7 +83,17 @@ internal sealed class ObserverActivityService
             // No argument decode or allocation is necessary: observing a bounded
             // request is enough to conservatively cancel idle, never grant it.
             bool trigger = target == peer.m_characterID && method == "SetTrigger".GetStableHashCode();
-            if (trigger || ManualMethods.Contains(method)) Get(peer)?.Clock.Activity(now);
+            if (trigger || ManualMethods.Contains(method))
+            {
+                Sample? sample = Get(peer);
+                if (sample != null)
+                {
+                    sample.Clock.Activity(now);
+                    // Trigger identity is deliberately not decoded into an attack:
+                    // jump/emote and manual interactions are action evidence too.
+                    if (sample.Character == peer.m_characterID) sample.ActionAt = now;
+                }
+            }
         }
         catch { /* Observation must never change native ordinary-peer handling. */ }
         finally { package.SetPos(position); }
@@ -82,6 +103,7 @@ internal sealed class ObserverActivityService
         var live = new HashSet<ZNetPeer>(peers);
         foreach (ZNetPeer gone in samples.Keys.Where(peer => !live.Contains(peer)).ToArray()) samples.Remove(gone);
         foreach (ZNetPeer gone in replies.Keys.Where(peer => !live.Contains(peer)).ToArray()) replies.Remove(gone);
+        foreach (ZNetPeer gone in eventReplies.Keys.Where(peer => !live.Contains(peer)).ToArray()) eventReplies.Remove(gone);
         if (!enabled) { samples.Clear(); return; }
         foreach (ZNetPeer peer in peers.Where(peer => peer.IsReady() && !observer(peer)).Take(ObserverActivityProtocol.MaxPlayers))
         {
@@ -101,7 +123,15 @@ internal sealed class ObserverActivityService
                 Vector3.Distance(peer.m_refPos, sample.ReferenceAnchor) >= .6f);
             bool activity = changed || moved || velocity.sqrMagnitude >= .04f || busy ||
                 !changed && (health < sample.Health - .1f || emote != sample.EmoteId);
-            if (changed) sample.Clock.Reset();
+            if (changed)
+            {
+                sample.Clock.Reset();
+                sample.MovementAt = sample.ActionAt = sample.HealthLossAt = sample.WorkAt = -1;
+            }
+            if (moved || velocity.sqrMagnitude >= .04f) sample.MovementAt = now;
+            if (!changed && health < sample.Health - .1f) sample.HealthLossAt = now;
+            if (!changed && emote != sample.EmoteId || busy) sample.ActionAt = now;
+            if (zdo.GetInt(AnimationKey("crafting"), 0) != 0) sample.WorkAt = now;
             // Compare to a retained quiet anchor, not the previous sample: small
             // steps accumulate while stationary replication jitter stays bounded.
             if (changed || moved || activity)
@@ -111,7 +141,10 @@ internal sealed class ObserverActivityService
         }
     }
     private static void Unknown(Sample sample, float now)
-    { sample.Clock.Observe(now, false, false); sample.HasAnchor = false; sample.SampleAt = now; }
+    {
+        sample.Clock.Observe(now, false, false); sample.HasAnchor = false; sample.SampleAt = now;
+        sample.MovementAt = sample.ActionAt = sample.HealthLossAt = sample.WorkAt = -1;
+    }
 
     private static int AnimationKey(string name) => unchecked(438569 + ZSyncAnimation.GetHash(name));
     private static bool TryBusy(ZDO zdo, out bool busy)
@@ -163,6 +196,29 @@ internal sealed class ObserverActivityService
         }
         return new ObserverActivitySnapshot(++sequence, worldId, true, complete, players);
     }
+    internal ObserverEventSnapshot BuildEvents(IReadOnlyList<ZNetPeer> peers, Func<ZNetPeer, bool> observer,
+        long worldId, float now, bool enabled, bool sharePrivate)
+    {
+        var players = new List<ObserverPlayerEvents>();
+        if (!enabled) return new ObserverEventSnapshot(++eventSequence, worldId, false, players);
+        var seenCharacters = new HashSet<ZDOID>();
+        foreach (ZNetPeer peer in peers.Where(peer => peer.IsReady() && !observer(peer)).OrderBy(peer => peer.m_uid).Take(ObserverEventProtocol.MaxPlayers))
+        {
+            if (!sharePrivate && !peer.m_publicRefPos) continue;
+            samples.TryGetValue(peer, out Sample? sample);
+            bool identity = !peer.m_characterID.IsNone() && seenCharacters.Add(peer.m_characterID);
+            bool known = identity && sample != null && sample.Character == peer.m_characterID && sample.Clock.Known &&
+                sample.SampleAt >= 0 && now >= sample.SampleAt && now - sample.SampleAt < ObserverEventProtocol.FreshSeconds &&
+                sample.HeartbeatAt >= 0 && now >= sample.HeartbeatAt && now - sample.HeartbeatAt < ObserverEventProtocol.FreshSeconds;
+            players.Add(new ObserverPlayerEvents(peer.m_uid.ToString(CultureInfo.InvariantCulture),
+                identity ? peer.m_characterID.ToString() : "", known, Age(now, sample?.SampleAt ?? -1), Age(now, sample?.HeartbeatAt ?? -1),
+                known ? EventAge(now, sample!.MovementAt) : null, known ? EventAge(now, sample!.ActionAt) : null,
+                known ? EventAge(now, sample!.HealthLossAt) : null, known ? EventAge(now, sample!.WorkAt) : null));
+        }
+        return new ObserverEventSnapshot(++eventSequence, worldId, true, players);
+    }
+    private static float? EventAge(float now, float then) => then >= 0 && now >= then && now - then <= ObserverEventProtocol.EventHistorySeconds
+        ? now - then : (float?)null;
     private static float Age(float now, float then) => then < 0 ? 3600 : Mathf.Clamp(now - then, 0, 3600);
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     private static bool Vector(Vector3 value, float bound) => Finite(value.x) && Finite(value.y) && Finite(value.z) &&

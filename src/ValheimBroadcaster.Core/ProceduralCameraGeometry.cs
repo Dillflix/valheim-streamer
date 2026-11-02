@@ -7,6 +7,8 @@ namespace ValheimBroadcaster.Core
     public static class ProceduralCameraGeometry
     {
         public const int CandidateCount = 10;
+        public const int RecoveryCandidateCount = 8;
+        public const int TotalCandidateCount = CandidateCount + RecoveryCandidateCount;
         private static readonly double[] Angles = { 0, -35, 35, -75, 75, 180, 0, -55, 55, 180 };
         private static readonly double[] Distances = { 1, 1, 1, 1, 1, 1, .5, .5, .5, .45 };
         private static readonly double[] Heights = { 1, 1, 1, .65, .65, .8, .25, .25, .25, .2 };
@@ -20,6 +22,21 @@ namespace ValheimBroadcaster.Core
             double radius = Math.Max(1.5, (interior ? Math.Min(horizontal, 6) : horizontal) * Distances[index]);
             double lift = Math.Max(.5, (interior ? Math.Min(height, 1.8) : height) * Heights[index]);
             return new AutonomyPosition((float)(Math.Sin(radians) * radius), (float)lift, (float)(Math.Cos(radians) * radius));
+        }
+
+        /// <summary>Compact alternatives are independent of an unusually wide
+        /// configured shot. They are searched only after persistent poor footage,
+        /// and never participate in scene-loading or teleport authorization.</summary>
+        public static AutonomyPosition RecoveryOffset(int index, double azimuth, double scale = 1)
+        {
+            if (index < 0 || index >= RecoveryCandidateCount || !Finite(azimuth) ||
+                !Finite(scale) || scale <= 0 || scale > 4) throw new ArgumentOutOfRangeException(nameof(index));
+            double angle = (azimuth + index * 45) * Math.PI / 180;
+            double radius = (index % 2 == 0 ? 3.2 : 4.8) * scale;
+            // Eye-level and below-canopy alternatives, not eight higher aerial shots.
+            double height = (index % 3 == 0 ? -.2 : index % 3 == 1 ? .45 : 1.2) * scale;
+            return new AutonomyPosition((float)(Math.Sin(angle) * radius), (float)height,
+                (float)(Math.Cos(angle) * radius));
         }
 
         // targetOffset is the target player's position minus the current carrier.

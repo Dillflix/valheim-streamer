@@ -79,6 +79,9 @@ namespace ValheimBroadcaster.Core
         private readonly Dictionary<string, double> visited = new Dictionary<string, double>(StringComparer.Ordinal);
         private readonly Dictionary<string, Failure> failures = new Dictionary<string, Failure>(StringComparer.Ordinal);
         private readonly PlayerCoverageHistory coverage = new PlayerCoverageHistory();
+        private readonly PlayerActivitySelection activitySelection = new PlayerActivitySelection();
+        private readonly PlayerPictureRecovery pictureRecovery = new PlayerPictureRecovery();
+        private readonly List<string> activityRoster = new List<string>(128);
         private string? targetId, lastPlayer, requestedSelection;
         private int requestedStep;
         private bool paused, started, idleActive;
@@ -125,6 +128,7 @@ namespace ValheimBroadcaster.Core
         public double ReadyDwellSeconds => dwell;
         public bool PresentationGraceActive { get; private set; }
         public bool WildlifeCutawayActive { get; private set; }
+        public string ActivityReason => activitySelection.Reason;
         public bool CanStartWildlifeCutaway => Enabled && !paused && !Held && State == AutonomyState.Following &&
             hasPresentedTarget && targetId != null && PendingTravel == null && ActiveTravel == null && route == null &&
             requestedSelection == null && requestedStep == 0;
@@ -145,7 +149,7 @@ namespace ValheimBroadcaster.Core
         {
             if (Enabled == enabled) return;
             Enabled = enabled;
-            coverage.Reset();
+            coverage.Reset(); activitySelection.Reset(); pictureRecovery.Reset();
             WildlifeCutawayActive = false;
             paused = false; PendingTravel = ActiveTravel = null; route = null;
             SetTarget(null, 0); started = false; idleActive = false; idleDwell = 0; idleUnreadyBegan = -1;
@@ -163,7 +167,7 @@ namespace ValheimBroadcaster.Core
             if (value) { PendingTravel = ActiveTravel = null; State = AutonomyState.Paused; Reason = "Automatic direction paused"; }
             else { acquisitionBegan = lastNow; idleUnreadyBegan = -1; }
         }
-        public void SetHolding(bool value) => Held = value;
+        public void SetHolding(bool value) { if (Held != value) { activitySelection.ResetRetention(); pictureRecovery.ResetCurrent(); } Held = value; }
         public void Next(int direction = 1)
         {
             if (direction != 1 && direction != -1) throw new ArgumentOutOfRangeException(nameof(direction));
@@ -174,12 +178,17 @@ namespace ValheimBroadcaster.Core
         /// <summary>Report readable, rendered player IDs; discovery/group membership is insufficient.</summary>
         public void RecordCoverage(double now, double dt, IReadOnlyList<string> visibleIds)
         {
-            if (Enabled && !paused) coverage.Record(now, dt, visibleIds);
+            if (Enabled && !paused)
+            {
+                coverage.Record(now, dt, visibleIds);
+                foreach (string id in visibleIds)
+                    if (coverage.RecentlyCovered(id, now, 1)) activitySelection.MarkCovered(id, now);
+            }
         }
 
         public void Tick(double now, double dt, IReadOnlyList<AutonomyPlayer> players, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false,
-            bool wildlifeCutaway = false)
+            bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (players == null) throw new ArgumentNullException(nameof(players));
@@ -196,6 +205,9 @@ namespace ValheimBroadcaster.Core
             if (!Enabled) { State = AutonomyState.Disabled; return; }
             if (!started) { started = true; acquisitionBegan = now; }
             if (paused) { State = AutonomyState.Paused; Reason = "Automatic direction paused"; return; }
+            activityRoster.Clear();
+            foreach (AutonomyPlayer player in players) activityRoster.Add(player.Id);
+            activitySelection.Update(now, activityRoster, activity);
             // An intentional editorial cutaway is not a missing player shot. It
             // never substitutes for transport/route state or an operator command.
             if (WildlifeCutawayActive && (!wildlifeCutaway || Held || requestedSelection != null || requestedStep != 0 ||
@@ -272,18 +284,38 @@ namespace ValheimBroadcaster.Core
                         State = AutonomyState.Following; Reason = "Following " + selected.Name;
                         acquisitionBegan = now; acquisitionTrips = 0; lastPlayerDestination = null;
                         failures.Remove("p:" + selected.Id);
-                        if (!Held) dwell = Math.Min(DwellSeconds, dwell + footage);
-                        if (dwell >= DwellSeconds && !Held)
+                        pictureRecovery.Observe(selected.Id, now, hasPresentedTarget, usablePlayerFootage);
+                        if (!Held && !usablePlayerFootage && pictureRecovery.ShouldTryAlternative(now))
+                        {
+                            AutonomyPlayer? alternative = ChoosePlayer(players, now, selected.Id, 1, true, true);
+                            if (alternative != null && alternative.Id != selected.Id)
+                            {
+                                pictureRecovery.LeftUnusable(selected.Id, now);
+                                SetTarget(alternative, now);
+                                Reason = "Trying another loaded player after sustained unreadable footage: " + alternative.Name;
+                                return;
+                            }
+                            Reason = "Seeking a clearer player view; no other local ready subject outside picture cooldown";
+                        }
+                        if (!Held && usablePlayerFootage) dwell = Math.Min(DwellSeconds, dwell + footage);
+                        if (dwell >= DwellSeconds && !Held && usablePlayerFootage)
                         {
                             AutonomyPlayer? next = ChoosePlayer(players, now, selected.Id, 1, true);
-                            if (next != null && next.Id != selected.Id) SetTarget(next, now);
+                            if (next != null && next.Id != selected.Id)
+                            {
+                                if (activitySelection.RetainEncounter(selected.Id, now, usablePlayerFootage, activitySelection.Overdue(next.Id, now)))
+                                    Reason = activitySelection.Reason + ": " + selected.Name;
+                                else SetTarget(next, now);
+                            }
                         }
                         return;
                     }
+                    pictureRecovery.Observe(selected.Id, now, false, false);
                     State = AutonomyState.Acquiring; Reason = "Waiting for a valid camera shot of " + selected.Name;
                 }
                 else
                 {
+                    pictureRecovery.Observe(selected.Id, now, false, false);
                     State = AutonomyState.Acquiring;
                     bool needsTravel = selected.HasFreshPosition(now) && selected.NeedsTravel(currentPosition, MinimumPlayerTravelDistance);
                     if (!needsTravel) outOfReachSince = -1;
@@ -445,7 +477,7 @@ namespace ValheimBroadcaster.Core
         public void Reset()
         {
             SetEnabled(false); PendingTravel = ActiveTravel = null; visited.Clear(); failures.Clear();
-            coverage.Reset();
+            coverage.Reset(); activitySelection.Reset(); pictureRecovery.Reset();
             targetId = lastPlayer = requestedSelection = null; requestedStep = 0;
             Held = paused = started = idleActive = false; idleUnreadyBegan = -1; idleDwell = dwell = 0;
             acquisitionTrips = 0; lastPlayerDestination = null; lastTravelAt = double.NegativeInfinity;
@@ -461,6 +493,7 @@ namespace ValheimBroadcaster.Core
         {
             string? id = player?.Id;
             if (string.Equals(targetId, id, StringComparison.Ordinal)) return;
+            activitySelection.ResetRetention(); pictureRecovery.ResetCurrent();
             targetId = id; TargetName = player?.Name; acquisitionBegan = now; dwell = 0; acquisitionTrips = 0; lastPlayerDestination = null;
             hasPresentedTarget = PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
             WildlifeCutawayActive = false;
@@ -479,18 +512,31 @@ namespace ValheimBroadcaster.Core
             foreach (AutonomyPlayer player in players) if (player.Id == id) return player;
             return null;
         }
-        private AutonomyPlayer? ChoosePlayer(IReadOnlyList<AutonomyPlayer> players, double now, string? after, int direction, bool respectCoverage = false)
+        private AutonomyPlayer? ChoosePlayer(IReadOnlyList<AutonomyPlayer> players, double now, string? after, int direction, bool respectCoverage = false, bool localPictureRecovery = false)
         {
             AutonomyPlayer? first = null, next = null;
             foreach (AutonomyPlayer player in players)
             {
                 if ((!player.SceneReady && !player.HasFreshPosition(now)) || Blocked("p:" + player.Id, now)) continue;
-                if (respectCoverage && (player.Id == after || coverage.RecentlyCovered(player.Id, now, DwellSeconds))) continue;
+                if (localPictureRecovery && !player.SceneReady || respectCoverage && pictureRecovery.OnCooldown(player.Id, now)) continue;
+                if (respectCoverage && (player.Id == after || !localPictureRecovery && coverage.RecentlyCovered(player.Id, now, DwellSeconds))) continue;
                 if (first == null || StringComparer.Ordinal.Compare(player.Id, first.Id) * direction < 0) first = player;
                 if (after == null || StringComparer.Ordinal.Compare(player.Id, after) * direction > 0)
                     if (next == null || StringComparer.Ordinal.Compare(player.Id, next.Id) * direction < 0) next = player;
             }
-            return next ?? first;
+            AutonomyPlayer? fallback = next ?? first;
+            if (!respectCoverage || fallback == null) return fallback;
+            long scene = activitySelection.SceneId(after, now);
+            double rank = activitySelection.Rank(fallback.Id, now, fallback.SceneReady, scene);
+            foreach (AutonomyPlayer player in players)
+            {
+                if (player.Id == after || (!player.SceneReady && !player.HasFreshPosition(now)) || Blocked("p:" + player.Id, now) ||
+                    !localPictureRecovery && coverage.RecentlyCovered(player.Id, now, DwellSeconds)) continue;
+                if (localPictureRecovery && !player.SceneReady || respectCoverage && pictureRecovery.OnCooldown(player.Id, now)) continue;
+                double candidate = activitySelection.Rank(player.Id, now, player.SceneReady, scene);
+                if (candidate > rank + .0001) { fallback = player; rank = candidate; }
+            }
+            return fallback;
         }
         private void ObservePresentation(AutonomyPlayer? player, double now, string? presentedId)
         {

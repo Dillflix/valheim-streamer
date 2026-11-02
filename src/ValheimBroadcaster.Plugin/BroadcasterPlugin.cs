@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.17";
+    public const string PluginVersion = "0.8.18";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -34,7 +34,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private int presentedFrame = -100;
     private CoverageMode presentedMode;
     private long presentedRevision = -1, presentedScenicPlan = -1;
-    private bool presentedIdleUsable;
+    private bool presentedIdleUsable, presentedPlayerUsable;
     private float nextStatusLog;
     private bool terminalReported;
     private bool listenerPatchAvailable;
@@ -61,6 +61,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
     private readonly List<string> visibleCoverageIds = new List<string>(6);
+    private readonly List<PlayerActivityEvidence> localActivities = new List<PlayerActivityEvidence>(4);
+    private readonly List<string> locallyReadyPlayers = new List<string>(16);
     private int coverageFrame = -1;
     private readonly FrameHold frameHold = new FrameHold();
     private readonly PlayerShotReadiness playerShots = new PlayerShotReadiness();
@@ -216,7 +218,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature) &&
                 (coverage.Mode != CoverageMode.Scenic || presentedScenicPlan == idle.PlanId);
             bool usableIdlePicture = currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable;
+            bool usablePlayerPicture = recentPicture && frameHold.HasRecentLiveFrame && presentedPlayerUsable &&
+                presentedMode == CoverageMode.Player && presentedPlayerId == CurrentTarget()?.Identity.Id;
             RecordVisibleCoverage(recentPicture);
+            ObserveLocalActivity(recentPicture);
             bool cutawayAllowed = wildlife.Update(roster, remote,
                 !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding ||
                 !observer.RemoteSession || observer.Phase != ObserverPhase.Watching || automatic?.ControlsSelection != true ||
@@ -225,7 +230,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             // acquire a different player on this same threshold-crossing frame.
             TargetRoster.Target? priorTarget = CurrentTarget();
             if (cutawayAllowed && !coverage.IsWildlifeCutaway && automatic?.CanStartWildlifeCutaway == true &&
-                recentPicture && frameHold.HasRecentLiveFrame && presentedMode == CoverageMode.Player &&
+                usablePlayerPicture &&
                 priorTarget != null && presentedPlayerId == priorTarget.Identity.Id && CanShow(priorTarget))
             {
                 if (Time.unscaledTime >= nextCreatureRefresh || creatureSearchPlayerId != priorTarget.Identity.Id)
@@ -238,7 +243,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     false, false, true);
             }
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
-                usableIdlePicture && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed);
+                usableIdlePicture && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
+                localActivities, usablePlayerPicture);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
             if (automatic?.ControlsSelection == true && automatic.TargetId != null) director.Select(automatic.TargetId);
@@ -258,7 +264,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             TargetRoster.Target? current = CurrentTarget();
             // A lost/dead subject must not block another ready player until its dwell expires.
             if (current != null && !IsReady(current)) { RefreshRoster(); current = CurrentTarget(); }
-            if (automatic?.ControlsSelection != true && !coverage.IsWildlifeCutaway) director.Tick(Time.unscaledDeltaTime, IsReady(current));
+            if (automatic?.ControlsSelection != true && !coverage.IsWildlifeCutaway)
+            {
+                locallyReadyPlayers.Clear();
+                foreach (TargetRoster.Target target in roster.Targets.Values)
+                    if (CanShow(target)) locallyReadyPlayers.Add(target.Identity.Id);
+                director.Tick(Time.unscaledDeltaTime, IsReady(current), localActivities, usablePlayerPicture, locallyReadyPlayers);
+            }
             current = CurrentTarget();
             bool readyPlayer = CanShow(current);
             bool preserveShot = coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
@@ -349,7 +361,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         wildlife.Reset();
         playerShots.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
-        coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null;
+        coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false;
+        localActivities.Clear();
         nextCreatureRefresh = nextScenicSearch = 0;
         creatureSearchPlayerId = null;
     }
@@ -373,6 +386,33 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         double now = Time.realtimeSinceStartup;
         director.RecordCoverage(now, Time.unscaledDeltaTime, visibleCoverageIds);
         automatic?.RecordCoverage(now, Time.unscaledDeltaTime, visibleCoverageIds);
+    }
+
+    private void ObserveLocalActivity(bool recentPicture)
+    {
+        localActivities.Clear();
+        CameraSceneFrame? scene = rig.CurrentPlayerScene;
+        TargetRoster.Target? selected = CurrentTarget();
+        if (!recentPicture || scene == null || selected == null || rig.CurrentPlayerId != selected.Identity.Id ||
+            presentedMode != CoverageMode.Player || presentedPlayerId != selected.Identity.Id) return;
+        float age = Time.unscaledTime - rig.PlayerSceneObservedAt;
+        if (age < 0 || age > .75f) return;
+        double freshUntil = Time.realtimeSinceStartup + .75f - age;
+        foreach (CameraSceneSubject subject in scene.Subjects)
+        {
+            if (!subject.Player || subject.Player.IsDead()) continue;
+            TargetRoster.Target? target = null;
+            foreach (TargetRoster.Target candidate in roster.Targets.Values)
+                if (candidate.LoadedPlayer == subject.Player) { target = candidate; break; }
+            if (target == null) continue;
+            // Companions share scene identity without inventing their actions.
+            PlayerActivityKind kind = !subject.IsPrimary ? PlayerActivityKind.Unknown :
+                scene.Activity == CinematicActivity.Combat ? PlayerActivityKind.Combat :
+                scene.Activity == CinematicActivity.Work ? PlayerActivityKind.Work :
+                scene.Activity == CinematicActivity.Travel ? PlayerActivityKind.Travel : PlayerActivityKind.Idle;
+            localActivities.Add(new PlayerActivityEvidence(target.Identity.Id, kind,
+                subject.IsPrimary ? Mathf.Clamp01(scene.Confidence) : 1f, freshUntil, scene.SceneId));
+        }
     }
     private void MoveTarget(int direction)
     {
@@ -626,6 +666,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     "awaiting " + plugin.coverage.Mode.ToString().ToLowerInvariant() + " coverage");
             if (plugin.cameraReady && playerTarget != null) plugin.playerShots.Presented(playerTarget, continuousPlayer);
             plugin.presentedPlayerId = plugin.cameraReady && plugin.coverage.Mode == CoverageMode.Player ? plugin.coverage.SubjectId : null;
+            plugin.presentedPlayerUsable = plugin.presentedPlayerId != null && plugin.rig.LastPictureUsable;
             plugin.presentedMode = plugin.coverage.Mode;
             plugin.presentedRevision = plugin.coverage.Revision;
             plugin.presentedScenicPlan = scenicPlan?.Id ?? -1;
@@ -908,7 +949,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {

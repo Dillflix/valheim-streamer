@@ -18,6 +18,8 @@ internal sealed class PlayerSceneContext
     }
 
     private readonly CompanionGroupPolicy grouping = new CompanionGroupPolicy();
+    private readonly LocalRoomSurvey rooms = new LocalRoomSurvey();
+    private readonly LocomotionObservationPolicy locomotion = new LocomotionObservationPolicy();
     private readonly Dictionary<string, Observation> observations = new Dictionary<string, Observation>(StringComparer.Ordinal);
     private readonly List<CompanionObservation> companions = new List<CompanionObservation>(64);
     private readonly List<string> stale = new List<string>();
@@ -36,7 +38,14 @@ internal sealed class PlayerSceneContext
     private Vector3 interestPoint;
     private float interestSince, interestSeenAt = -1, interestStrength;
     private bool facingInitialized;
+    private long nextSceneId;
+    private static readonly int SwimmingKey = unchecked(438569 + ZSyncAnimation.GetHash("inWater"));
+    private static readonly int CraftingKey = unchecked(438569 + ZSyncAnimation.GetHash("crafting"));
     internal Func<string, string, ObserverPlayerContext?>? RemoteContext { get; set; }
+    internal CameraSceneFrame Current => frame;
+    internal string PrimaryId => primaryId;
+    internal bool Fresh => Valid(primaryActor) && world == ZNet.instance && frameAt >= 0 &&
+        Time.unscaledTime >= frameAt && Time.unscaledTime - frameAt <= 1;
 
     internal CameraSceneFrame Update(TargetRoster.Target primary, bool groupsEnabled = true)
     {
@@ -47,23 +56,29 @@ internal sealed class PlayerSceneContext
             Mathf.Abs(player.transform.position.z) > 20000)
         { Reset(); return frame; }
         string characterId = player.GetZDOID().ToString();
-        if (primaryActor != player || primaryId != primary.Identity.Id || primaryCharacter != characterId ||
-            world != ZNet.instance || now < frameAt || frameAt >= 0 && (now - frameAt > 1 ||
+        bool changedPrimary = primaryActor != player || primaryId != primary.Identity.Id || primaryCharacter != characterId;
+        bool continuousWorld = world == ZNet.instance && frameAt >= 0 && now >= frameAt && now - frameAt <= 1;
+        bool handoff = changedPrimary && continuousWorld && groupsEnabled && TryGroupHandoff(player, characterId, now);
+        if (!handoff && (changedPrimary || !continuousWorld ||
             Vector3.Distance(player.transform.position + Vector3.up * 1.5f, frame.PrimaryFocus) > 16f))
         {
-            Reset(); primaryActor = player; primaryId = primary.Identity.Id; primaryCharacter = characterId; world = ZNet.instance;
+            Reset(); frame.SceneId = ++nextSceneId;
         }
+        if (changedPrimary || primaryActor == null)
+        { primaryActor = player; primaryId = primary.Identity.Id; primaryCharacter = characterId; world = ZNet.instance; surveyAt = -1; sampledFrame = -1; }
         if (sampledFrame == Time.frameCount) return frame;
         sampledFrame = Time.frameCount;
         float dt = frameAt < 0 ? 0 : Mathf.Clamp(now - frameAt, 0, .1f); frameAt = now;
         frame.PrimaryFocus = player.transform.position + Vector3.up * 1.5f;
         frame.Interior = Character.InInterior(player.transform.position);
+        rooms.Update(player, frame.Velocity, now, frame);
         if (surveyAt < 0 || now - surveyAt >= .25f)
         {
             surveyAt = now;
             Survey(primary, now, groupsEnabled);
         }
         // Membership changes slowly; actual actor positions remain current.
+        Vector3 previousFocus = frame.Focus;
         frame.Focus = frame.PrimaryFocus; frame.Velocity = Vector3.zero; frame.GroupVelocity = Vector3.zero;
         frame.Spread = 0;
         float totalWeight = 0;
@@ -76,7 +91,7 @@ internal sealed class PlayerSceneContext
             subject.Focus = Focus(subject.Actor);
             if (observations.TryGetValue(subject.CharacterId, out Observation? observed)) subject.Velocity = observed.Velocity;
             float desiredWeight = subject.IsPrimary ? 2f : subject.IsOpponent ? 1.1f : 1f;
-            subject.Weight = subject.IsPrimary ? 2f : Mathf.MoveTowards(subject.Weight, desiredWeight, dt * .8f);
+            subject.Weight = Mathf.MoveTowards(subject.Weight, desiredWeight, dt * .8f);
             sum += subject.Focus * subject.Weight; velocity += subject.Velocity * subject.Weight; totalWeight += subject.Weight;
             frame.Spread = Mathf.Max(frame.Spread, Vector3.Distance(frame.PrimaryFocus, subject.Focus));
             if (subject.IsPrimary) frame.Velocity = subject.Velocity;
@@ -87,8 +102,34 @@ internal sealed class PlayerSceneContext
             frame.Focus = frame.PrimaryFocus + Vector3.ClampMagnitude(sum / totalWeight - frame.PrimaryFocus, frame.Interior ? 2.5f : 6f);
             frame.GroupVelocity = velocity / totalWeight;
         }
+        if (dt > 0 && TargetRoster.Finite(previousFocus) && Vector3.Distance(previousFocus, frame.Focus) <= 12f)
+            frame.Focus = frame.PrimaryFocus + Vector3.ClampMagnitude(Vector3.Lerp(previousFocus, frame.Focus,
+                1f - Mathf.Exp(-3f * dt)) - frame.PrimaryFocus, frame.Interior ? 2.5f : 6f);
         UpdateCompositionEvidence(player, now, dt);
         return frame;
+    }
+
+    private bool TryGroupHandoff(Player player, string character, float now)
+    {
+        if (!Valid(primaryActor) || Character.InInterior(player.transform.position) != frame.Interior ||
+            frame.SceneId <= 0 || !Valid(player)) return false;
+        bool member = false;
+        foreach (CameraSceneSubject subject in frame.Subjects)
+            if (subject.Actor == player && !subject.IsPrimary && !subject.IsOpponent && subject.CharacterId == character)
+            { member = true; break; }
+        if (!member) return false;
+        mask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        Vector3 before = primaryActor!.transform.position, next = player.transform.position;
+        bool preserved = grouping.TryReanchor(now, character, new AutonomyPosition(next.x, next.y, next.z),
+            new AutonomyPosition(before.x, before.y, before.z), Connected(Focus(primaryActor), Focus(player)));
+        if (preserved)
+        {
+            // Preserve the encounter, observers and member weights. Direction and
+            // room measurements still rebind to the new primary without carrying
+            // stale body-specific locomotion evidence.
+            locomotion.Reset(); rooms.Reset(); surveyAt = -1; sampledFrame = -1;
+        }
+        return preserved;
     }
 
     private void Survey(TargetRoster.Target primary, float now, bool groupsEnabled)
@@ -96,6 +137,11 @@ internal sealed class PlayerSceneContext
         Player player = primary.LoadedPlayer!;
         mask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Observation primaryObservation = Observe(player, now);
+        ZDO? primaryZdo = player.GetComponent<ZNetView>()?.GetZDO();
+        Vector3 planarVelocity = primaryObservation.Velocity; planarVelocity.y = 0;
+        bool swimming = primaryZdo != null && primaryZdo.IsValid() && primaryZdo.GetInt(SwimmingKey, 0) != 0;
+        locomotion.Observe(now, planarVelocity.magnitude, primaryObservation.Velocity.y, swimming, rooms.SupportingShip);
+        frame.Locomotion = locomotion.Locomotion; frame.LocomotionConfidence = locomotion.Confidence;
         ObserverPlayerContext? remote = RemoteContext?.Invoke(primary.Identity.Id, primaryCharacter);
         if (remote != null && remote.RecentHealthLoss(0)) primaryObservation.DamageUntil = now + .5f;
         companions.Clear();
@@ -149,8 +195,12 @@ internal sealed class PlayerSceneContext
             foreach (CameraSceneSubject subject in frame.Subjects) if (target && target == subject.Actor) targetsGroup = true;
             float nearest = float.MaxValue;
             foreach (CameraSceneSubject subject in frame.Subjects) nearest = Mathf.Min(nearest, Vector3.Distance(subject.Focus, Focus(actor)));
-            bool nearbyAction = nearest <= 12f && (observed.AttackUntil > now || attack || damaged && observed.DamageUntil > now);
-            if (targetsGroup || nearbyAction) observed.OpponentUntil = now + 3f;
+            // An axe swing beside a passive hostile is not combat. Require a
+            // hostile's own action or damage corroborating the group's attack;
+            // health loss of unknown origin alone cannot establish the encounter.
+            bool encounter = ObservedEncounterEvidence.SupportsCombat(targetsGroup, observed.AttackUntil > now,
+                attack, observed.DamageUntil > now, nearest);
+            if (encounter) observed.OpponentUntil = now + 3f;
             if (observed.OpponentUntil > now && nearest <= 20f) opponents.Add(observed);
         }
         opponents.Sort((a, b) =>
@@ -180,6 +230,9 @@ internal sealed class PlayerSceneContext
                 .8f, interestOpponent.Actor, null, now);
         else if (resource)
             ConsiderInterest(resourceId, "resource", resourceFocus, .65f, null, resource, now);
+        else if (rooms.SupportingShip && rooms.SupportingCollider)
+            ConsiderInterest("vessel:" + rooms.SupportingShip.GetInstanceID(), "vessel",
+                rooms.SupportingShip.transform.position + Vector3.up * 1.5f, .85f, null, rooms.SupportingCollider, now);
         else pendingInterestId = "";
 
         CinematicActivity desired;
@@ -187,14 +240,16 @@ internal sealed class PlayerSceneContext
         float confidence;
         if (opponents.Count > 0) { desired = CinematicActivity.Combat; evidence = "hostile action observed nearby"; confidence = .8f; }
         else if (work) { desired = CinematicActivity.Work; evidence = workEvidence; confidence = .65f; }
-        else if (primaryObservation.Velocity.magnitude > 1.2f) { desired = CinematicActivity.Travel; evidence = "sustained observed movement"; confidence = .95f; }
+        else if (primaryObservation.Velocity.magnitude > 1.2f || frame.Locomotion == ShotLocomotion.Vertical)
+        { desired = CinematicActivity.Travel; evidence = frame.Locomotion == ShotLocomotion.Boat ? "movement on a supported vessel" :
+            frame.Locomotion == ShotLocomotion.Swim ? "replicated swimming animation and movement" : "sustained observed movement"; confidence = .9f; }
         else { desired = CinematicActivity.Idle; evidence = damaged ? "recent health loss; cause unknown" : attack ? "action observed; activity unknown" : "stationary or slow movement"; confidence = attack || damaged ? .35f : .85f; }
         if (desired != pendingActivity) { pendingActivity = desired; activitySince = now; }
         if (desired == frame.Activity || now - activitySince >= (desired == CinematicActivity.Combat ? .5f : 1.5f)) frame.Activity = desired;
-        frame.Confidence = confidence;
+        frame.Confidence = desired == frame.Activity ? confidence : Mathf.Min(.4f, confidence);
         int players = 0;
         foreach (CameraSceneSubject subject in frame.Subjects) if (subject.Player) players++;
-        string place = player.GetBaseValue() >= 3 ? "; base-area hint" : frame.Interior ? "; interior" : "";
+        string place = $"; {frame.Environment} {frame.EnvironmentConfidence:F2}; {frame.Locomotion}; scene {frame.SceneId}";
         frame.Description = $"{frame.Activity}; {players} player(s), {Math.Min(2, opponents.Count)} opponent(s); {evidence}{place}" +
             (frame.HasInterest ? $"; {frame.InterestKind} interest {frame.InterestConfidence:F2}" : "");
         stale.Clear();
@@ -215,7 +270,7 @@ internal sealed class PlayerSceneContext
         float dt = now - item.LastAt;
         if (dt > .001f && dt <= 1f && Vector3.Distance(item.Position, position) <= 16f)
         {
-            Vector3 measured = (position - item.Position) / dt; measured.y = 0;
+            Vector3 measured = (position - item.Position) / dt;
             item.Velocity = Vector3.Lerp(item.Velocity, Vector3.ClampMagnitude(measured, 20f), 1f - Mathf.Exp(-3f * dt));
             if (health < item.Health - .1f) item.DamageUntil = now + 4f;
         }
@@ -233,6 +288,9 @@ internal sealed class PlayerSceneContext
         // These two APIs read local fields, not replicated remote-player state.
         if (player == Player.m_localPlayer && (player.InPlaceMode() || player.GetCurrentCraftingStation()))
         { evidence = "local building/crafting interface"; return true; }
+        ZDO? zdo = player.GetComponent<ZNetView>()?.GetZDO();
+        if (zdo != null && zdo.IsValid() && zdo.GetInt(CraftingKey, 0) != 0)
+        { evidence = "replicated crafting animation; exact task unknown"; return true; }
         Vector3 facing = player.transform.forward;
         if (observation.AttackUntil > now && TargetRoster.Finite(facing) && facing.sqrMagnitude > .001f)
         {
@@ -274,7 +332,9 @@ internal sealed class PlayerSceneContext
 
     private void UpdateCompositionEvidence(Player player, float now, float dt)
     {
-        Vector3 observedFacing = player.transform.forward; observedFacing.y = 0;
+        Vector3 observedFacing = frame.Locomotion == ShotLocomotion.Boat && rooms.SupportingShip
+            ? rooms.SupportingShip.transform.forward : player.transform.forward;
+        observedFacing.y = 0;
         if (TargetRoster.Finite(observedFacing) && observedFacing.sqrMagnitude > .001f)
         {
             observedFacing.Normalize();
@@ -299,8 +359,14 @@ internal sealed class PlayerSceneContext
             if (fresh) interestPoint = Focus(interestActor);
         }
         else if (interestKind == "opponent") fresh = false;
-        if (interestKind == "resource" && (!interestResource || !interestResource.enabled ||
+        if ((interestKind == "resource" || interestKind == "vessel") && (!interestResource || !interestResource.enabled ||
             !interestResource.gameObject.activeInHierarchy)) fresh = false;
+        if (interestKind == "vessel" && fresh)
+        {
+            Ship? ship = interestResource ? interestResource.GetComponentInParent<Ship>() : null;
+            fresh = ship && ship == rooms.SupportingShip;
+            if (fresh) interestPoint = ship!.transform.position + Vector3.up * 1.5f;
+        }
         fresh &= TargetRoster.Finite(interestPoint) && Vector3.Distance(frame.PrimaryFocus, interestPoint) <= 24f;
         float desired = fresh ? interestStrength : 0;
         frame.InterestConfidence = Mathf.MoveTowards(frame.InterestConfidence, desired, dt * (fresh ? .8f : 1.2f));
@@ -362,6 +428,10 @@ internal sealed class PlayerSceneContext
     internal void Reset()
     {
         grouping.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
+        rooms.Reset(); locomotion.Reset(); frame.SceneId = 0;
+        frame.Environment = ShotEnvironment.Unknown; frame.Locomotion = ShotLocomotion.Stationary;
+        frame.EnvironmentConfidence = frame.LocomotionConfidence = frame.CeilingHeight = 0;
+        frame.DoorwayTransition = false; frame.OpeningDirection = Vector3.zero;
         frame.PrimaryFocus = frame.Focus = frame.Velocity = frame.GroupVelocity = Vector3.zero;
         frame.FacingDirection = Vector3.forward; frame.InterestFocus = Vector3.zero;
         frame.FacingConfidence = frame.InterestConfidence = 0; frame.HasInterest = false; frame.InterestKind = "none";
