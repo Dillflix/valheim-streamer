@@ -190,7 +190,7 @@ internal sealed class ScenicFeatureSurvey
             bool complete = c.ObjectsComplete && left.ObjectsComplete && right.ObjectsComplete && back.ObjectsComplete && front.ObjectsComplete;
             if (complete && c.Trees == 0 && c.Solids == 0 && relief < 4f &&
                 left.Trees + right.Trees + back.Trees + front.Trees >= 3)
-                Add(ScenicFeatureKind.Clearing, focus, xRelief < zRelief ? Vector3.right : Vector3.forward, 10f, 8f, .65f);
+                Add(ScenicFeatureKind.Clearing, focus, xRelief < zRelief ? Vector3.right : Vector3.forward, ObjectRadius, 8f, .65f);
             // A measured open terrain patch is a lower-confidence fallback. It
             // competes below actual feature evidence, rather than manufacturing
             // a named landmark from a random ground point.

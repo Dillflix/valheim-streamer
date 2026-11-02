@@ -24,6 +24,7 @@ internal sealed class IdleShots
     internal Vector3 ScenicOffset => scenic.Offset;
     internal int RejectedViews => scenic.RejectedViews;
     internal string ViewReason => scenic.Reason;
+    internal string ScenicSearchStatus => scenic.SearchStatus;
     internal string Diagnostics => scenic.Diagnostics + "; loaded creatures " + creatures.Count;
     internal bool HasRegion => scenic.HasRegion;
     internal bool HasScenicPath => Plan != null;
@@ -41,9 +42,11 @@ internal sealed class IdleShots
     { creatures.Clear(); readyIds.Clear(); nearby.Clear(); surveyOrigin = creatureOrigin = origin; scenic.SetRegion(origin); }
     internal void Clear()
     { creatures.Clear(); readyIds.Clear(); nearby.Clear(); surveyOrigin = creatureOrigin = default; scenic.Clear(); }
-    internal void BeginScenicPath() => scenic.RequestShot();
+    internal void BeginScenicPath(bool resume = false)
+    { if (resume) scenic.ResumeShot(); else scenic.RequestShot(); }
     internal float ProposeScenic(float dt, BroadcastSettings settings, bool held) => scenic.Propose(dt, settings, held);
-    internal bool Search(BroadcastSettings settings, bool moveCarrier, bool held) => scenic.TickSearch(settings, moveCarrier, held);
+    internal bool Search(BroadcastSettings settings, bool moveCarrier, bool held, bool allowActivate = true) =>
+        scenic.TickSearch(settings, moveCarrier, held, allowActivate);
     internal Vector3 ScenicFocus(float fraction) => scenic.Focus(fraction);
     internal bool ViewClear(Vector3 camera, Vector3 focus, float fov) => scenic.Visibility.Clear(camera, focus, fov, out _);
     internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held) =>

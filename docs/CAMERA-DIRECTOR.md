@@ -1,4 +1,8 @@
-# Camera direction (0.8.24)
+# Camera direction (0.8.25)
+
+Version 0.8.25 builds directly on 0.8.24 (`3230c18`) and repairs idle search/admission failures exposed by the supplied recording. The recorded visible fragments were labelled Creature; intervening black intervals were the operator recovery screen labelled Scenic. This is not successful scenic cinematography. The exact route-rejection reason was not captured in that overlay. The fixes below address established source defects without claiming that the new footage has been visually validated.
+
+The bounded scenic search now covers multiple applicable roles before repeating azimuths, keeps clearing routes inside the measured footprint, and waits briefly for a throttled foliage survey to cover a candidate. It finishes before the generic failed-scenery wildlife fallback may intervene, and continues preparing in the background during ordinary wildlife coverage. A separate, non-rendering creature preview must establish readable framing before a cut; final live validation remains authoritative. Recovered scenic output cancels obsolete picture-failure replacements, and a failed first pose cannot discard the preceding valid scenic camera simply because a new route was prepared.
 
 Version 0.8.24 builds directly on 0.8.23 (`355292a`) and gives scenery a dedicated director and execution-only camera. Player and creature coverage retain their existing Cinemachine actor pipeline, including encounter direction, observational Position Composer, group Dolly Then Zoom and eligible FreeLook profiles. Directed scenery instead prepares complete native routes around measured environmental subjects, fixes the lens within each shot, and edits between shots with intentional cuts. Observer authorization, player acquisition, audio/video output and global-idle wildlife eligibility remain unchanged.
 

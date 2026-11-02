@@ -13,6 +13,12 @@ namespace ValheimBroadcaster.Core
 
     public static class ShotCandidateRanking
     {
+        /// <summary>Optional wildlife coverage must earn admission with a
+        /// readable subject. Physical support alone remains sufficient for the
+        /// existing player camera's local correction/search behavior.</summary>
+        public static bool Admissible(ShotSceneKind kind, bool supported, bool readable) =>
+            supported && (kind != ShotSceneKind.Creature || readable);
+
         /// <summary>Disjoint quality bands preserve readable-first ordering in
         /// native Cinemachine ClearShot's scalar ShotQuality comparison.</summary>
         public static float NativeQuality(float score, bool readable)

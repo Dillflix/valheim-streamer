@@ -96,18 +96,23 @@ internal static class ScenicPoseValidation
         if (!TargetRoster.Finite(pose.Position) || !TargetRoster.Finite(pose.Focus) ||
             Vector3.ProjectOnPlane(pose.Focus - pose.Position, Vector3.up).sqrMagnitude < .25f)
             return Reject(ScenicRejectionKind.InvalidPlan, "Invalid scenic pose or near-vertical aim", out kind, out reason);
-        if (!PlayerShotReadiness.PositionReady(pose.Position, continuous) ||
-            !PlayerShotReadiness.PositionReady(pose.Focus, continuous))
-            return Reject(continuous ? ScenicRejectionKind.Geometry : ScenicRejectionKind.Acquisition,
-                continuous ? "Scenic camera or feature geometry is no longer loaded" : "Scenic camera or feature area is not acquired", out kind, out reason);
+        // Admission must satisfy the geometry required on the very next live
+        // frame as well as initial network-area acquisition. Do not admit with
+        // a weaker predicate and then reject that same pose as a continuation.
+        if (!PlayerShotReadiness.PositionReady(pose.Position, true) ||
+            !PlayerShotReadiness.PositionReady(pose.Focus, true))
+            return Reject(ScenicRejectionKind.Geometry, "Scenic camera or feature geometry is not loaded", out kind, out reason);
+        if (!continuous && (!IdleShots.Ready(pose.Position) || !IdleShots.Ready(pose.Focus)))
+            return Reject(ScenicRejectionKind.Acquisition, "Scenic camera or feature area is not acquired", out kind, out reason);
         if (moveCarrier)
         {
             Vector3 carrier = pose.Position + Vector3.down * 2f;
             if (!Player.m_localPlayer || Vector3.Distance(carrier, Player.m_localPlayer.transform.position) >= 91f)
                 return Reject(ScenicRejectionKind.CarrierRange, "Scenic carrier route exceeds local reach", out kind, out reason);
-            if (!PlayerShotReadiness.PositionReady(carrier, continuous))
-                return Reject(continuous ? ScenicRejectionKind.Geometry : ScenicRejectionKind.Acquisition,
-                    "Scenic carrier destination is not loaded", out kind, out reason);
+            if (!PlayerShotReadiness.PositionReady(carrier, true))
+                return Reject(ScenicRejectionKind.Geometry, "Scenic carrier geometry is not loaded", out kind, out reason);
+            if (!continuous && !IdleShots.Ready(carrier))
+                return Reject(ScenicRejectionKind.Acquisition, "Scenic carrier area is not acquired", out kind, out reason);
         }
         Bounds? subject = null;
         ScenicFeature? feature = plan.Feature;
@@ -156,7 +161,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private ScenicVisibility? visibility;
     private ScenicPose previous;
     private bool hasPrevious, moveCarrier;
-    private float aspect, nearClip, minimumScore;
+    private float aspect, nearClip, minimumScore, surveyWaitSeconds;
+    private float surveyWaitStarted = float.NegativeInfinity;
     private int samples;
     internal bool Complete { get; private set; }
     internal bool Accepted { get; private set; }
@@ -194,7 +200,32 @@ internal sealed class ScenicPathEvaluator : IDisposable
             }
             if (!ScenicPoseValidation.Check(pose, plan, visibility, aspect, nearClip, false, moveCarrier,
                 out float score, out ScenicRejectionKind kind, out string reason))
-            { Fail(kind, reason); return true; }
+            {
+                // A cache whose recenter is throttled is missing evidence, not
+                // evidence that this route is obscured. Retry this exact sample
+                // on a later frame; never skip it or advance validated progress.
+                // Total waiting per route remains bounded even if several
+                // positions need their own refreshed foreground survey.
+                if (kind == ScenicRejectionKind.SurveyIncomplete)
+                {
+                    float now = Time.unscaledTime;
+                    if (!Finite(surveyWaitStarted) || now < surveyWaitStarted) surveyWaitStarted = now;
+                    if (surveyWaitSeconds + now - surveyWaitStarted < 2f)
+                    {
+                        samples--; pending.Push(fraction);
+                        Reason = "Waiting for scenic foliage survey coverage at the same route sample";
+                        return false;
+                    }
+                    reason += " after 2s of bounded survey retries";
+                }
+                Fail(kind, reason); return true;
+            }
+            if (Finite(surveyWaitStarted))
+            {
+                surveyWaitSeconds += Mathf.Max(0, Time.unscaledTime - surveyWaitStarted);
+                surveyWaitStarted = float.NegativeInfinity;
+                Reason = "Screening native scenic route";
+            }
             if (hasPrevious && !ScenicPoseValidation.Corridor(previous, pose, visibility, aspect, nearClip, out kind, out reason))
             { Fail(kind, reason); return true; }
             previous = pose; hasPrevious = true; ValidatedFraction = fraction; minimumScore = Mathf.Min(minimumScore, score);
@@ -210,6 +241,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     {
         pending.Clear(); path.Reset(); solver.Reset(); plan = null; visibility = null;
         Complete = Accepted = hasPrevious = false; minimumScore = ValidatedFraction = 0; samples = 0;
+        surveyWaitSeconds = 0; surveyWaitStarted = float.NegativeInfinity;
         FailureKind = ScenicRejectionKind.None; Reason = "No scenic route prepared";
     }
     public void Dispose() { Reset(); solver.Dispose(); path.Dispose(); }

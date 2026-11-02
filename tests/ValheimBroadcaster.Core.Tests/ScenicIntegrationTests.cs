@@ -16,6 +16,9 @@ internal static class ScenicIntegrationTests
         yield return ("Generated scenic roles have meaningful finite routes and visible development", MeaningfulFactoryMovement);
         yield return ("Scenic viewpoint alternatives change geography without modifying a live route", DistinctFactoryViews);
         yield return ("Scenic factory generates deterministic routes from measured feature identity", DeterministicFactory);
+        yield return ("Dedicated scenic route search is not preempted by the generic three-second timeout", SearchCompletesBeforeFallback);
+        yield return ("Exhausted dedicated scenic recovery can yield to available wildlife", ExhaustedSearchFallback);
+        yield return ("Pending scenic prefetch does not postpone ordinary wildlife opportunities", PendingSearchWildlifeOpportunity);
     }
     private static readonly string[] None = Array.Empty<string>();
     private static readonly string[] Deer = { "deer" };
@@ -106,7 +109,10 @@ internal static class ScenicIntegrationTests
                 plan.DurationSeconds >= 8 && plan.DurationSeconds <= 20,
                 kind + "/" + role + " produced a negligible move or legacy-duration shot.");
             double firstMovement = plan.Sample(2 / plan.DurationSeconds).CameraPosition.Distance(plan.Sample(0).CameraPosition);
-            Check(firstMovement > .65, kind + "/" + role + " has an excessively static opening.");
+            double openingVisualChange = firstMovement / plan.Sample(0).CameraPosition.Distance(plan.Sample(0).AimPosition) /
+                Math.Tan(plan.FieldOfView * Math.PI / 360);
+            Check(kind == ScenicFeatureKind.Clearing ? openingVisualChange > .05 : firstMovement > .65,
+                kind + "/" + role + " has an excessively static opening at its measured subject distance and lens.");
             var before = plan.Sample(.4, .1f); var after = plan.Sample(.4, 1.5f);
             Check(before.CameraPosition.Distance(after.CameraPosition) < .001,
                 "Live motion-strength change modified a generated route's geometry.");
@@ -137,5 +143,41 @@ internal static class ScenicIntegrationTests
         }
         Check(first.FieldOfView == same.FieldOfView && first.DurationSeconds == same.DurationSeconds,
             "Staging a new shot identity changed the same planned lens or duration.");
+    }
+
+    private static void SearchCompletesBeforeFallback()
+    {
+        var c = Coverage(); long revision = c.Revision;
+        for (int i = 0; i < 100; i++)
+            c.Tick(.1, null, 0, true, Deer, usableFootage: false, scenicSearchExhausted: false);
+        Check(c.Mode == CoverageMode.Scenic && c.Revision == revision && c.ShotElapsed == 0,
+            "Wildlife fallback preempted bounded scenic route discovery or credited unseen scenery.");
+        // Legacy coverage has no route-search completion signal to wait for.
+        var legacy = Coverage(false);
+        legacy.Tick(3, null, 0, true, Deer, usableFootage: false, scenicSearchExhausted: false);
+        Check(legacy.Mode == CoverageMode.Creature, "Dedicated search gating disabled legacy wildlife fallback.");
+    }
+
+    private static void ExhaustedSearchFallback()
+    {
+        var c = Coverage();
+        c.Tick(4, null, 0, true, Deer, usableFootage: false, scenicSearchExhausted: false);
+        Check(c.Mode == CoverageMode.Scenic, "An incomplete search was abandoned.");
+        c.Tick(.1, null, 0, true, Deer, usableFootage: false, scenicSearchExhausted: true);
+        Check(c.Mode == CoverageMode.Creature && c.SubjectId == "deer",
+            "A completed unsuccessful scenic search could not try its available wildlife alternative.");
+        c.Tick(3, null, 0, true, Deer, usableFootage: false, scenicSearchExhausted: true);
+        Check(c.Mode == CoverageMode.Scenic, "An unusable creature did not return to scenic recovery.");
+        c.Tick(4, null, 0, true, Deer, usableFootage: false, scenicSearchExhausted: true);
+        Check(c.Mode == CoverageMode.Scenic,
+            "The same failed creature immediately restarted the three-second coverage cycle.");
+    }
+
+    private static void PendingSearchWildlifeOpportunity()
+    {
+        var c = Coverage();
+        c.Tick(12, null, 0, true, Deer, usableFootage: true, scenicSearchExhausted: false);
+        Check(c.Mode == CoverageMode.Creature && c.SubjectId == "deer",
+            "Preparing the next scenic route suppressed a normal wildlife opportunity after actual scenic footage.");
     }
 }

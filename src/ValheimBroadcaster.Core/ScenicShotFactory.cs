@@ -34,6 +34,20 @@ namespace ValheimBroadcaster.Core
                     travel = Clamp(radius * .35 + 5, 6, 11); fov = (float)Clamp(preferredFov - 22, 40, 55); break;
                 default: throw new ArgumentOutOfRangeException(nameof(role));
             }
+            // A clearing is observed from an empty local overlap query. Orbiting
+            // its centre at the generic landscape distance places the camera in
+            // the surrounding trees instead of using the observed open patch.
+            // Keep the proposed route inside that measured footprint. This is
+            // only a candidate: the full route still needs actual geometry and
+            // foliage validation, including elevations and native curve bends.
+            bool clearing = feature.Kind == ScenicFeatureKind.Clearing;
+            if (clearing)
+            {
+                if (radius < 6) throw new ArgumentOutOfRangeException(nameof(feature), "Clearing footprint is too small for a developed route.");
+                distance = Math.Min(5, radius * .5);
+                travel = Math.Min(8, radius * .85);
+                height = role == ScenicShotRole.Establish ? 2.5 : 1.8;
+            }
             double sign = (viewpoint / 4) % 2 == 0 ? 1 : -1;
             var center = feature.Center;
             double aimHeight = feature.Kind == ScenicFeatureKind.Structure || feature.Kind == ScenicFeatureKind.Rock ? 0 : 1.5;
@@ -42,7 +56,7 @@ namespace ValheimBroadcaster.Core
             AutonomyPosition start = Point(center, ox * distance - rx * travel * .5 * sign, height,
                 oz * distance - rz * travel * .5 * sign);
             double finalDistance = role == ScenicShotRole.Detail ? distance * .9 : distance;
-            double finalHeight = role == ScenicShotRole.Reveal ? height + Clamp(radius * .4 + 4, 5, 11) : height;
+            double finalHeight = role == ScenicShotRole.Reveal ? height + (clearing ? 1.7 : Clamp(radius * .4 + 4, 5, 11)) : height;
             AutonomyPosition end = Point(center, ox * finalDistance + rx * travel * .5 * sign, finalHeight,
                 oz * finalDistance + rz * travel * .5 * sign);
             AutonomyPosition? control = role == ScenicShotRole.Reveal

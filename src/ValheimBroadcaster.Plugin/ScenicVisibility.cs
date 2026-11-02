@@ -45,7 +45,12 @@ internal sealed class ScenicVisibility
         // Candidate poses must not trigger repeated whole-scene surveys in one
         // render frame when opposite viewpoints cross the refresh distance.
         if (now >= refreshedAt && now - refreshedAt < 0.5f) return;
-        if (now >= refreshedAt && now - refreshedAt < 5f && (surveyOrigin - origin).sqrMagnitude <= 1600f) return;
+        float displacement = Vector3.Distance(surveyOrigin, origin);
+        // In a dense forest the retained nearest-renderer set may cover less
+        // than 40m. The ordinary movement threshold cannot certify an omitted
+        // foreground: refresh as soon as the minimum survey throttle permits.
+        if (now >= refreshedAt && now - refreshedAt < 5f && displacement <= 40f &&
+            displacement + ForegroundRange < coveredRadius) return;
         origin = surveyOrigin; refreshedAt = now; coveredRadius = SurveyRadius;
         foliage.Clear(); distances.Clear(); groups.Clear(); furthest = 0; furthestDistance = 0;
         obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");

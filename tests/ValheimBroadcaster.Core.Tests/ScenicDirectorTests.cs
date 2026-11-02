@@ -30,6 +30,9 @@ internal static class ScenicDirectorTests
         yield return ("Equivalent scenic views cannot be relabeled as fresh sequence beats", EquivalentAdmission);
         yield return ("A blocked scenic route can admit a materially different recovery path", RecoveryAdmission);
         yield return ("Scenic episode memory survives unrelated short-history turnover", EpisodeRetention);
+        yield return ("Recovered matching scenery cancels obsolete missing-output replacement", RecoveredMissingPicture);
+        yield return ("Recovered readable scenery resumes instead of cutting to a prepared replacement", RecoveredUnreadablePicture);
+        yield return ("Picture recovery preserves blocked completed and operator-requested edits", DurableReplacementRequests);
     }
 
     private static AutonomyPosition P(float x = 0, float y = 20, float z = 0) => new AutonomyPosition(x, y, z);
@@ -296,5 +299,51 @@ internal static class ScenicDirectorTests
         Check(d.RememberedShots == 24 && !d.CanOffer(ScenicShotPlan.Directed(40, Feature(), ScenicShotRole.Detail,
             P(18, 24, -8), P(18, 24, 8), P(), P(), 45)),
             "Short continuity history turnover erased the bounded episode exclusion.");
+    }
+
+    private static void RecoveredMissingPicture()
+    {
+        var d = new ScenicDirector(); var current = Plan(); var next = Plan(2, "shore");
+        d.Accept(current, 0); d.Stage(next);
+        d.Observe(1, 0, .1, true, true, false);
+        Observe(d, 1, 7, live: false, readable: false);
+        Check(d.NeedsReplacement, "Missing output did not request bounded recovery.");
+        d.Observe(2, .8, .6, true, true, false);
+        Check(d.NeedsReplacement, "Another shot's image cancelled this shot's recovery.");
+        d.Observe(1, .9, .1, true, false, false);
+        Check(d.NeedsReplacement, "An unreadable live image cancelled picture recovery.");
+        d.Observe(1, 1, .1, true, true, false);
+        Check(!d.NeedsReplacement && d.Current == current && d.Prepared == next && d.Propose(.1) > d.Progress,
+            "A recovered shot stayed frozen or required an unnecessary cut to its prepared successor.");
+        d.Observe(1, 1.1, .1, false, false, false);
+        Check(!d.NeedsReplacement, "A new short gap inherited the previous missing-output deadline.");
+    }
+
+    private static void RecoveredUnreadablePicture()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); d.Stage(Plan(2, "shore"));
+        Observe(d, 0, 21, readable: false);
+        Check(d.NeedsReplacement, "Unreadable output did not request recovery.");
+        d.Observe(1, 2.2, .2, true, true, false);
+        Check(!d.NeedsReplacement && d.Progress == .2 && d.Propose(.1) > .2,
+            "Fresh readable output did not restore the current shot's movement.");
+        Observe(d, 23, 30, readable: false);
+        Check(!d.NeedsReplacement, "Recovered readability retained an obsolete failure budget.");
+    }
+
+    private static void DurableReplacementRequests()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 21, blocked: true);
+        d.Observe(1, 2.2, 0, true, true, false);
+        Check(d.NeedsReplacement && d.Propose(.1) == d.Progress,
+            "A readable retained pose cancelled the replacement of a persistently blocked route.");
+        d.Accept(Plan(2), 3); d.Observe(2, 3, 1, true, true, false);
+        d.Observe(2, 3.1, 1, true, true, false);
+        Check(d.NeedsReplacement, "A completed shot was revived by its final readable frame.");
+        d.Accept(Plan(3), 4); Observe(d, 40, 46, live: false, readable: false);
+        d.RequestReplacement("Operator selected next scene");
+        d.Observe(3, 4.7, 0, true, true, false);
+        Check(d.NeedsReplacement && d.Reason == "Operator selected next scene",
+            "Recovering an earlier picture failure cancelled the operator's later edit.");
     }
 }

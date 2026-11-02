@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.24";
+    public const string PluginVersion = "0.8.25";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -54,6 +54,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly BroadcastDirector acquisition = new BroadcastDirector();
     private readonly AcquisitionWindow acquisitionWindow = new AcquisitionWindow();
     private readonly IdleShots idle = new IdleShots();
+    private readonly CreatureShotAdmission creatureAdmission = new CreatureShotAdmission();
     private readonly WildlifeCutaways wildlife = new WildlifeCutaways();
     private float nextCreatureRefresh;
     private string? creatureSearchPlayerId;
@@ -224,6 +225,15 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature) &&
                 (coverage.Mode != CoverageMode.Scenic || presentedScenicPlan == idle.PlanId);
             bool usableIdlePicture = currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable;
+            // Consume the preceding rendered frame before any readiness query.
+            // A cut moves the carrier/reference position, which can make broad
+            // area readiness fluctuate. Its actual live proof must establish
+            // continuation before recovery or coverage can discard that shot.
+            if (!probe.Active && coverage.Mode == CoverageMode.Scenic)
+                idle.ReportPresentation(presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
+                    recentPicture && frameHold.HasRecentLiveFrame,
+                    recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
+                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding);
             bool idleSceneAvailable = currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame &&
                 (coverage.Mode != CoverageMode.Scenic || !idle.RecoveryExhausted) ||
                 coverage.Mode == CoverageMode.Scenic && idle.Searching && idle.SceneReady && !idle.RecoveryExhausted;
@@ -248,7 +258,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     creatureSearchPlayerId = priorTarget.Identity.Id;
                     nextCreatureRefresh = Time.unscaledTime + 1f;
                 }
-                coverage.Tick(0, priorTarget.Identity.Id, roster.ConnectedOthers, true, idle.ReadyIds(),
+                coverage.Tick(0, priorTarget.Identity.Id, roster.ConnectedOthers, true, ReadyCreatureShots(),
                     false, false, true);
             }
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
@@ -283,7 +293,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             current = CurrentTarget();
             bool readyPlayer = CanShow(current);
             bool preserveShot = coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
-            if (!preserveShot && !readyPlayer && observer.RemoteSession && !idle.SceneReady && IdleShots.Ready(Player.m_localPlayer.transform.position))
+            // Rebase idle coverage when leaving a distant player. A transient
+            // readiness query during idle coverage must not erase its search,
+            // presentation evidence and failed-creature cooldowns every frame.
+            // Completed observer travel already resets the region explicitly.
+            if (coverage.Mode == CoverageMode.Player && !preserveShot && !readyPlayer && observer.RemoteSession &&
+                !idle.SceneReady && IdleShots.Ready(Player.m_localPlayer.transform.position))
                 ResetShot();
             if (Time.unscaledTime >= nextCreatureRefresh)
             {
@@ -293,10 +308,6 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 creatureSearchPlayerId = nearPlayer ? current!.Identity.Id : null;
                 nextCreatureRefresh = Time.unscaledTime + 1f;
             }
-            if (!probe.Active && coverage.Mode == CoverageMode.Scenic)
-                idle.ReportPresentation(currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame,
-                    recentPicture ? rig.PictureReason : frameHold.LastFailure, usableIdlePicture,
-                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding);
             coverage.DedicatedScenicShots = true;
             coverage.ScenicSeconds = settings.ScenicDwell.Value;
             coverage.CreatureSeconds = settings.CreatureDwell.Value;
@@ -305,21 +316,24 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (!preserveShot)
                 coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
                     roster.ConnectedOthers, !selfTest && (coverage.IsWildlifeCutaway ? readyPlayer : idle.SceneReady),
-                    idle.ReadyIds(), director.IsHolding, usableIdlePicture,
-                    coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id);
+                    ReadyCreatureShots(), director.IsHolding, usableIdlePicture,
+                    coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id,
+                    scenicSearchExhausted: idle.RecoveryExhausted);
             if (coverage.Revision != lastRevision)
             {
                 lastRevision = coverage.Revision;
                 playerShots.Reset();
                 // The shared camera keeps a validated handoff pose across ordinary coverage changes.
-                if (coverage.Mode == CoverageMode.Scenic) idle.BeginScenicPath();
+                if (coverage.Mode == CoverageMode.Scenic) idle.BeginScenicPath(resume: true);
                 // Presentation readiness belongs to the camera hook, not a provisional director cut.
             }
-            if (coverage.Mode == CoverageMode.Scenic)
+            if (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature && !coverage.IsWildlifeCutaway)
             {
                 // The environmental director prepares and edits its own shots.
                 // Coverage's independent clock still permits wildlife cutaways.
-                if (idle.Search(settings, observer.Active, director.IsHolding)) presentedIdleUsable = false;
+                if (idle.Search(settings, observer.Active, director.IsHolding,
+                    allowActivate: coverage.Mode == CoverageMode.Scenic) && coverage.Mode == CoverageMode.Scenic)
+                    presentedIdleUsable = false;
             }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
@@ -365,12 +379,19 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     }
 
     private TargetRoster.Target? CurrentTarget() => roster.Find(automatic?.ControlsSelection == true ? automatic.TargetId : director.CurrentTarget?.Id);
+    private IReadOnlyList<string> ReadyCreatureShots() => creatureAdmission.Offer(idle,
+        coverage.Mode == CoverageMode.Creature ? coverage.SubjectId : null, actor =>
+        {
+            GameCamera gameCamera = FindFirstObjectByType<GameCamera>();
+            return gameCamera && rig.CanFrameCreature(gameCamera, actor, settings, coverage.Revision + 1, observer.Active);
+        });
     private bool CanShow(TargetRoster.Target? target) => IsReady(target) && (!observer.RemoteSession || automatic?.CanFrame(target) == true);
     private void ResetShot()
     {
         pictureMonitor.Clear();
         wildlife.Reset();
         playerShots.Reset();
+        creatureAdmission.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false;
         localActivities.Clear();
@@ -522,6 +543,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         acquisitionWindow.Reset();
         acquisition.SetRoster(Array.Empty<PlayerTarget>());
         idle.Clear();
+        creatureAdmission.Reset();
         selfTest = false;
         activeWorld = parked ? ZNet.instance : null;
         cameraReady = false;
@@ -682,6 +704,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             { plugin.cameraReady = false; presentationFailure = plugin.idle.ViewReason; }
             if (plugin.cameraReady && plugin.observer.Active)
             {
+                // A replacement may still be awaiting admission while the rig
+                // re-renders its preceding valid pose. Continue that actual
+                // recently rendered scene without attributing it to the new plan.
+                continuousShot |= scenic && plugin.presentedScenicPlan == plugin.rig.ScenicPresentedPlanId &&
+                    plugin.presentedFrame >= Time.frameCount - 1 && plugin.frameHold.HasRecentLiveFrame;
                 Camera camera = __instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>();
                 Vector3 carrier = camera ? camera.transform.position + Vector3.down * 2f : Vector3.zero;
                 bool reachable = camera && Player.m_localPlayer && TargetRoster.Finite(carrier) &&
@@ -799,7 +826,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private string Status()
     {
         if (observer.Active) return observer.Status + " | " + (coverage.IsWildlifeCutaway ? "Wildlife cutaway" : coverage.Mode.ToString()) + " | RTMP: " + (output?.Status ?? "Stopped") +
-            (observer.RemoteSession ? "\n" + automatic?.Status + " | " + remote.DiscoveryStatus : "");
+            (observer.RemoteSession ? "\n" + automatic?.Status + " | " + remote.DiscoveryStatus : "") +
+            (coverage.Mode == CoverageMode.Scenic && (!cameraReady || !idle.HasScenicPath) ? "\n" + idle.ScenicSearchStatus : "");
         if (acquisitionFailure != null) return acquisitionFailure;
         if (probe.Active) return $"SOLO DISTANT SCENE TEST | {probe.State} | {probe.Elapsed:F0}s | RTMP: {output?.Status ?? "Stopped"}";
         string subject = coverage.Mode == CoverageMode.Player ? roster.Find(coverage.SubjectId)?.Identity.Name ?? "Player" :

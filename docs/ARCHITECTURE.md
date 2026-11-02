@@ -20,6 +20,9 @@ Version 0.8.23 repairs scenic presentation contracts. `ScenicPresentationPolicy`
 
 Version 0.8.24 builds directly on 0.8.23 (`355292a`). `ScenicDirector` and `ScenicProduction` replace the generic scenic path lifetime with measured-feature sequences, route-derived durations and staged edits. Acquisition and playback share the selected deterministic Body/authored-aim solve, fixed lens and pose/corridor checks; native spline is default and authored-curve comparison is latched per plan. Runtime progress commits only from actual matching presentation; persistent blocked movement requests replacement after two seconds. Player behavior, read-only role, protocol versions and audio/video transport are unchanged.
 
+Version 0.8.25 repairs the integration around scenic production. Previous-frame live proof is consumed before recovery decisions; idle readiness fluctuations no longer reset the region and wildlife cooldowns. Dedicated scenic search reports explicit exhaustion, runs in the background during ordinary creature coverage, and stages off-air routes without activating them. A bounded off-air creature camera preview gates fallback admission, while the actual creature pose must remain readable. Scenic role scheduling cannot spend the full budget only on establishing views, and clearing candidates stay inside the measured horizontal footprint. Transient foliage-survey throttling waits for coverage rather than declaring geometry failure. Actual scenic cut admission retains an existing valid pose under its original identity until a replacement passes. Observer/server/transport contracts are unchanged.
+
+
 ## Components
 
 | Component | Responsibility |

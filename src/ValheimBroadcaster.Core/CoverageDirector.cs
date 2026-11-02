@@ -50,7 +50,8 @@ namespace ValheimBroadcaster.Core
 
         public void Tick(double dt, string? readyPlayerId, int connectedOthers,
             bool idleSceneReady, IReadOnlyList<string> readyCreatures, bool holding = false,
-            bool usableFootage = true, bool allowWildlifeCutaway = false, string? retainedPlayerId = null)
+            bool usableFootage = true, bool allowWildlifeCutaway = false, string? retainedPlayerId = null,
+            bool scenicSearchExhausted = true)
         {
             if (double.IsNaN(dt) || double.IsInfinity(dt) || dt < 0) throw new ArgumentOutOfRangeException(nameof(dt));
             if (connectedOthers < 0) throw new ArgumentOutOfRangeException(nameof(connectedOthers));
@@ -97,9 +98,12 @@ namespace ValheimBroadcaster.Core
             if (Mode == CoverageMode.Scenic && !usableFootage && unshownSeconds >= ScenicPresentationTimeout)
             {
                 // A failed landscape must not starve a loaded local creature.
+                // Dedicated production first finishes its bounded route search.
+                // Interrupting it on this generic presentation timeout repeatedly
+                // suspends discovery before it can supply an actual scenic shot.
                 // No available alternative means continue the adapter's bounded
                 // scenic search, without claiming dwell or authorizing travel.
-                TrySelectCreature(readyCreatures);
+                if (!DedicatedScenicShots || scenicSearchExhausted) TrySelectCreature(readyCreatures);
                 return;
             }
             // Holding means an operator-held live shot, never a compositor image.

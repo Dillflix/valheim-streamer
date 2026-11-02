@@ -17,13 +17,15 @@ namespace ValheimBroadcaster.Core
         private readonly Dictionary<string, List<ShownShot>> episodes = new Dictionary<string, List<ShownShot>>(StringComparer.Ordinal);
         private double lastObservation = -1, badPictureSeconds, missingPictureSeconds, now;
         private bool recorded;
+        private enum ReplacementCause { None, Requested, BlockedRoute, MissingPicture, UnreadablePicture, Completed }
+        private ReplacementCause replacementCause;
 
         public ScenicShotPlan? Current { get; private set; }
         public ScenicShotPlan? Prepared { get; private set; }
         public double Progress { get; private set; }
         public double ElapsedSeconds { get; private set; }
         public double BlockedSeconds { get; private set; }
-        public bool NeedsReplacement { get; private set; }
+        public bool NeedsReplacement => replacementCause != ReplacementCause.None;
         public bool ShouldPrefetch => Current == null || NeedsReplacement ||
             Progress >= .65 || ElapsedSeconds >= Current.DurationSeconds - 4;
         public string Reason { get; private set; } = "Awaiting a measured scenic subject";
@@ -55,7 +57,7 @@ namespace ValheimBroadcaster.Core
             Current = plan;
             if (Prepared?.Id == plan.Id) Prepared = null;
             Progress = ElapsedSeconds = BlockedSeconds = badPictureSeconds = missingPictureSeconds = 0;
-            lastObservation = -1; now = at; recorded = NeedsReplacement = false;
+            lastObservation = -1; now = at; recorded = false; replacementCause = ReplacementCause.None;
             Reason = "Establishing " + plan.FeatureKind + " / " + plan.Role;
         }
 
@@ -91,6 +93,13 @@ namespace ValheimBroadcaster.Core
             {
                 Progress = Math.Max(Progress, displayedProgress);
                 badPictureSeconds = missingPictureSeconds = 0;
+                // Recovery is conditional on the failed picture still being
+                // unavailable. Fresh matching live output may recover before
+                // its replacement has been prepared; keep developing that shot.
+                // A blocked route, completed shot or operator edit remains due.
+                if (replacementCause == ReplacementCause.MissingPicture ||
+                    replacementCause == ReplacementCause.UnreadablePicture)
+                    replacementCause = ReplacementCause.None;
                 if (!held)
                 {
                     ElapsedSeconds += dt;
@@ -113,22 +122,24 @@ namespace ValheimBroadcaster.Core
             else BlockedSeconds = 0;
             if (NeedsReplacement) return;
             if (!held && BlockedSeconds >= BlockedLimitSeconds)
-                RequestReplacement("Scenic route remained blocked; use a prepared shot or replan locally");
+                RequestReplacement("Scenic route remained blocked; use a prepared shot or replan locally", ReplacementCause.BlockedRoute);
             else if (!held && missingPictureSeconds >= .5)
-                RequestReplacement("Scenic live output unavailable");
+                RequestReplacement("Scenic live output unavailable", ReplacementCause.MissingPicture);
             else if (!held && badPictureSeconds >= 2)
-                RequestReplacement("Scenic picture remained unreadable");
+                RequestReplacement("Scenic picture remained unreadable", ReplacementCause.UnreadablePicture);
             else if (!held && (Progress >= .999999 || ElapsedSeconds >= Current.DurationSeconds))
-                RequestReplacement("Scenic movement completed; advance the environmental sequence");
+                RequestReplacement("Scenic movement completed; advance the environmental sequence", ReplacementCause.Completed);
             else Reason = held ? "Operator holding the scenic composition" : motionBlocked
                 ? "Retaining the readable composition while preparing a different route"
                 : "Developing " + Current.FeatureKind + " / " + Current.Role;
         }
 
-        public void RequestReplacement(string reason)
+        public void RequestReplacement(string reason) => RequestReplacement(reason, ReplacementCause.Requested);
+
+        private void RequestReplacement(string reason, ReplacementCause cause)
         {
             if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentOutOfRangeException(nameof(reason));
-            NeedsReplacement = true; Reason = reason;
+            replacementCause = cause; Reason = reason;
         }
 
         /// <summary>Advance a short feature sequence only from shown footage.
@@ -238,7 +249,8 @@ namespace ValheimBroadcaster.Core
         {
             Current = Prepared = null; Progress = ElapsedSeconds = BlockedSeconds = 0;
             lastObservation = -1; now = badPictureSeconds = missingPictureSeconds = 0;
-            recorded = NeedsReplacement = false; history.Clear(); episodes.Clear(); Reason = "Awaiting a measured scenic subject";
+            recorded = false; replacementCause = ReplacementCause.None;
+            history.Clear(); episodes.Clear(); Reason = "Awaiting a measured scenic subject";
         }
         private static void CheckPlan(ScenicShotPlan plan)
         {

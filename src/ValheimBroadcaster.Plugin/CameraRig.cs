@@ -10,27 +10,31 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class CameraRig
 {
     private readonly CinemachineShotRig shotCamera = new CinemachineShotRig();
+    // Wildlife is discretionary. Its candidate solve must not replace the
+    // current player's trajectories or the scenic view before admission.
+    private readonly CinemachineShotRig creatureCamera = new CinemachineShotRig();
     private readonly ScenicCameraRig scenicCamera = new ScenicCameraRig();
-    private bool proceduralActive, scenicActive;
+    private bool proceduralActive, scenicActive, creatureActive;
+    private CinemachineShotRig ActorCamera => creatureActive ? creatureCamera : shotCamera;
     private string? presentationNotice;
     private string legacyMode = "awaiting coverage";
     internal string Diagnostics => presentationNotice != null ? "Camera: " + presentationNotice :
-        scenicActive ? scenicCamera.Diagnostics : proceduralActive ? shotCamera.Diagnostics : "Camera: legacy " + legacyMode;
+        scenicActive ? scenicCamera.Diagnostics : proceduralActive ? ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
     internal bool LastPictureUsable { get; private set; }
     internal bool IsProcedural => proceduralActive;
-    internal string PictureReason => scenicActive ? scenicCamera.LastFailure : proceduralActive ? shotCamera.PictureReason : LastFailure;
+    internal string PictureReason => scenicActive ? scenicCamera.LastFailure : proceduralActive ? ActorCamera.PictureReason : LastFailure;
     internal float FieldOfView => camera ? camera.fieldOfView : 75f;
     internal Quaternion Rotation => camera ? camera.transform.rotation : Quaternion.identity;
-    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive && !scenicActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
+    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive && !scenicActive && !creatureActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
     internal RemoteObserverClient? RemoteContext { set => shotCamera.RemoteContext = value; }
-    internal CameraSceneFrame? CurrentPlayerScene => proceduralActive && !scenicActive ? shotCamera.CurrentPlayerScene : null;
-    internal string? CurrentPlayerId => proceduralActive && !scenicActive ? shotCamera.CurrentPlayerId : null;
-    internal float PlayerSceneObservedAt => proceduralActive && !scenicActive ? shotCamera.PlayerSceneObservedAt : -1;
-    internal bool PresentationConfirmed { set => shotCamera.PresentationConfirmed = value; }
-    internal bool EditorialHold { set => shotCamera.EditorialHold = value; }
-    internal RenderedPictureMonitor? PictureMonitor { set { shotCamera.PictureMonitor = value; scenicCamera.PictureMonitor = value; } }
+    internal CameraSceneFrame? CurrentPlayerScene => proceduralActive && !scenicActive && !creatureActive ? shotCamera.CurrentPlayerScene : null;
+    internal string? CurrentPlayerId => proceduralActive && !scenicActive && !creatureActive ? shotCamera.CurrentPlayerId : null;
+    internal float PlayerSceneObservedAt => proceduralActive && !scenicActive && !creatureActive ? shotCamera.PlayerSceneObservedAt : -1;
+    internal bool PresentationConfirmed { set { shotCamera.PresentationConfirmed = value; creatureCamera.PresentationConfirmed = value; } }
+    internal bool EditorialHold { set { shotCamera.EditorialHold = value; creatureCamera.EditorialHold = value; } }
+    internal RenderedPictureMonitor? PictureMonitor { set { shotCamera.PictureMonitor = value; creatureCamera.PictureMonitor = value; scenicCamera.PictureMonitor = value; } }
     internal RenderedPictureContext? PictureContext => scenicActive && LastPictureUsable ? scenicCamera.PictureContext :
-        proceduralActive && LastPictureUsable ? shotCamera.BuildPictureContext() : null;
+        proceduralActive && LastPictureUsable ? ActorCamera.BuildPictureContext() : null;
     internal bool ScenicMovementAccepted => scenicActive && scenicCamera.MovementAccepted;
     internal float ScenicPresentedProgress => scenicActive ? scenicCamera.PresentedProgress : 0;
     internal long ScenicPresentedPlanId => scenicActive ? scenicCamera.PresentedPlanId : 0;
@@ -55,6 +59,27 @@ internal sealed class CameraRig
     private bool Unready(string reason)
     { LastFailure = reason; LastPictureUsable = false; presentationNotice = "unavailable: " + reason; return false; }
     internal void MarkUnavailable(string reason) => Unready(reason);
+
+    // Call at a bounded discovery cadence while coverage is not Creature. This
+    // uses the same native solve and readability gate as presentation, without
+    // writing the rendered camera, moving the carrier, or crediting footage.
+    // Reusing the forthcoming coverage revision keeps that validated solve at
+    // admission; Apply still checks the selected creature on each later frame.
+    internal bool CanFrameCreature(GameCamera gameCamera, Character actor, BroadcastSettings settings,
+        long selectionRevision, bool moveCarrier = true)
+    {
+        if (!settings.ProceduralPlayers.Value || !gameCamera || !actor || actor.IsDead()) return false;
+        Camera output = gameCamera.GetComponent<Camera>();
+        if (!output) output = gameCamera.GetComponentInChildren<Camera>();
+        if (!output) return false;
+        creatureCamera.RenderingCamera = output;
+        creatureCamera.NearClipPlane = output.nearClipPlane;
+        creatureCamera.Aspect = output.aspect;
+        creatureCamera.PresentationConfirmed = false;
+        creatureCamera.EditorialHold = false;
+        return creatureCamera.TrySolve(CinematicShotInput.ForCreature(actor, selectionRevision), settings,
+            0, false, moveCarrier, out _, out _, out _) && creatureCamera.LastPictureUsable;
+    }
 
     internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false, Character? creatureTarget = null, ScenicShotPlan? scenicPlan = null, float scenicProgress = 0, ScenicVisibility? scenicVisibility = null)
     {
@@ -84,7 +109,7 @@ internal sealed class CameraRig
         if (settings.ProceduralPlayers.Value && playerTarget == null && !creatureTarget && scenicPlan?.IsDirected == true)
         {
             if (!scenicActive) { shotCamera.Reset(); scenicCamera.Reset(); }
-            scenicActive = proceduralActive = true;
+            scenicActive = proceduralActive = true; creatureActive = false;
             if (!scenicCamera.TrySolve(scenicPlan, scenicProgress, scenicVisibility, camera.aspect, camera.nearClipPlane,
                 continuousPlayer, moveCarrier, out Vector3 scenicPosition, out Quaternion scenicRotation, out float scenicFov))
                 return Unready(scenicCamera.LastFailure);
@@ -98,21 +123,23 @@ internal sealed class CameraRig
         if (settings.ProceduralPlayers.Value && input.HasValue)
         {
             proceduralActive = true;
-            shotCamera.RenderingCamera = camera;
-            shotCamera.NearClipPlane = camera.nearClipPlane;
-            shotCamera.Aspect = camera.aspect;
-            if (!shotCamera.TrySolve(input.Value, settings, dt, continuousPlayer, moveCarrier,
+            creatureActive = input.Value.Kind == CinematicShotKind.Creature;
+            CinemachineShotRig actorCamera = ActorCamera;
+            actorCamera.RenderingCamera = camera;
+            actorCamera.NearClipPlane = camera.nearClipPlane;
+            actorCamera.Aspect = camera.aspect;
+            if (!actorCamera.TrySolve(input.Value, settings, dt, continuousPlayer, moveCarrier,
                     out Vector3 position, out Quaternion rotation, out float fov))
-                return Unready(shotCamera.LastFailure);
+                return Unready(actorCamera.LastFailure);
             camera.transform.SetPositionAndRotation(position, rotation);
             camera.fieldOfView = fov;
             if (skyCamera) skyCamera.fieldOfView = fov;
-            LastPictureUsable = shotCamera.LastPictureUsable;
+            LastPictureUsable = actorCamera.LastPictureUsable;
             LastFailure = "none";
             hasPose = false;
             return true;
         }
-        if (proceduralActive) { shotCamera.Reset(); proceduralActive = false; }
+        if (proceduralActive) { shotCamera.Reset(); creatureCamera.Reset(); proceduralActive = creatureActive = false; }
         legacyMode = input.HasValue ? input.Value.Kind.ToString().ToLowerInvariant() + " framing" : "probe framing";
         float radians = azimuth * Mathf.Deg2Rad;
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
@@ -177,7 +204,7 @@ internal sealed class CameraRig
     }
 
     internal void ResetPose()
-    { hasPose = false; shotCamera.Reset(); scenicCamera.Reset(); scenicActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
+    { hasPose = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
 
     internal void Restore()
     {
@@ -189,7 +216,7 @@ internal sealed class CameraRig
 
     private void RestoreCamera()
     {
-        shotCamera.Dispose(); scenicCamera.Dispose(); scenicActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "inactive";
+        shotCamera.Dispose(); creatureCamera.Dispose(); scenicCamera.Dispose(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "inactive";
         if (camera)
         {
             camera.fieldOfView = savedFov;

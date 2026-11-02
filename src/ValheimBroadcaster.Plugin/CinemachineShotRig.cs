@@ -350,7 +350,8 @@ internal sealed class CinemachineShotRig : IDisposable
                 confined, space, priorPresented, readable, situation, requestedRole, settings.NativeClearShot.Value ? clearShot : null)
             : stableSelection.Select(now, editorialScores, selectionEligibility, readable, settings.NativeClearShot.Value ? clearShot : null);
         if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
-            "No shot camera with loaded geometry and safe physical clearance", out position, out rotation, out fov);
+            input.Kind == CinematicShotKind.Creature ? "Creature has no currently readable supported camera" :
+                "No shot camera with loaded geometry and safe physical clearance", out position, out rotation, out fov);
         if (choice != selected && !evaluateAll)
         {
             Evaluate(choice, NeutralMotion(), context, focus, settings, dt, continuous, moveCarrier);
@@ -367,7 +368,8 @@ internal sealed class CinemachineShotRig : IDisposable
                         settings.NativeClearShot.Value ? clearShot : null)
                     : stableSelection.Select(now, scores, eligible, readable, settings.NativeClearShot.Value ? clearShot : null);
                 if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
-                    "Alternate shot camera geometry became unavailable", out position, out rotation, out fov);
+                    input.Kind == CinematicShotKind.Creature ? "Creature alternate cameras are not currently readable and supported" :
+                        "Alternate shot camera geometry became unavailable", out position, out rotation, out fov);
             }
         }
         Candidate candidate = candidates[choice];
@@ -390,6 +392,9 @@ internal sealed class CinemachineShotRig : IDisposable
             return HoldValidPose(context, focus, now, continuous, moveCarrier,
                 "Solved camera physical support changed before presentation", out position, out rotation, out fov);
         readable[choice] = PictureUsable(endpoint);
+        if (!ShotCandidateRanking.Admissible(SceneKind, true, readable[choice]))
+            return HoldValidPose(context, focus, now, continuous, moveCarrier,
+                "Creature camera is supported but its subject is not readable", out position, out rotation, out fov);
         PlayerShotVisibility.Result actualView = endpoint;
         string transition = "tracking";
         position = desired; rotation = desiredRotation; fov = desiredFov;
@@ -555,6 +560,8 @@ internal sealed class CinemachineShotRig : IDisposable
         lastView = actualView;
         if (!lastView.CameraClear || !PositionSupported(position, focus, continuous, moveCarrier))
             return Fail("Presented camera geometry unavailable");
+        if (!ShotCandidateRanking.Admissible(SceneKind, true, PictureUsable(lastView)))
+            return Fail("Creature camera lost subject readability before presentation");
         visiblePlayers.Clear();
         for (int i = 0; PictureUsable(lastView) && i < context.Subjects.Count && i < evaluatedSubjects.Count; i++)
             if ((lastView.VisibleMask & (1 << i)) != 0 && context.Subjects[i].Player)
@@ -617,13 +624,15 @@ internal sealed class CinemachineShotRig : IDisposable
 
     private bool PictureUsable(PlayerShotVisibility.Result view) => view.Picture(IsScenic).Readable;
 
+    private ShotSceneKind SceneKind => IsScenic ? ShotSceneKind.Scenic : input.Kind == CinematicShotKind.Creature
+        ? ShotSceneKind.Creature : ShotSceneKind.Player;
+
     private ShotSituation Situation(CameraSceneFrame context)
     {
         int companions = 0, opponents = 0;
         foreach (CameraSceneSubject member in context.Subjects)
             if (member.IsOpponent) opponents++; else if (!member.IsPrimary) companions++;
-        return new ShotSituation(IsScenic ? ShotSceneKind.Scenic : input.Kind == CinematicShotKind.Creature
-            ? ShotSceneKind.Creature : ShotSceneKind.Player, context.Activity, context.Confidence,
+        return new ShotSituation(SceneKind, context.Activity, context.Confidence,
             companions, opponents, context.HasInterest, context.DoorwayTransition ? ShotEnvironment.Doorway : context.Environment, context.Locomotion, space,
             context.Encounter, context.EncounterConfidence, context.EncounterDistance);
     }
@@ -790,6 +799,7 @@ internal sealed class CinemachineShotRig : IDisposable
         var viewed = previousChoice >= 0 ? candidates[previousChoice].Subjects : primaryOnly;
         PlayerShotVisibility.Result live = EvaluateView(position, rotation, viewed, fov, focus);
         if (!live.CameraClear || !live.PrimaryInFrame || live.PrimaryVisibility < 0.45f) return Fail(failure);
+        if (!ShotCandidateRanking.Admissible(SceneKind, true, PictureUsable(live))) return Fail(failure);
         if (fallbackSince < 0) { fallbackSince = now; NoteCorrection(now); }
         // This is fresh live footage from a revalidated camera, not an old image
         // or an assertion that a rejected candidate has loaded successfully.
@@ -1051,6 +1061,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 Upright(state.GetFinalOrientation()), state.Lens.FieldOfView);
         eligible[index] = candidate.Quality.Result.CameraClear && groupPath && PositionSupported(solved, focus, continuous, moveCarrier);
         readable[index] = eligible[index] && PictureUsable(candidate.Quality.Result);
+        eligible[index] = ShotCandidateRanking.Admissible(SceneKind, eligible[index], readable[index]);
         if (candidate.PassBy && (!readable[index] || !passBy.Active && !PassByRouteReadable(candidate, context, continuous, moveCarrier)))
         { eligible[index] = readable[index] = false; }
         if (useDolly && readable[index]) candidate.Dolly.AcceptPosition();
@@ -1549,7 +1560,11 @@ internal sealed class CinemachineShotRig : IDisposable
                 hasPrimary = region.IsValid;
             }
         }
-        PictureContext = new RenderedPictureContext(new RenderedPictureKey(pictureEpoch, pictureRevision, choice),
+        // Player and wildlife solves have independent lifetimes. Namespace
+        // their candidate identities so equal local epoch/revision counters
+        // cannot reuse the other rig's rendered-pixel feedback.
+        int pictureCandidate = choice + (input.Kind == CinematicShotKind.Creature ? Count : 0);
+        PictureContext = new RenderedPictureContext(new RenderedPictureKey(pictureEpoch, pictureRevision, pictureCandidate),
             region, hasPrimary, Time.frameCount, now);
     }
 

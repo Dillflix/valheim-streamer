@@ -8,11 +8,13 @@ namespace ValheimBroadcaster.Plugin;
 /// screening, prepared edits, actual-presentation timing and bounded recovery.</summary>
 internal sealed class ScenicProduction
 {
-    private const int MaximumAttempts = 96;
     private readonly ScenicDirector director = new ScenicDirector();
     private readonly ScenicFeatureSurvey survey = new ScenicFeatureSurvey();
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
     private readonly ScenicShotReadiness readiness = new ScenicShotReadiness();
+    private readonly ScenicShotReadiness liveSceneReadiness = new ScenicShotReadiness();
+    private ScenicShotPlan? lastPresentedPlan;
+    private Vector3 lastPresentedFocus;
     internal readonly ScenicVisibility Visibility = new ScenicVisibility();
     // Candidate surveys must never recenter the live camera's foliage cache.
     private readonly ScenicVisibility planningVisibility = new ScenicVisibility();
@@ -32,8 +34,12 @@ internal sealed class ScenicProduction
     internal bool NeedsReplacement => forceReplacement || director.Current == null || director.NeedsReplacement;
     internal bool RecoveryExhausted { get; private set; }
     internal bool CanContinue => Plan != null && readiness.CanContinue(Plan.Id, Focus((float)director.Progress));
-    internal bool SceneReady => HasRegion && (CanContinue ? PlayerShotReadiness.PositionReady(origin, true) : IdleShots.Ready(origin));
+    internal bool SceneReady => HasRegion && (CanContinue || lastPresentedPlan != null &&
+        liveSceneReadiness.CanContinue(lastPresentedPlan.Id, lastPresentedFocus)
+        ? PlayerShotReadiness.PositionReady(origin, true) : IdleShots.Ready(origin));
     internal string Reason { get; private set; } = "Awaiting scenic region";
+    internal string SearchStatus => !survey.Complete ? survey.Diagnostics :
+        Reason + "; routes " + attempts + ", accepted " + accepted + "; last rejection " + lastRejection;
     internal int RejectedViews { get; private set; }
     internal string Diagnostics => $"Scenic director: {Reason}; {director.Reason}; " +
         $"feature {Plan?.FeatureKind.ToString() ?? "none"}/{Plan?.FeatureId ?? "none"}; role {Plan?.Role.ToString() ?? "none"}; " +
@@ -49,7 +55,8 @@ internal sealed class ScenicProduction
     }
     internal void Clear()
     {
-        director.Reset(); survey.Reset(); evaluator.Dispose(); readiness.Reset(); Visibility.Reset(); planningVisibility.Reset();
+        director.Reset(); survey.Reset(); evaluator.Dispose(); readiness.Reset(); liveSceneReadiness.Reset();
+        lastPresentedPlan = null; lastPresentedFocus = default; Visibility.Reset(); planningVisibility.Reset();
         HasRegion = searching = trimmed = forceReplacement = RecoveryExhausted = hasSettings = revalidating = false;
         testing = best = null; attempts = accepted = sweep = RejectedViews = 0;
         retryAt = preparedAt = proposed = 0; lastRejection = "none"; Reason = "Awaiting scenic region";
@@ -59,6 +66,14 @@ internal sealed class ScenicProduction
     {
         forceReplacement = true; retryAt = 0;
         if (Plan != null) director.RequestReplacement("Entering fresh scenic coverage");
+    }
+    internal void ResumeShot()
+    {
+        // Returning from an ordinary wildlife cutaway is not an editorial
+        // rejection of the existing scenic plan or its prepared successor.
+        // Runtime validates the returning pose before it can be presented.
+        retryAt = 0;
+        if (Plan != null && !NeedsReplacement) Reason = "Resuming the prepared environmental sequence";
     }
     internal float Propose(float dt, BroadcastSettings settings, bool held)
     {
@@ -77,18 +92,30 @@ internal sealed class ScenicProduction
     internal bool Observe(bool live, bool readable, long planId, float progress, bool blocked, bool held, string reason)
     {
         if (Plan == null) return false;
+        // Keep actual scene availability separate from admission of a requested
+        // new plan. The camera may still be rendering its preceding valid plan.
+        // That frame can renew only its own scene lease, never the new plan's
+        // progress, dwell, or acquisition evidence.
+        ScenicShotPlan? shown = planId == Plan.Id ? Plan : lastPresentedPlan?.Id == planId ? lastPresentedPlan : null;
+        if (live && readable && shown != null)
+        {
+            lastPresentedPlan = shown;
+            lastPresentedFocus = FromCore(shown.Sample(progress).AimPosition);
+            liveSceneReadiness.Presented(shown.Id, lastPresentedFocus);
+        }
         // Missing/stale output must advance failure time for the newly selected
         // plan, but can never credit another plan's progress or readiness.
         if (planId != Plan.Id) { live = readable = blocked = false; progress = (float)director.Progress; }
         if (live) readiness.Presented(Plan.Id, Focus(progress));
         bool requested = director.NeedsReplacement;
         director.Observe(Plan.Id, Time.unscaledTime, Mathf.Clamp01(progress), live, readable, blocked, held);
+        if (live && readable && !NeedsReplacement) RecoveryExhausted = false;
         if (blocked || !readable) { lastRejection = reason; Reason = reason; }
         if (!requested && director.NeedsReplacement) retryAt = 0;
         return !requested && director.NeedsReplacement;
     }
 
-    internal bool TickSearch(BroadcastSettings settings, bool moveCarrier, bool held)
+    internal bool TickSearch(BroadcastSettings settings, bool moveCarrier, bool held, bool allowActivate = true)
     {
         if (!HasRegion || !SceneReady) return false;
         if (!hasSettings || plannedFov != settings.FieldOfView.Value ||
@@ -104,7 +131,7 @@ internal sealed class ScenicProduction
             if (!survey.Complete) return false;
         }
         // Preparing never advances the current camera or earns presentation time.
-        if (director.Prepared != null && (!held || Plan == null) &&
+        if (allowActivate && director.Prepared != null && (!held || Plan == null) &&
             (NeedsReplacement || director.ShouldPrefetch && Time.unscaledTime - preparedAt > 4f))
         {
             ScenicShotPlan staged = director.TakePrepared()!;
@@ -122,8 +149,8 @@ internal sealed class ScenicProduction
         if (!searching) return false;
         if (testing == null)
         {
-            if (attempts >= Math.Min(MaximumAttempts, Math.Max(16, survey.Features.Count * 8)) || survey.Features.Count == 0)
-                return FinishSearch(held);
+            if (attempts >= ScenicCandidateSchedule.AttemptLimit(survey.Features, CurrentFeatureIndex(), sweep) || survey.Features.Count == 0)
+                return FinishSearch(held, allowActivate);
             testing = NextCandidate(settings);
             if (testing == null) return false;
             trimmed = false;
@@ -160,26 +187,18 @@ internal sealed class ScenicProduction
             }
         }
         testing = null;
-        if (best != null && (revalidating || attempts >= 4 && bestScore >= .6)) return FinishSearch(held);
+        if (best != null && (revalidating || attempts >= 4 && bestScore >= .6)) return FinishSearch(held, allowActivate);
         revalidating = false;
         return false;
     }
 
     private ScenicShotPlan? NextCandidate(BroadcastSettings settings)
     {
-        int count = survey.Features.Count, currentIndex = -1;
-        for (int i = 0; i < count; i++) if (survey.Features[i].Id == Plan?.FeatureId) { currentIndex = i; break; }
-        int ordinal = attempts++, featureIndex = ordinal % count;
-        // Consider the current subject first for a short, purposeful sequence.
-        if (currentIndex >= 0)
-            featureIndex = featureIndex == 0 ? currentIndex : featureIndex <= currentIndex ? featureIndex - 1 : featureIndex;
-        ScenicFeature feature = survey.Features[featureIndex];
+        ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.Select(survey.Features, CurrentFeatureIndex(), sweep, attempts++);
+        ScenicFeature feature = survey.Features[candidate.FeatureIndex];
         ScenicShotRole preferred = director.PreferredRole(feature);
-        int cycle = ordinal / count;
-        ScenicShotRole role = cycle < 4 ? preferred : (ScenicShotRole)(((int)preferred + 1) % 4);
-        if (role == ScenicShotRole.Detail && feature.Kind != ScenicFeatureKind.Rock && feature.Kind != ScenicFeatureKind.Structure)
-            role = ScenicShotRole.Traverse;
-        int view = (sweep + cycle * 2 + (role == ScenicShotRole.Traverse || role == ScenicShotRole.Detail ? 1 : 0)) % 8;
+        ScenicShotRole role = ScenicCandidateSchedule.Role(feature.Kind, preferred, candidate.RoleIndex);
+        int view = candidate.Viewpoint;
         try
         {
             var plan = ScenicShotFactory.Create(++nextId, feature, role, view, settings.FieldOfView.Value, settings.DeliberateComposition.Value, settings.NativeSplineDolly.Value);
@@ -192,6 +211,12 @@ internal sealed class ScenicProduction
         catch (ArgumentException)
         { RejectedViews++; lastRejection = "Feature does not support this shot geometry"; return null; }
     }
+    private int CurrentFeatureIndex()
+    {
+        for (int i = 0; i < survey.Features.Count; i++)
+            if (survey.Features[i].Id == Plan?.FeatureId) return i;
+        return -1;
+    }
     private void BeginEvaluation(BroadcastSettings settings, bool moveCarrier)
     {
         Camera? camera = Camera.main;
@@ -199,7 +224,7 @@ internal sealed class ScenicProduction
         float nearClip = camera ? camera.nearClipPlane : .3f;
         evaluator.Begin(testing!, planningVisibility, aspect, nearClip, moveCarrier);
     }
-    private bool FinishSearch(bool held)
+    private bool FinishSearch(bool held, bool allowActivate)
     {
         searching = revalidating = false; testing = null; evaluator.Reset(); sweep = (sweep + 1) % 8;
         if (best == null)
@@ -212,7 +237,7 @@ internal sealed class ScenicProduction
         ScenicShotPlan selected = best; best = null;
         director.Stage(selected); preparedAt = bestValidatedAt;
         Reason = "Prepared " + selected.FeatureKind + " / " + selected.Role;
-        if (NeedsReplacement && (!held || Plan == null) && Time.unscaledTime - preparedAt <= 6f)
+        if (allowActivate && NeedsReplacement && (!held || Plan == null) && Time.unscaledTime - preparedAt <= 6f)
             return Activate(director.TakePrepared()!);
         return false;
     }
