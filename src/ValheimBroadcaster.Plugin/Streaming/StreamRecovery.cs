@@ -8,6 +8,7 @@ namespace ValheimBroadcaster.Plugin.Streaming;
 internal sealed class StreamRecovery
 {
     private readonly StreamCapture capture;
+    private readonly FrameHold program;
     private readonly Func<StreamOptions> options;
     private readonly Func<AudioListener?> listener;
     private readonly Action<string> log;
@@ -24,8 +25,8 @@ internal sealed class StreamRecovery
         "; manual stop " + policy.ManualSuppressed + "; attempts " + policy.Attempts + "; failures in retry cycle " + policy.FailuresInBurst +
         "\nLast failure: " + policy.LastFailure + (capture.Active ? "\n" + capture.Diagnostics : "");
 
-    internal StreamRecovery(StreamCapture capture, Func<StreamOptions> options, Func<AudioListener?> listener, Action<string> log)
-    { this.capture = capture; this.options = options; this.listener = listener; this.log = log; }
+    internal StreamRecovery(StreamCapture capture, FrameHold program, Func<StreamOptions> options, Func<AudioListener?> listener, Action<string> log)
+    { this.capture = capture; this.program = program; this.options = options; this.listener = listener; this.log = log; }
     internal void ArmAutoStart(bool enabled) => policy.ArmAutoStart(enabled, Time.realtimeSinceStartup);
     internal void RequestStart() => policy.RequestStart(Time.realtimeSinceStartup);
     internal void RequestStop()
@@ -61,7 +62,7 @@ internal sealed class StreamRecovery
             encoder = selected.VideoEncoder.ToString();
             AudioListener? current = listener();
             if (!current || !current.isActiveAndEnabled) throw new InvalidOperationException("Game audio listener is not ready.");
-            capture.Begin(selected, current);
+            capture.Begin(selected, current, program);
             log("Starting RTMP using " + encoder + " and AAC (attempt " + policy.Attempts + ").");
         }
         catch (ArgumentException error) { StartFailed(now, true, retryEnabled, error.Message); }

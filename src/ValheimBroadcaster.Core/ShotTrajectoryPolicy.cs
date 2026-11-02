@@ -117,6 +117,18 @@ namespace ValheimBroadcaster.Core
             return Result(predicted, center + sceneVelocity * horizon, false);
         }
 
+        /// <summary>Longer read-only forecast used to compare standby viewpoints.
+        /// This does not authorize live movement; its caller must treat unknown
+        /// future support as unknown and validate every actual camera step.</summary>
+        public ShotTrajectoryState PreviewCoverage(double seconds)
+        {
+            if (!Finite(seconds) || seconds < 0) throw new ArgumentOutOfRangeException(nameof(seconds));
+            Dynamics predicted = state;
+            double horizon = Math.Min(seconds, ShotLongevityPolicy.FarSeconds);
+            if (initialized) Integrate(ref predicted, center, sceneVelocity, horizon, true);
+            return Result(predicted, center + sceneVelocity * horizon, false);
+        }
+
         /// <summary>Synchronize after the adapter rejects a body path. A physical
         /// constraint may stop velocity immediately; ordinary motion never does.
         /// This prevents invisible policy advance behind a retained camera.</summary>

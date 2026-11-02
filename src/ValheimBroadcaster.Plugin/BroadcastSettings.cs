@@ -11,6 +11,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> WildlifeCutaways;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
+    internal readonly ConfigEntry<bool> PredictiveShots, ShotSequences, ShotScales, RenderedPictureEvaluation;
     internal readonly ConfigEntry<float> PositionDamping, AimDamping, DeadZone, ShotMotion;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
@@ -53,6 +54,10 @@ internal sealed class BroadcastSettings
         AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use the shared Cinemachine pipeline for player, creature and scenic coverage. False selects legacy fixed framing for comparison. This existing config key is retained for compatibility.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
+        PredictiveShots = config.Bind("Camera", "PredictiveShots", true, "Prefer presently readable viewpoints expected to remain useful during observed movement. Prediction is bounded, uncertain evidence stays neutral, and it never requests travel.");
+        ShotSequences = config.Bind("Camera", "ShotSequences", true, "Develop short evidence-based sequences across player, creature and scenic coverage. Progress requires usable live footage; manual hold and steady mode pause editorial development.");
+        ShotScales = config.Bind("Camera", "ShotScales", true, "Use deliberate wide, full-body and qualified medium compositions. Medium framing validates an intentional upper-body envelope and retains full-body alternatives when inappropriate.");
+        RenderedPictureEvaluation = config.Bind("Camera", "RenderedPictureEvaluation", true, "Supplement geometric visibility with low-frequency analysis of the clean live picture for sustained poor exposure/contrast. No extra world render, automatic exposure changes or remote image upload.");
         DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent actor or environmental screen placement from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
         PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));

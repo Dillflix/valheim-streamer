@@ -76,7 +76,7 @@ namespace ValheimBroadcaster.Core
         public int Select(double now, double deltaSeconds, IReadOnlyList<float> scores,
             IReadOnlyList<bool> eligible, CinematicActivity currentActivity, float speed,
             bool confined, float spaceFraction, bool usableFootage = true,
-            IReadOnlyList<bool>? readable = null, ShotSituation? situation = null)
+            IReadOnlyList<bool>? readable = null, ShotSituation? situation = null, ShotRole? roleOverride = null)
         {
             Validate(now, deltaSeconds, scores, eligible, speed, spaceFraction);
             if (hasCheckpoint && checkpoint.Now != now) hasCheckpoint = false;
@@ -99,7 +99,7 @@ namespace ValheimBroadcaster.Core
             lastUsable = usableFootage;
             TrimCorrections(now);
             UpdateActivity(now, currentActivity);
-            if (situation.HasValue) intent.Update(now, deltaSeconds, situation.Value, usableFootage);
+            if (situation.HasValue) intent.Update(now, deltaSeconds, situation.Value, usableFootage, roleOverride);
             DesiredSeconds = nominalSeconds * (confined ? 1.5 : 1);
 
             int best = -1, adequate = 0;
@@ -299,8 +299,8 @@ namespace ValheimBroadcaster.Core
         /// <summary>Steady mode retains environment and locomotion adaptation
         /// without requesting editorial angle changes. Repeated same-frame
         /// calls cannot advance the intent's evidence clock twice.</summary>
-        public CinematicShotIntent UpdateIntent(double now, double dt, ShotSituation situation, bool usable) =>
-            intent.Update(now, dt, situation, usable);
+        public CinematicShotIntent UpdateIntent(double now, double dt, ShotSituation situation, bool usable, ShotRole? roleOverride = null) =>
+            intent.Update(now, dt, situation, usable, roleOverride);
 
         private void BeginShot(int selected, double now, bool confined)
         {

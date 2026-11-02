@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.18";
+    public const string PluginVersion = "0.8.19";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -65,6 +65,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private readonly List<string> locallyReadyPlayers = new List<string>(16);
     private int coverageFrame = -1;
     private readonly FrameHold frameHold = new FrameHold();
+    private readonly RenderedPictureMonitor pictureMonitor = new RenderedPictureMonitor();
     private readonly PlayerShotReadiness playerShots = new PlayerShotReadiness();
     private float nextRosterRefresh;
     private bool remotePatchAvailable;
@@ -85,6 +86,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         settings = new BroadcastSettings(Config);
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
         rig.RemoteContext = remote;
+        rig.PictureMonitor = pictureMonitor;
+        pictureMonitor.IsProgramGenerationCurrent = frameHold.IsGenerationCurrent;
+        frameHold.PictureUnavailable = pictureMonitor.Suspend;
+        frameHold.ObserveLiveFrame = ObserveProgramPicture;
         observer.RemoteApproved = () => remote.Isolated && remote.Approved;
         automatic = new AutonomousBroadcast(settings, remote, observer, playerShots,
             (target, point) => rig.RequiredPlayerCameraMovement(target, point, settings), ResetShot, message => Logger.LogInfo(message));
@@ -107,7 +112,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             connection.Install(harmony);
             harmony.Patch(cameraMethod, postfix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(AfterCameraUpdate)));
             stream = gameObject.AddComponent<StreamCapture>();
-            output = new StreamRecovery(stream, BuildStreamOptions, FindAudioListener, message => Logger.LogInfo(message));
+            output = new StreamRecovery(stream, frameHold, BuildStreamOptions, FindAudioListener, message => Logger.LogInfo(message));
             MethodInfo? listenerMethod = AccessTools.Method(typeof(GameCamera), "UpdateListner", Type.EmptyTypes);
             if (listenerMethod != null && ListenerField != null)
             {
@@ -358,6 +363,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private bool CanShow(TargetRoster.Target? target) => IsReady(target) && (!observer.RemoteSession || automatic?.CanFrame(target) == true);
     private void ResetShot()
     {
+        pictureMonitor.Clear();
         wildlife.Reset();
         playerShots.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
@@ -478,6 +484,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop(bool force = false, bool parked = false)
     {
+        pictureMonitor.Clear();
         wildlife.Reset();
         playerShots.Reset();
         if (observer.Active && !force)
@@ -643,6 +650,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             bool scenic = !plugin.probe.Active && plugin.coverage.Mode == CoverageMode.Scenic &&
                 (!plugin.observer.Active || plugin.observer.Phase == ObserverPhase.Watching);
+            plugin.rig.EditorialHold = plugin.director.IsHolding;
+            plugin.rig.PresentationConfirmed = plugin.presentedFrame >= Time.frameCount - 1 &&
+                plugin.frameHold.HasRecentLiveFrame && plugin.presentedMode == plugin.coverage.Mode &&
+                plugin.presentedRevision == plugin.coverage.Revision &&
+                (plugin.coverage.Mode == CoverageMode.Player ? plugin.presentedPlayerUsable &&
+                    plugin.presentedPlayerId == plugin.coverage.SubjectId : plugin.presentedIdleUsable &&
+                    (plugin.coverage.Mode != CoverageMode.Scenic || plugin.presentedScenicPlan == scenicPlan?.Id));
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
                 plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null, continuousPlayer, playerTarget, plugin.observer.Active, creatureTarget, scenicPlan, scenicProgress, scenic ? plugin.idle.Visibility : null);
             if (scenic && !plugin.rig.IsProcedural && plugin.cameraReady && plugin.rig.Position.HasValue &&
@@ -681,6 +695,16 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private static void AfterListenerUpdate(GameCamera __instance)
     {
         instance?.stream?.AlignListener(__instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>());
+    }
+
+    private void ObserveProgramPicture(RenderTexture texture, long generation, int renderFrame)
+    {
+        if (!settings.RenderedPictureEvaluation.Value) { pictureMonitor.Clear(); return; }
+        RenderedPictureContext? context = cameraReady &&
+            presentedFrame == renderFrame ? rig.PictureContext : null;
+        if (!context.HasValue) { pictureMonitor.Suspend(); return; }
+        pictureMonitor.SetContext(context.Value);
+        pictureMonitor.Offer(texture, generation, renderFrame);
     }
 
     private void ToggleStream()
@@ -940,6 +964,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     {
         connection?.Dispose(); CancelIntent(); remote?.Close();
         Stop(true);
+        pictureMonitor.Dispose();
         harmony?.UnpatchSelf();
         RestoreBackground();
         if (instance == this) instance = null;
@@ -948,17 +973,19 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition on|off | groups on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
+        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition|groups|prediction|sequences|scales|picture on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
         if (args.Length < 2) { context?.AddString(usage); return; }
         string mode = args[1].ToLowerInvariant();
         if (mode == "status" && args.Length == 2)
         {
             context?.AddString(rig.Diagnostics);
+            context?.AddString(pictureMonitor.Diagnostics);
+            context?.AddString($"Production direction: prediction {settings.PredictiveShots.Value}; sequences {settings.ShotSequences.Value}; scales {settings.ShotScales.Value}; rendered-picture analysis {settings.RenderedPictureEvaluation.Value}");
             context?.AddString($"Camera settings (player / creature / scenic): procedural {settings.ProceduralPlayers.Value}; composition {settings.DeliberateComposition.Value}; dynamic {settings.DynamicShots.Value}; groups {settings.GroupFraming.Value}; motion {settings.ShotMotion.Value:F2}; position damping {settings.PositionDamping.Value:F2}s; aim damping {settings.AimDamping.Value:F2}s; dead zone {settings.DeadZone.Value:F2}");
             return;
         }
@@ -973,6 +1000,15 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             settings.DeliberateComposition.Value = args[2] == "on";
         else if (mode == "groups" && args.Length == 3 && (args[2] == "on" || args[2] == "off"))
             settings.GroupFraming.Value = args[2] == "on";
+        else if (args.Length == 3 && (args[2] == "on" || args[2] == "off") &&
+            (mode == "prediction" || mode == "sequences" || mode == "scales" || mode == "picture"))
+        {
+            bool enabled = args[2] == "on";
+            if (mode == "prediction") settings.PredictiveShots.Value = enabled;
+            else if (mode == "sequences") settings.ShotSequences.Value = enabled;
+            else if (mode == "scales") settings.ShotScales.Value = enabled;
+            else { settings.RenderedPictureEvaluation.Value = enabled; pictureMonitor.Clear(); }
+        }
         else if (mode == "motion" && args.Length == 3 && CameraNumber(args[2], 0, 1.5f, out float motion))
             settings.ShotMotion.Value = motion;
         else if (mode == "damping" && args.Length == 4 && CameraNumber(args[2], 0.1f, 3f, out float position) &&

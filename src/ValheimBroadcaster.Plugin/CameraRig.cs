@@ -25,6 +25,10 @@ internal sealed class CameraRig
     internal CameraSceneFrame? CurrentPlayerScene => proceduralActive ? shotCamera.CurrentPlayerScene : null;
     internal string? CurrentPlayerId => proceduralActive ? shotCamera.CurrentPlayerId : null;
     internal float PlayerSceneObservedAt => proceduralActive ? shotCamera.PlayerSceneObservedAt : -1;
+    internal bool PresentationConfirmed { set => shotCamera.PresentationConfirmed = value; }
+    internal bool EditorialHold { set => shotCamera.EditorialHold = value; }
+    internal RenderedPictureMonitor? PictureMonitor { set => shotCamera.PictureMonitor = value; }
+    internal RenderedPictureContext? PictureContext => proceduralActive && LastPictureUsable ? shotCamera.BuildPictureContext() : null;
     private Camera? camera;
     private Camera? skyCamera;
     private float savedFov;

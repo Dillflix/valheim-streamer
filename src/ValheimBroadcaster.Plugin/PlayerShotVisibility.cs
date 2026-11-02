@@ -35,12 +35,17 @@ internal sealed class PlayerShotVisibility
         internal readonly Vector3 Focus;
         internal readonly float Weight, Radius, Height, BottomOffset;
         internal readonly bool Primary;
-        internal Subject(Vector3 focus, float weight, float radius, bool primary, float height = 0, float bottomOffset = -1)
+        internal readonly ShotScale Scale;
+        internal Subject(Vector3 focus, float weight, float radius, bool primary, float height = 0, float bottomOffset = -1,
+            ShotScale scale = ShotScale.Full)
         {
             Focus = focus; Weight = weight; Radius = radius; Primary = primary;
-            float scale = Mathf.Clamp(radius / 0.6f, 0.5f, 4f);
-            Height = height > 0 ? height : 1.85f * scale;
-            BottomOffset = bottomOffset >= 0 ? bottomOffset : 1.5f * scale;
+            float size = Mathf.Clamp(radius / 0.6f, 0.5f, 4f);
+            Height = height > 0 ? height : 1.85f * size;
+            BottomOffset = bottomOffset >= 0 ? bottomOffset : 1.5f * size;
+            // A primary's intentional close framing never awards coverage to a
+            // companion whose legs/head happen to be outside the same picture.
+            Scale = ShotScalePolicy.ForSubject(scale, primary);
         }
     }
 
@@ -52,19 +57,22 @@ internal sealed class PlayerShotVisibility
         internal readonly float PrimaryReadability, PrimarySafeFrame, PrimaryHeadroom, PrimaryFrameHeight;
         internal readonly float PrimaryScreenX, PrimaryScreenY, PrimaryFocusX, PrimaryFocusY;
         internal readonly bool CameraClear, SurveyComplete, PrimaryInFrame;
+        internal readonly ShotScale PrimaryScale;
         // Input subject indexes that are clearly represented in this actual pose.
         internal readonly int VisibleMask;
         internal readonly string Reason;
         internal Result(float score, bool clear, float solid, float foliage, float foreground,
             bool complete, string reason, bool primaryInFrame = false, float primaryVisibility = 0,
             float groupVisibility = 0, int visibleMask = 0, ShotProjection.Envelope primaryEnvelope = default,
-            ShotProjection.Result primaryFocus = default, float primarySolid = 0, float primaryFoliage = 0)
+            ShotProjection.Result primaryFocus = default, float primarySolid = 0, float primaryFoliage = 0,
+            ShotScale primaryScale = ShotScale.Full)
         {
             Score = score; CameraClear = clear; SolidOcclusion = solid;
             FoliageOcclusion = foliage; ForegroundOcclusion = foreground;
             SurveyComplete = complete; Reason = reason; PrimaryInFrame = primaryInFrame;
             PrimaryVisibility = primaryVisibility; GroupVisibility = groupVisibility; VisibleMask = visibleMask;
             PrimarySolidOcclusion = primarySolid; PrimaryFoliageOcclusion = primaryFoliage;
+            PrimaryScale = primaryScale;
             PrimaryReadability = (float)primaryEnvelope.Readability; PrimarySafeFrame = (float)primaryEnvelope.SafeFraction;
             PrimaryHeadroom = (float)primaryEnvelope.Headroom; PrimaryFrameHeight = (float)primaryEnvelope.RelativeHeight;
             PrimaryScreenX = (float)primaryEnvelope.X; PrimaryScreenY = (float)primaryEnvelope.Y;
@@ -81,10 +89,13 @@ internal sealed class PlayerShotVisibility
     {
         internal readonly float Screen, Solid, Leaves, Visibility, Quality, Readability;
         internal readonly ShotProjection.Envelope Envelope;
-        internal SubjectMeasure(ShotProjection.Envelope envelope, float solid, float leaves, float visibility, float quality)
+        internal readonly bool CriticalVisible;
+        internal SubjectMeasure(ShotProjection.Envelope envelope, float solid, float leaves, float visibility, float quality,
+            bool criticalVisible = true)
         {
             Envelope = envelope; Screen = (float)envelope.VisibleFraction; Solid = solid; Leaves = leaves;
             Visibility = visibility; Quality = quality; Readability = (float)envelope.Readability;
+            CriticalVisible = criticalVisible;
         }
     }
 
@@ -215,7 +226,8 @@ internal sealed class PlayerShotVisibility
             float importance = i == primary ? Mathf.Max(1f, subject.Weight) : Mathf.Clamp(subject.Weight, 0, 2f);
             groupQuality += value.Quality * importance; groupVisibility += value.Visibility * importance;
             solid += value.Solid * importance; leaves += value.Leaves * importance; weight += importance;
-            if (value.Screen >= 0.85f && value.Visibility >= PictureQuality.MinimumActorVisibility &&
+            if (value.CriticalVisible && ShotScalePolicy.EnvelopeReadable(value.Envelope, subject.Scale) &&
+                value.Visibility >= PictureQuality.MinimumActorVisibility &&
                 value.Readability >= PictureQuality.MinimumActorReadability && value.Envelope.Headroom >= 0 &&
                 value.Solid <= PictureQuality.MaximumPrimarySolidOcclusion && value.Leaves <= PictureQuality.MaximumPrimaryFoliageOcclusion)
                 visibleMask |= 1 << i;
@@ -238,28 +250,32 @@ internal sealed class PlayerShotVisibility
             if (FoliageAlong(camera, direction, range))
                 foreground += Math.Abs(x) <= 1 && Math.Abs(y) <= 1 ? 2f / 22f : 1f / 22f;
         }
-        bool primaryInFrame = main.Screen >= 0.6f;
+        ShotScale primaryScale = subjects[primary].Scale;
+        bool primaryInFrame = main.CriticalVisible && ShotScalePolicy.EnvelopeReadable(main.Envelope, primaryScale);
         // Group coverage may distinguish equally readable primary shots, but
         // cannot rescue a tiny, clipped or heavily obscured primary actor.
         float quality = main.Quality * (0.7f + 0.3f * groupQuality) * (1f - 0.35f * foreground);
         if (!complete) quality *= 0.75f;
         // Positive quality for any physically safe, in-frame view preserves a
         // fallback under broad canopy bounds. Lost primaries cannot win on group size.
-        quality = primaryInFrame ? Mathf.Clamp(quality, 0.03f, 1f) : 0;
+        // An imperfect but physically valid view keeps a graded fallback score.
+        // The stricter required-envelope verdict separately controls readability.
+        quality = main.Screen >= .6f ? Mathf.Clamp(quality, 0.03f, 1f) : 0;
         if (!complete || foreground > PictureQuality.MaximumForegroundOcclusion) visibleMask = 0;
-        string reason = !primaryInFrame ? "Primary player outside camera framing" :
+        string reason = !main.CriticalVisible ? "Medium framing loses a required head or torso sightline" :
+            !primaryInFrame ? "Required primary envelope outside readable camera framing" :
             main.Readability < 0.8f ? "Primary player too small for readable coverage" :
             main.Envelope.VisibleFraction < .98 ? "Primary body clipped by camera frame" :
             main.Envelope.HeadroomScore < .8 ? "Primary player needs headroom" :
             main.Envelope.SafeFraction < .9 ? "Primary player near frame edge" :
             main.Solid > 0.2f ? "Primary player obscured by solid geometry" :
             main.Leaves > 0.2f || foreground > 0.3f ? "Foliage obscures player shot" :
-            !complete ? "Foliage survey incomplete" : "Clear player composition";
+            !complete ? "Foliage survey incomplete" : "Clear " + primaryScale.ToString().ToLowerInvariant() + " actor composition";
         Vector3 localFocus = inverse * (focus - camera);
         ShotProjection.Result projectedFocus = ShotProjection.Measure(localFocus.x, localFocus.y, localFocus.z, 0, fov, aspect, nearClip);
         return new Result(quality, true, solid, leaves, Mathf.Clamp01(foreground), complete,
             reason, primaryInFrame, main.Visibility, groupVisibility, visibleMask, main.Envelope, projectedFocus,
-            main.Solid, main.Leaves);
+            main.Solid, main.Leaves, primaryScale);
     }
 
     internal float SubjectVisibility(Vector3 camera, Quaternion rotation, Subject subject,
@@ -274,6 +290,27 @@ internal sealed class PlayerShotVisibility
         return MeasureSubject(camera, Quaternion.Inverse(rotation), subject, fov, aspect, nearClip).Visibility;
     }
 
+    // Call after the actor view evaluation so this uses the same bounded survey.
+    // A readable actor alone does not certify a claimed player/object interaction.
+    // This is a point-of-interest test, not object recognition or task inference.
+    internal bool InterestVisible(Vector3 camera, Quaternion rotation, Vector3 interest,
+        float fov, float aspect, float nearClip = .3f)
+    {
+        if (!ValidPose(camera, rotation, fov, aspect, nearClip) || !TargetRoster.Finite(interest) ||
+            coveredRadius <= 0 || Vector3.Distance(camera, origin) >= coveredRadius ||
+            Vector3.Distance(interest, origin) >= coveredRadius) return false;
+        Quaternion normalized = rotation.normalized;
+        Vector3 local = Quaternion.Inverse(normalized) * (interest - camera);
+        var point = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
+        if (!point.CenterInFrame || point.X < .06 || point.X > .94 || point.Y < .06 || point.Y > .94) return false;
+        RefreshActive();
+        PrepareFoliage(camera, normalized, Mathf.Tan(fov * Mathf.Deg2Rad * .5f), aspect,
+            Vector3.Distance(camera, interest) + .5f);
+        float solid = 0, leaves = 0;
+        Sample(camera, interest, 1, ref solid, ref leaves);
+        return solid < .5f && leaves < .5f;
+    }
+
     // Geometry-only helper for composing intentional shot sizes and diagnostics.
     // It has no physics queries, foliage scans, scene checks or allocations.
     internal ShotProjection.Envelope ProjectSubject(Vector3 camera, Quaternion rotation, Subject subject,
@@ -286,10 +323,13 @@ internal sealed class PlayerShotVisibility
     private ShotProjection.Envelope ProjectBody(Vector3 camera, Quaternion inverse, Subject subject,
         float fov, float aspect, float nearClip)
     {
-        // Focus is above the actor root, not the body's center. Actual Character
-        // height supplied by the scene adapter keeps feet/head in the envelope,
-        // including shorter stances and differently sized opponents.
-        Vector3 bottom = subject.Focus - Vector3.up * subject.BottomOffset;
+        // Derive the required envelope from real dimensions. Only an explicitly
+        // requested Medium primary may omit the legs. Its head and complete
+        // upper-body envelope still need safe framing and line of sight.
+        ShotScaleProfile profile = ShotScalePolicy.Profile(subject.Scale);
+        Vector3 bottom = subject.Focus - Vector3.up * subject.BottomOffset +
+            Vector3.up * (subject.Height * profile.LowerBodyFraction);
+        float requiredHeight = subject.Height * (1 - profile.LowerBodyFraction);
         // Radius encloses the actor horizontally. Do not shrink one world axis:
         // the actor may turn independently of both the camera and its velocity.
         float halfWidth = Mathf.Clamp(subject.Radius, 0.15f, 8f);
@@ -298,11 +338,11 @@ internal sealed class PlayerShotVisibility
         for (int z = -1; z <= 1; z += 2)
         for (int x = -1; x <= 1; x += 2)
         {
-            Vector3 point = bottom + new Vector3(x * halfWidth, y * subject.Height, z * halfWidth);
+            Vector3 point = bottom + new Vector3(x * halfWidth, y * requiredHeight, z * halfWidth);
             Vector3 local = inverse * (point - camera);
             bodyCorners[index++] = new ShotProjection.Point(local.x, local.y, local.z);
         }
-        return ShotProjection.MeasureEnvelope(bodyCorners, fov, aspect, nearClip);
+        return ShotProjection.MeasureEnvelope(bodyCorners, fov, aspect, nearClip, profile.MinimumReadableHeight);
     }
 
     private SubjectMeasure MeasureSubject(Vector3 camera, Quaternion inverse, Subject subject,
@@ -316,36 +356,43 @@ internal sealed class PlayerShotVisibility
         // must not stand in for a visible torso. Camera-relative shoulder/hip
         // samples remain within the conservative actor envelope.
         Vector3 across = Vector3.Cross(Vector3.up, subject.Focus - camera).normalized * (subject.Radius * .65f);
-        MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * .92f), detailed ? .2f : .3f,
+        bool medium = subject.Scale == ShotScale.Medium;
+        bool headVisible = MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * .92f), detailed ? .2f : .3f,
             fov, aspect, nearClip, ref solid, ref leaves);
-        MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * .55f), detailed ? .24f : .5f,
+        bool torsoVisible = MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * (medium ? .74f : .55f)), detailed ? .24f : .5f,
             fov, aspect, nearClip, ref solid, ref leaves);
-        MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * .12f), detailed ? .12f : .2f,
+        MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * (medium ? .48f : .12f)), detailed ? .12f : .2f,
             fov, aspect, nearClip, ref solid, ref leaves);
         for (int side = -1; detailed && side <= 1; side += 2)
         {
-            MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * .72f) + across * side, .12f,
+            MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * (medium ? .82f : .72f)) + across * side, .12f,
                 fov, aspect, nearClip, ref solid, ref leaves);
-            MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * .35f) + across * side, .1f,
+            MeasurePoint(camera, inverse, bottom + Vector3.up * (subject.Height * (medium ? .54f : .35f)) + across * side, .1f,
                 fov, aspect, nearClip, ref solid, ref leaves);
         }
         solid = Mathf.Clamp01(solid); leaves = Mathf.Clamp01(leaves);
         float visible = (float)(envelope.VisibleFraction * envelope.Readability) * (1f - solid) * (1f - .65f * leaves);
-        float quality = (float)envelope.Quality * (1f - .7f * solid - .45f * leaves * (1f - solid));
-        return new SubjectMeasure(envelope, solid, leaves, visible, quality);
+        float quality = (float)envelope.Quality * (1f - .7f * solid - .45f * leaves * (1f - solid)) *
+            (.82f + .18f * ShotScalePolicy.SizeQuality(envelope, subject.Scale));
+        return new SubjectMeasure(envelope, solid, leaves, visible, quality, !medium || headVisible && torsoVisible);
     }
 
-    private void MeasurePoint(Vector3 camera, Quaternion inverse, Vector3 target, float weight,
+    private bool MeasurePoint(Vector3 camera, Quaternion inverse, Vector3 target, float weight,
         float fov, float aspect, float nearClip, ref float solid, ref float leaves)
     {
         Vector3 local = inverse * (target - camera);
         ShotProjection.Result projection = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
-        if (projection.CenterInFrame) Sample(camera, target, weight, ref solid, ref leaves);
+        if (!projection.CenterInFrame) return false;
+        float pointSolid = 0, pointLeaves = 0;
+        Sample(camera, target, 1, ref pointSolid, ref pointLeaves);
+        solid += pointSolid * weight; leaves += pointLeaves * weight;
+        return pointSolid < .5f && pointLeaves < .5f;
     }
 
     private static bool ValidSubject(Subject subject) => TargetRoster.Finite(subject.Focus) &&
         Finite(subject.Radius) && subject.Radius > 0 && Finite(subject.Height) && subject.Height > 0 &&
-        subject.Height <= 32 && Finite(subject.BottomOffset) && subject.BottomOffset >= 0 && subject.BottomOffset <= 32;
+        subject.Height <= 32 && Finite(subject.BottomOffset) && subject.BottomOffset >= 0 && subject.BottomOffset <= 32 &&
+        (int)subject.Scale >= 0 && (int)subject.Scale <= (int)ShotScale.Medium;
 
     private void RefreshActive()
     {

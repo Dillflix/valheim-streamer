@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
+using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin.Streaming;
 
@@ -10,7 +11,9 @@ internal sealed class StreamCapture : MonoBehaviour
     private EncoderSession? session;
     private GameAudioTap? tap;
     private AudioListener? listener;
-    private RenderTexture? screen, output;
+    private RenderTexture? output;
+    private FrameHold? program;
+    private ProgramFrameStamp pendingFrame;
     private byte[] pixels = Array.Empty<byte>();
     private bool active, pending;
     private Vector3 normalPosition;
@@ -30,7 +33,7 @@ internal sealed class StreamCapture : MonoBehaviour
     internal string Status => session?.Status ?? "Stopped";
     internal string Diagnostics => session == null ? "No encoder session." : session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails;
 
-    internal void Begin(StreamOptions options, AudioListener gameListener, Action<string>? onFailure = null)
+    internal void Begin(StreamOptions options, AudioListener gameListener, FrameHold programSource, Action<string>? onFailure = null)
     {
         if (!CanStart) throw new InvalidOperationException("Wait for the previous encoder to stop.");
         options.Validate();
@@ -45,6 +48,7 @@ internal sealed class StreamCapture : MonoBehaviour
             Generation++;
             reportFailure = onFailure;
             failureReported = false;
+            program = programSource ?? throw new ArgumentNullException(nameof(programSource));
             listener = gameListener;
             normalRotation = listener.transform.localRotation;
             AudioSettings.OnAudioConfigurationChanged += AudioConfigurationChanged;
@@ -106,16 +110,11 @@ internal sealed class StreamCapture : MonoBehaviour
 
     private void CaptureFrame()
     {
-        if (Screen.width <= 0 || Screen.height <= 0) return;
-        if (!screen || screen.width != Screen.width || screen.height != Screen.height)
-        {
-            ReleaseTexture(ref screen);
-            screen = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32);
-            screen.Create();
-        }
-        // Copy the already-rendered framebuffer, including slate/overlay. No second
-        // camera render, ReadPixels main-thread stall, or desktop capture.
-        FramebufferCapture.Copy(screen, output!);
+        if (program == null || !output) return;
+        // Copy only the camera compositor's program output. Console, local
+        // diagnostic banners and screen-space HUD/UI never become stream input.
+        // Missing or stale compositor output supplies an intentional clean slate.
+        pendingFrame = program.CopyProgramFrame(output);
         pending = true;
         try { AsyncGPUReadback.Request(output, 0, TextureFormat.RGBA32, ReadbackFinished); }
         catch { pending = false; throw; }
@@ -126,7 +125,7 @@ internal sealed class StreamCapture : MonoBehaviour
         pending = false;
         try
         {
-            if (!active || session == null) return;
+            if (!active || session == null || program == null || !program.IsProgramFrameCurrent(pendingFrame)) return;
             if (request.hasError) { session.Fail("GPU readback failed; restart with a supported graphics backend."); return; }
             request.GetData<byte>().CopyTo(pixels);
             pixels = session.SubmitVideo(pixels);
@@ -150,10 +149,11 @@ internal sealed class StreamCapture : MonoBehaviour
         }
         listenerMoved = false;
         listener = null;
+        program = null;
         if (!pending) ReleaseTextures(); // An outstanding request owns these until its callback.
     }
 
-    private void ReleaseTextures() { ReleaseTexture(ref screen); ReleaseTexture(ref output); pixels = Array.Empty<byte>(); }
+    private void ReleaseTextures() { ReleaseTexture(ref output); pixels = Array.Empty<byte>(); }
     private static void ReleaseTexture(ref RenderTexture? texture)
     {
         if (texture) { texture.Release(); Destroy(texture); }

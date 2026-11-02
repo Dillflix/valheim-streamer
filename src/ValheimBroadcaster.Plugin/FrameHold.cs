@@ -7,19 +7,24 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class FrameHold
 {
     private readonly FrameContinuity continuity = new FrameContinuity();
+    private readonly ProgramFramePolicy program = new ProgramFramePolicy();
+    private readonly ProgramSlate slate = new ProgramSlate();
     private Func<bool> active = () => false, ready = () => false, hardFailure = () => true;
     private Action<string> warning = _ => { };
     private Camera? camera;
     private FrameHoldRenderer? renderer;
     private RenderTexture? frame;
-    private bool captureFailed;
+    private bool captureFailed, hardBoundary;
     private int renderedFrame = -1, reportedFrame = -1;
     private FramePresentation renderedPresentation = FramePresentation.Slate, lastPresentation = FramePresentation.Slate;
     private long holds, slates;
     private float testAt = -1;
+    internal Action<RenderTexture, long, int>? ObserveLiveFrame;
+    internal Action? PictureUnavailable;
+    internal long Generation => program.Generation;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
     internal string LastFailure { get; set; } = "none";
-    internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}.";
+    internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; clean program epoch {program.Generation}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}.";
 
     internal void Configure(Func<bool> isActive, Func<bool> isReady, Func<bool> isHardFailure, Action<string> reportWarning)
     { active = isActive; ready = isReady; hardFailure = isHardFailure; warning = reportWarning; }
@@ -45,6 +50,7 @@ internal sealed class FrameHold
 
     internal void Render(RenderTexture source, RenderTexture destination)
     {
+        SynchronizeBoundary();
         if (!active()) { Blit(source, destination); return; }
         float now = Time.unscaledTime;
         bool hard = hardFailure();
@@ -76,7 +82,7 @@ internal sealed class FrameHold
             if (mode == FramePresentation.Hold && (!frame || captureFailed)) mode = FramePresentation.Slate;
             // Live and Hold have the identical final texture-to-camera path. Never
             // reinterpret an end-of-frame screenshot through IMGUI coordinates.
-            if (mode == FramePresentation.Slate) Blit(Texture2D.blackTexture, destination);
+            if (mode == FramePresentation.Slate) Blit(slate.Texture, destination);
             else Blit(frame && !captureFailed ? frame : source, destination);
             renderedPresentation = mode;
         }
@@ -86,14 +92,78 @@ internal sealed class FrameHold
             if (!captureFailed) warning("Camera frame hold unavailable (" + error.GetType().Name + "); recovery slate remains enabled.");
             captureFailed = true;
             renderedPresentation = live && !hard ? FramePresentation.Live : FramePresentation.Slate;
-            Blit(renderedPresentation == FramePresentation.Live ? source : Texture2D.blackTexture, destination);
+            Blit(renderedPresentation == FramePresentation.Live ? source : slate.Texture, destination);
         }
         renderedFrame = Time.frameCount;
+        program.Rendered(now, renderedFrame, renderedPresentation);
+        // Picture analysis receives only the actual clean live render, not the
+        // console, operator overlays, held frame, or recovery card. Consumers
+        // copy synchronously into their own textures before asynchronous work.
+        if (renderedPresentation == FramePresentation.Live && frame && !captureFailed)
+        {
+            RenderTexture target = RenderTexture.active;
+            bool srgb = GL.sRGBWrite;
+            try { ObserveLiveFrame?.Invoke(frame, program.Generation, renderedFrame); }
+            catch (Exception error)
+            {
+                warning("Rendered-picture analysis unavailable (" + error.GetType().Name + "); clean broadcast output continues.");
+                ObserveLiveFrame = null;
+            }
+            finally { RenderTexture.active = target; GL.sRGBWrite = srgb; }
+        }
+        else NotifyUnavailable();
+    }
+
+    internal ProgramFrameStamp CopyProgramFrame(RenderTexture destination)
+    {
+        SynchronizeBoundary();
+        ProgramFrameStamp stamp = program.Select(Time.unscaledTime, Time.frameCount, active(), hardFailure(),
+            renderer && renderer.isActiveAndEnabled && frame && frame.IsCreated() && !captureFailed);
+        RenderTexture previousTarget = RenderTexture.active;
+        bool srgb = GL.sRGBWrite;
+        try
+        {
+            // Both live and held output follow Unity's regular-texture blit
+            // path. There is no backbuffer/IMGUI copy and no platform-only flip.
+            Blit(stamp.Presentation == FramePresentation.Slate ? slate.Texture : frame!, destination);
+        }
+        finally { RenderTexture.active = previousTarget; GL.sRGBWrite = srgb; }
+        return stamp;
+    }
+
+    internal bool IsProgramFrameCurrent(ProgramFrameStamp stamp)
+    {
+        SynchronizeBoundary();
+        return program.AcceptReadback(stamp, Time.unscaledTime, active(), hardFailure());
+    }
+
+    internal bool IsGenerationCurrent(long generation)
+    {
+        SynchronizeBoundary();
+        return active() && !hardFailure() && generation == program.Generation;
+    }
+
+    private void SynchronizeBoundary()
+    {
+        bool hard = !active() || hardFailure();
+        if (hard && !hardBoundary)
+        {
+            continuity.Reset(); program.Invalidate(); testAt = -1;
+            NotifyUnavailable();
+        }
+        hardBoundary = hard;
+    }
+
+    private void NotifyUnavailable()
+    {
+        try { PictureUnavailable?.Invoke(); }
+        catch { PictureUnavailable = null; }
     }
 
     // GUI adds text or an opaque fallback only. It never draws the held image.
     internal FramePresentation Present()
     {
+        SynchronizeBoundary();
         bool hard = hardFailure();
         if (hard) { continuity.Reset(); testAt = -1; }
         FramePresentation result = !hard && renderer && renderedFrame == Time.frameCount
@@ -137,7 +207,9 @@ internal sealed class FrameHold
     internal void Reset()
     {
         Detach(); holds = slates = 0; captureFailed = false; reportedFrame = -1;
+        hardBoundary = false;
         lastPresentation = FramePresentation.Slate; LastFailure = "none";
+        slate.Dispose();
     }
 
     private void Detach()
@@ -154,7 +226,7 @@ internal sealed class FrameHold
 
     private void Release()
     {
-        continuity.Reset();
+        continuity.Reset(); program.Invalidate(); NotifyUnavailable();
         if (frame) { frame.Release(); UnityEngine.Object.Destroy(frame); }
         frame = null;
     }

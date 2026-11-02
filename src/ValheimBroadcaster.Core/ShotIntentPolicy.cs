@@ -76,16 +76,19 @@ namespace ValheimBroadcaster.Core
         public CinematicShotIntent Intent { get; private set; } = CinematicShotIntent.Neutral;
         public string Reason { get; private set; } = "Establishing scene context";
 
-        public CinematicShotIntent Update(double now, double dt, ShotSituation scene, bool usable)
+        public CinematicShotIntent Update(double now, double dt, ShotSituation scene, bool usable, ShotRole? roleOverride = null)
         {
             if (!Finite(now) || now < 0 || !Finite(dt) || dt < 0 || lastNow >= 0 && now < lastNow)
             { Reset(); throw new ArgumentOutOfRangeException(nameof(now)); }
+            if (roleOverride.HasValue && ((int)roleOverride.Value < 0 || (int)roleOverride.Value > (int)ShotRole.Landscape))
+                throw new ArgumentOutOfRangeException(nameof(roleOverride));
             bool gap = lastNow >= 0 && now - lastNow > 1;
             double elapsed = lastNow >= 0 && !gap ? Math.Min(dt, Math.Min(.25, now - lastNow)) : 0;
             double step = usable && lastUsable ? elapsed : 0;
             if (gap || !usable) pendingAge = 0;
             lastNow = now; lastUsable = usable; shown += step;
             ShotRole wanted = Choose(scene, shown);
+            if (roleOverride.HasValue) wanted = ResolveRole(scene, roleOverride.Value);
             if (wanted != pending) { pending = wanted; pendingAge = 0; }
             pendingAge += step;
             bool urgent = wanted == ShotRole.Action || wanted == ShotRole.Interior || wanted == ShotRole.Landscape;
@@ -105,6 +108,33 @@ namespace ValheimBroadcaster.Core
                 role == ShotRole.Landscape ? "Developing the environmental scene" :
                 scene.Confidence < .6f ? "Establishing context; activity evidence is uncertain" : "Establishing scene context";
             return Intent;
+        }
+
+        /// <summary>Resolve a qualified sequence request before counting its
+        /// presentation. This target can differ from the still-easing applied
+        /// intent; that older role must not fulfill the requested beat.</summary>
+        public static ShotRole ResolveRole(ShotSituation scene, ShotRole requested)
+        {
+            if ((int)requested < 0 || (int)requested > (int)ShotRole.Landscape)
+                throw new ArgumentOutOfRangeException(nameof(requested));
+            ShotRole contextual = Choose(scene, EstablishSeconds);
+            if (contextual == ShotRole.Interior || contextual == ShotRole.Action || scene.Kind == ShotSceneKind.Scenic)
+                return contextual;
+            return Supports(requested, scene) ? requested : contextual;
+        }
+
+        // An editorial sequence cannot invent an interaction or override a
+        // measured cramped-space/active-combat requirement.
+        private static bool Supports(ShotRole role, ShotSituation scene)
+        {
+            if (role == ShotRole.Establish) return true;
+            if (scene.Confidence < .6f) return false;
+            if (role == ShotRole.Detail) return scene.Activity == CinematicActivity.Work && scene.HasInterest;
+            if (role == ShotRole.Interaction) return scene.Companions > 0 || scene.Opponents > 0 || scene.HasInterest;
+            if (role == ShotRole.Action) return scene.Activity == CinematicActivity.Combat;
+            if (role == ShotRole.Tracking) return scene.Activity == CinematicActivity.Travel ||
+                scene.Locomotion == ShotLocomotion.Boat || scene.Locomotion == ShotLocomotion.Swim || scene.Locomotion == ShotLocomotion.Vertical;
+            return false;
         }
 
         private static ShotRole Choose(ShotSituation scene, double shown)
