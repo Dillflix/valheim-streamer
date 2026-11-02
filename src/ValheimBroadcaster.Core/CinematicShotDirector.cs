@@ -45,6 +45,11 @@ namespace ValheimBroadcaster.Core
         public double DesiredSeconds { get; private set; } = 18;
         public int RecentCorrections => corrections.Count;
         public string Reason { get; private set; } = "Awaiting camera candidates";
+        public ShotTrajectoryKind TrajectoryKind => activity == CinematicActivity.Combat ? ShotTrajectoryKind.Tracking :
+            activity == CinematicActivity.Work ? ShotTrajectoryKind.ActivityArea :
+            activity == CinematicActivity.Travel && (familyIndex == 0 || familyIndex == 4) ? ShotTrajectoryKind.Tracking :
+            familyIndex == 0 || familyIndex == 1 ? ShotTrajectoryKind.Arc :
+            familyIndex == 2 ? ShotTrajectoryKind.Dolly : ShotTrajectoryKind.Establish;
 
         public CinematicShotDirector() { ClearHistory(); }
 
@@ -138,8 +143,11 @@ namespace ValheimBroadcaster.Core
             float freedom = Clamp01((spaceFraction - 0.25f) / 0.65f);
             if (confined || adequate < 2) freedom *= 0.12f;
             float activityScale = activity == CinematicActivity.Combat ? 0 :
-                activity == CinematicActivity.Travel ? 0.35f : activity == CinematicActivity.Work ? 0.45f : 1;
-            float targetGain = freedom * activityScale / (1 + speed * 0.08f);
+                activity == CinematicActivity.Travel ? 0.85f : activity == CinematicActivity.Work ? 0.45f : 1;
+            // Readable moving subjects still receive intentional development.
+            // Available space/correction history control decoration; sustained
+            // speed alone must not reduce travel to almost a fixed chase camera.
+            float targetGain = freedom * activityScale / (1 + speed * 0.015f);
             // Motion does not jump when activity/space classification changes.
             if (!motionPaused) motionGain += (targetGain - motionGain) * (float)(1 - Math.Exp(-step * 1.5));
             return chosen;

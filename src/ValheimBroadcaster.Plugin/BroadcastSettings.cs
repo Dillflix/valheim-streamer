@@ -53,8 +53,8 @@ internal sealed class BroadcastSettings
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
         DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent screen placement and headroom from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
-        PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Procedural camera position damping in seconds; larger values follow more gently.", 0.1f, 3f));
-        AimDamping = config.Bind("Camera", "AimDamping", 1f, Range("Procedural camera aim damping in seconds; larger values react more gently to subject movement.", 0.1f, 3f));
+        PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));
+        AimDamping = config.Bind("Camera", "AimDamping", 1f, Range("Cinemachine aim settling time in seconds (approximately 99% convergence); larger values soften aiming response to subject movement.", 0.1f, 3f));
         DeadZone = config.Bind("Camera", "DeadZone", 0.12f, Range("Screen fraction in which subjects can move without the camera immediately recentering them.", 0f, 0.3f));
         ShotMotion = config.Bind("Camera", "ShotMotion", 1f, Range("Strength of deliberate shot movement. Zero disables decorative movement while retaining tracking, damping and shot selection.", 0f, 1.5f));
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));

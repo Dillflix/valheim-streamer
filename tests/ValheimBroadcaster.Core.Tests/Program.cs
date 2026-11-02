@@ -75,6 +75,7 @@ internal static class Program
             .Concat(ProceduralShotPolicyTests.Cases())
             .Concat(ProceduralCameraGeometryTests.Cases())
             .Concat(CinematicShotDirectorTests.Cases())
+            .Concat(ShotTrajectoryPolicyTests.Cases())
             .Concat(CompanionGroupPolicyTests.Cases())
             .Concat(PlayerCoverageTests.Cases())
             .Concat(ShotProjectionTests.Cases())

@@ -15,7 +15,7 @@ internal static class CinematicShotDirectorTests
         yield return ("Cinematic pacing counts usable frames and clears stale comparisons", FootageGap);
         yield return ("Cinematic motion is bounded and previews do not change state", MotionBounds);
         yield return ("Cinematic configured motion strength reaches its bounded upper endpoint", MotionStrength);
-        yield return ("Cinematic sustained travel uses less decorative motion than idle", SustainedTravel);
+        yield return ("Cinematic readable travel retains bounded intentional development", SustainedTravel);
         yield return ("Cinematic combat suppresses decoration without forced editorial cuts", Combat);
         yield return ("Cinematic history avoids immediate return to the preceding view", History);
         yield return ("Cinematic reset starts a new independent subject and clock", Reset);
@@ -159,9 +159,12 @@ internal static class CinematicShotDirectorTests
             Tick(idle, i * 0.1);
             Tick(travel, i * 0.1, activity: CinematicActivity.Travel, speed: 8);
         }
-        Check(Movement(travel.Motion()) < Movement(idle.Motion()) * 0.4,
-            "Sustained sprinting retained idle camera decoration.");
+        Check(Movement(travel.Motion()) < Movement(idle.Motion()) &&
+            Movement(travel.Motion()) > Movement(idle.Motion()) * 0.5,
+            "Readable sustained travel suppressed intentional camera development.");
         Check(travel.SelectedIndex == 0, "Movement classification forced an early viewpoint change.");
+        Check(travel.TrajectoryKind == ShotTrajectoryKind.Tracking,
+            "Travel shot did not expose its typed tracking intent.");
     }
 
     private static void MotionStrength()

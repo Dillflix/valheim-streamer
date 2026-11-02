@@ -2,6 +2,8 @@
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
+**0.8.15 separates camera trajectories from player translation.** It builds directly on 0.8.14 and retains its deliberate composition. Each procedural candidate now develops a persistent position in the world while aiming at the current subject, with activity-dependent tracking and bounded corrections. This addresses the target-relative follow point, velocity prediction and blend displacement that made the camera feel attached during movement. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior, diagnostics and pending visual tests. Replace all three client DLLs and included notices together, preserving configuration. The existing protocol-3 server can remain installed.
+
 **0.8.14 adds deliberate screen composition to the damped player director.** It builds directly on 0.8.13: the camera now chooses persistent subject placement, movement lead room and activity space, with coordinated group framing and compact fallbacks. `broadcast camera composition on|off` compares the new placement policy while retaining the same damping and visibility checks. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior and pending visual validation. Replace the three client DLLs and included notices together, preserving configuration. Observer protocol and server behavior are unchanged; this update requires no new server deployment.
 
 **0.8.13 adds damped, activity-aware player direction and cooperative framing.** Players can move within the frame; readable shots develop through bounded movements and fresh compositions, with quieter behavior in confined spaces or after obstruction corrections. Persistent nearby companions and relevant opponents can share a shot, and sustained visible coverage informs automatic player rotation. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for controls, evidence limits and pending runtime tests. Built on 0.8.12, retaining protocol 3; the existing server remains compatible. A companion update optionally adds fresh observation/health-loss hints. Replace the three client DLLs and included notices together, preserving configuration.
@@ -177,7 +179,7 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 | `Camera / ProceduralPlayers` | `true` | Cinemachine player framing with custom foliage-aware scoring; false uses the previous fixed-angle player camera |
 | `Camera / DynamicShots` | `true` | Activity/space-aware shot duration and deliberate movement |
 | `Camera / GroupFraming` | `true` | Persistent nearby companions and relevant opponents when a readable composition is available |
-| `Camera / PositionDamping`, `AimDamping` | `0.8`, `1` | Procedural damping in seconds; larger values soften response, range 0.1–3 |
+| `Camera / PositionDamping`, `AimDamping` | `0.8`, `1` | Cinemachine damping in seconds; larger values soften response, range 0.1–3. Position damping smooths the planned trajectory, not a raw player-follow point |
 | `Camera / DeadZone` | `0.12` | Screen fraction allowing movement before recentering, range 0–0.3 |
 | `Camera / ShotMotion` | `1` | Decorative movement strength, range 0–1.5 |
 | `Camera / Distance` | `18` | Horizontal metres from target |

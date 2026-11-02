@@ -1,10 +1,10 @@
-# Player camera director (0.8.14)
+# Player camera director (0.8.15)
 
-The procedural player camera combines position/aim damping, screen-space freedom, deliberate movement, persistent nearby groups and activity-aware pacing. Version 0.8.14 adds an explicit screen-composition policy on top of 0.8.13. The selected player remains required; a new composition never authorizes observer travel. Scenic/creature idle coverage remains a separate director.
+The procedural player camera combines independent world-space trajectories, position/aim damping, screen-space composition, persistent nearby groups and activity-aware pacing. Version 0.8.15 builds directly on 0.8.14 and separates the camera's translational path from its live subject/group aim. The selected player remains required; a new composition never authorizes observer travel. Scenic/creature idle coverage remains a separate director.
 
-Version 0.8.13 allowed movement inside a dead zone but still preferred a nearly centered subject: it applied only small velocity-dependent horizontal lead and a fixed vertical offset. It did not plan persistent thirds, activity space or a coordinated group placement. Version 0.8.14 addresses that composition limitation while retaining the existing damping and clearance checks.
+Version 0.8.14 added persistent subject placement, movement lead room and coordinated group composition. Its body position still followed a target-relative point with 0.2 seconds of velocity prediction. That prediction nearly canceled the lag from the default Cinemachine position damping during sustained movement; shot blends also copied target displacement. The aim dead zone could not free the camera's translation. Version 0.8.15 removes those paths and retains the composition policy.
 
-Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The new 0.8.14 composition behavior has not been run in Unity/Valheim here.** Pure tests and compilation are distinct from visual quality, multiplayer behavior and runtime cost.
+Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The new 0.8.15 trajectory behavior has not been run in Unity/Valheim here.** Pure tests and compilation are distinct from visual quality, multiplayer behavior and runtime cost.
 
 ## Controls and configuration
 
@@ -23,7 +23,7 @@ Use `-console` when launching Valheim, then F5. Close the console to observe the
 | `broadcast camera procedural` / `fixed` | Select the procedural rig or the legacy fixed-angle comparison camera |
 | `broadcast diagnostics` | Include observer/discovery/output state and optional server-context status |
 
-`composition off` eases toward a neutral placement preference without resetting camera damping; it does not disable groups or deliberate movement. Geometry and full-body framing can still require a corrective offset. `steady` keeps the Cinemachine rig active and holds the accepted decorative offset instead of snapping it back to neutral. `fixed` selects the older camera. `motion 0` can still produce a new composition after sufficient usable footage. `broadcast hold` pauses player rotation; it does not freeze camera movement.
+`composition off` eases toward a neutral placement preference without resetting camera damping; it does not disable groups or deliberate movement. Geometry and full-body framing can still require a corrective offset. `steady` keeps the Cinemachine rig active and holds the accepted decorative offset instead of snapping it back to neutral; its trajectory uses tracking during travel and an activity-area reference otherwise. `fixed` selects the older camera. `motion 0` stops orbital/heading decoration while necessary tracking and framing continue; it can still produce a new composition after sufficient usable footage. `broadcast hold` pauses player rotation; it does not freeze camera movement.
 
 | `Camera` key | Default | Meaning |
 | --- | --- | --- |
@@ -31,10 +31,12 @@ Use `-console` when launching Valheim, then F5. Close the console to observe the
 | `DynamicShots` | `true` | Enable activity/space-aware pacing and deliberate movement |
 | `DeliberateComposition` | `true` | Choose persistent subject placement, lead room and activity space; false uses the centered comparison preference |
 | `GroupFraming` | `true` | Consider persistent companions and relevant opponents |
-| `PositionDamping` | `0.8` | Seconds; increasing it softens position response |
+| `PositionDamping` | `0.8` | Cinemachine damping in seconds for the planned trajectory; increasing it softens position response |
 | `AimDamping` | `1` | Seconds; increasing it softens aim response |
 | `DeadZone` | `0.12` | Screen fraction allowing subject movement before recentering; range 0–0.3 |
 | `ShotMotion` | `1` | Decorative movement strength, range 0–1.5 |
+
+Cinemachine's damping parameter is a settling duration, not a pure time delay: `PositionDamping = 0.8` gives approximately 99% convergence in 0.8 seconds for a stationary target. Trajectory planning now determines how camera translation responds to player motion; increasing damping alone is not the independence mechanism.
 
 `Distance`, `Height`, `Azimuth` and `FieldOfView` remain composition preferences. Procedural views can adapt them within limits. `Smoothing` governs legacy fixed/scenic response; use the two damping settings for procedural player cameras. `Director.DwellSeconds` controls player rotation, independently of a composition's duration.
 
@@ -48,13 +50,15 @@ Placement accounts for the projected subject envelope, including head and feet. 
 
 ## Movement, framing and pacing
 
-The player can move within the aim dead zone instead of being pinned to one image coordinate. Filtered movement supplies limited prediction and gradual lead room. Sustained travel can slowly shift the preferred heading; sudden turns do not instantly swing the camera. Position and aim have separate damping. The rig preserves solved camera orientation during transitions rather than replacing every frame with a hard look-at rotation.
+Each candidate keeps a persistent world-space trajectory anchor and velocity. Its look-at target remains the actual player or supported group, so aiming and screen placement can respond without translating the camera by the same amount. Establishing and activity-area shots retain a world origin; arc/dolly anchors can drift with part of coherent travel, while tracking uses the subject/group velocity. Combat prioritizes tracking. Continuous framing/range feedback and bounded acceleration correct each course as separation grows. A new shot, activity or group center does not by itself snap the anchor to the subject. This is shot-dependent behavior, not one global hold zone followed by a chase.
+
+Position and aim retain separate Cinemachine damping. Screen-space lead room remains in the composition policy, but the old 0.2-second positional prediction is removed. A planned shot transition continues the outgoing anchor's bounded velocity, or holds it in restricted space, without copying the player's raw displacement into the outgoing camera position. Sudden turns and stops therefore have to be handled by the trajectory and aiming policies, rather than moving every shot with the player. During long uninterrupted travel the camera eventually matches the subject's average speed so they remain in view. Starting, stopping and reversing are not copied directly, and the shot can continue its own bounded development around that course. Independence does not mean remaining at a fixed world point indefinitely.
 
 Readable shots develop through bounded left/right arcs, approaches, reveals or rises. Movement eases in and out and ends at rest. Open-space composition durations are approximately 16–21 seconds for idle, 20–25 for travel and 19–24 for work; these are usable-footage targets, not guaranteed cut intervals. Selection retains recent shot/movement history and requires a readable, near-best alternative. While the current view is healthy, selection discourages reversing the established movement/facing direction in the image. Combat suppresses discretionary cuts and movement, while visibility corrections remain available.
 
 Interiors lengthen dwell and greatly reduce decorative motion. Cramped passages, few readable alternatives and repeated obstruction corrections favor holding the viable view. A spacious hall can still change composition when several good views exist. Corrections impose at least five seconds of settling; repeated corrections within ten seconds suppress extra camera activity. This prevents obstruction-driven changes from being followed immediately by an unnecessary planned move.
 
-The current move and an approximately 0.8-second prediction are screened for clearance, subject framing and existing scene support. An unsafe decorative move retains its last accepted offset. Candidate evaluation runs at 5 Hz, with the selected camera and final presented pose checked each frame. A blocked blend cuts to its validated destination; a viewpoint change larger than 80 degrees also uses a validated cut instead of sweeping through the intervening arc. Physical failure can override dwell; if no valid picture remains, the existing bounded hold/recovery-slate path applies.
+Current tracking is checked against physical clearance and scene support. A physically unsafe world-anchor step is rolled back in both the helper transform and planner, so a hidden plan cannot run ahead of a retained view. An approximately 0.75-second prediction screens framing, visibility and support for discretionary movement; an uncertain future view can withhold decoration without stopping otherwise valid current tracking. An unsafe decorative move retains its last accepted offset. Candidate evaluation runs at 5 Hz, with the selected camera and final presented pose checked each frame. A blocked blend cuts to its validated destination; a viewpoint change larger than 80 degrees also uses a validated cut instead of sweeping through the intervening arc. Physical failure can override dwell; if no valid picture remains, the existing bounded hold/recovery-slate path applies.
 
 Foliage reduces picture quality rather than reporting missing world geometry. Scoring uses actual camera orientation, projection, near-plane clearance, primary visibility and weighted group visibility. Neither a low foliage score nor an outlying companion is a reason to teleport the observer.
 
@@ -75,7 +79,9 @@ Group framing does not automatically count everyone as watched. A player earns r
 
 ## Reading camera diagnostics
 
-`broadcast camera status` reports `placement requested`, `applied`, `primary focus`, `body height` and `safe`, followed by the placement and recovery reasons.
+`broadcast camera status` reports trajectory mode, `anchor lag`, planned anchor `speed`, `rendered camera` speed and `player` speed, plus the trajectory validation/correction reason. The anchor is a planned position reference; it is not the observer body or necessarily the final camera position. Rendered-camera speed is a smoothed estimate with a cap for cuts, not an isolated measurement of one camera component. Similar camera/player speeds during sustained travel are expected. Look at the response to starts, stops, reversals and shot development when checking whether movement is still being copied.
+
+It also reports `placement requested`, `applied`, `primary focus`, `body height` and `safe`, followed by the placement and recovery reasons.
 
 - **Requested** is the envelope-constrained policy destination. **Applied** is the eased guide currently sent to the aim composer, including a temporary corrective placement when needed.
 - **Primary focus** is the selected player's measured focus point in the actual presented camera pose. It can differ from the guide because of damping, the dead zone, a blend, or a shared group anchor.
@@ -86,7 +92,7 @@ A centered-looking shot can therefore be deliberate, restrained by available spa
 
 ## Optional server context and compatibility
 
-Observer admission remains **protocol 3**. Version 0.8.14 changes no server behavior or wire schema and requires no new server deployment. Existing protocol-3 servers can continue serving this client. Damping, local activity evidence and cooperative framing work without optional telemetry. Ordinary players still need no mod.
+Observer admission remains **protocol 3**. Version 0.8.15 changes no server behavior or wire schema and requires no new server deployment. Existing protocol-3 servers can continue serving this client. Damping, local activity evidence and cooperative framing work without optional telemetry. Ordinary players still need no mod.
 
 The companion added in 0.8.13 can supply observation ages, coarse velocity and recent replicated health-loss hints through a separate optional context exchange. `Observer.ContextEnabled` defaults to `true`; observer authorization and position-sharing policy still apply. It reads existing player ZDOs without activating remote creatures, generating terrain or assigning simulation ownership. Health loss has no damage-source attribution.
 
@@ -100,7 +106,7 @@ The mod compiles selected official **Cinemachine 3.1.7** runtime sources into it
 
 | Component | Use in this mod |
 | --- | --- |
-| [Orbital Follow](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineOrbitalFollow.html) | Damped world-space position with controlled orbital offsets |
+| [Orbital Follow](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineOrbitalFollow.html) | Damped position around the independently planned world-space anchor, with controlled orbital offsets |
 | [Rotation Composer](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineRotationComposer.html) | Aim damping, dead zone and frame limits |
 | [Target Group](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineTargetGroup.html) | Weighted subjects with radii, updated alongside virtual cameras |
 | [Group Framing](https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineGroupFraming.html) | Reused bounded lens-size calculation before aim; the adapter suppresses its competing centered rotation |
@@ -112,15 +118,17 @@ Vegetation renderer bounds approximate leaves and transparency; custom vegetatio
 
 ## Runtime validation
 
-**The 0.8.14 visual cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect.
+**The 0.8.15 visual cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect.
 
 | Exercise | Expected result to verify |
 | --- | --- |
-| Solo: stand, walk, sprint continuously, stop, reverse and turn | Subject can move inside the frame; tracking settles gently without excessive lag, sudden spins or travel |
+| Solo and another player: stand, walk, sprint continuously, stop, reverse and turn | Camera translation develops and settles independently; the subject can move within the frame without instant mirrored translation, excessive lag or spins |
+| Follow another player walking/sprinting in one direction for several minutes across terrain zones | Tracking remains bounded and readable throughout sustained travel; decorative trajectory choices do not trigger loading/travel cycles |
+| Stop and change direction during a planned shot transition | No raw player-displacement jump in the outgoing view; the actual transition remains clear and the primary readable |
 | Compare `composition on` / `off` while idle, travelling, reversing and looking across the scene | Deliberate placement differs from the centered preference, remains stable through brief turns, and preserves readable head/body space |
 | Remain idle in open terrain for a minute; compare `dynamic`, `steady`, `motion 0`, then restore `motion 1` | Deliberate movement and occasional new readable compositions only in the enabled modes |
-| Dense forest, narrow hallway, stairs and doorway; then spacious interior | Limited space reduces motion/churn; roomy interiors can still vary; primary remains readable when a valid option exists |
-| Two to four players gather, travel together, separate, cross different floors, then rejoin | Stable join/split, bounded framing, no distant outlier pulling the camera away; visible companions affect later automatic rotation |
+| Dense forest, near a wall, narrow hallway, stairs and doorway; then spacious interior | Limited space restrains trajectory development and motion/churn; clearance takes precedence and the primary remains readable when a valid option exists |
+| Two to four players gather, travel together, separate, cross different floors, then rejoin | Group changes do not snap the camera anchor to a new centroid; bounded framing and the primary remain stable; visible companions affect later automatic rotation |
 | Fight near allies; gather wood/ore; stand near a passive enemy | Relevant opponents only; work/combat hints match observed evidence; unknown damage is not automatically combat |
 | Updated server with context enabled/disabled, then existing protocol-3 server | Observer authorization and local camera work in all cases; optional-context status/fallback is truthful |
 | Target portal travel/respawn, cycle targets, off/on, return/park/resume and world exit/rejoin | Fresh bindings and normal recovery; no stale group, motion or camera state |
