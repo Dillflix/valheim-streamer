@@ -18,6 +18,8 @@ internal sealed class CinemachinePlayerRig : IDisposable
     private readonly ProceduralShotPolicy stableSelection = new ProceduralShotPolicy();
     private readonly PlayerSceneContext scene = new PlayerSceneContext();
     private readonly float[] scores = new float[Count];
+    private readonly float[] editorialScores = new float[Count];
+    private readonly bool[] seededEligibility = new bool[Count];
     private readonly bool[] eligible = new bool[Count];
     private readonly Candidate[] candidates = new Candidate[Count];
     private readonly List<PlayerShotVisibility.Subject> subjects = new List<PlayerShotVisibility.Subject>(6);
@@ -33,13 +35,15 @@ internal sealed class CinemachinePlayerRig : IDisposable
     private ZDOID actorId;
     private string? subjectId;
     private long revision = -1;
-    private Vector3 previousFocus, velocity, lastPosition, lastPoseFocus, lastLead, surveyedFocus, transitionFocus;
+    private Vector3 previousFocus, velocity, lastPosition, lastPoseFocus, lastLead, surveyedFocus, transitionFocus, lastAimAnchor;
     private Quaternion lastRotation = Quaternion.identity;
     private CameraState transitionFrom;
     private float solvedAt = -1, lastPoseAt = -1, evaluateAt, lastFov, heading, space = 1, transitionElapsed = 2;
     private float lastCorrection = -10, predictionAt, fallbackSince = -1;
     private int solvedFrame = -1, previousChoice = -1, motionChoice = -1;
-    private bool hasPose, interior, lastSucceeded, motionBlocked;
+    private bool hasPose, interior, lastSucceeded, motionBlocked, lastDynamic;
+    private long shotId;
+    private float approvedHeading;
     private CinematicShotMotion acceptedMotion, approvedMotion;
     private PlayerShotVisibility.Result lastView;
     internal float NearClipPlane { get; set; } = 0.3f;
@@ -55,11 +59,18 @@ internal sealed class CinemachinePlayerRig : IDisposable
         internal readonly CinemachineCamera Camera;
         internal readonly CinemachineOrbitalFollow Orbit;
         internal readonly CinemachineRotationComposer Aim;
-        internal readonly CinemachineGroupFraming Framing;
+        internal readonly CinematicLensFraming Framing;
+        internal readonly ShotCompositionPolicy Placement = new ShotCompositionPolicy();
+        internal ShotComposition Composition;
+        internal PlayerSceneContext.Frame? Context;
+        internal BroadcastSettings? Settings;
+        internal float RelaxUntil, NextRecoveryAt;
+        internal Vector2 RecoveryScreen, AppliedScreen;
+        internal string RecoveryReason = "none";
         internal readonly FoliageShotQuality Quality;
         internal bool GroupShot;
         internal Candidate(CinemachineCamera camera, CinemachineOrbitalFollow orbit,
-            CinemachineRotationComposer aim, CinemachineGroupFraming framing, FoliageShotQuality quality)
+            CinemachineRotationComposer aim, CinematicLensFraming framing, FoliageShotQuality quality)
         { Camera = camera; Orbit = orbit; Aim = aim; Framing = framing; Quality = quality; }
     }
 
@@ -79,14 +90,18 @@ internal sealed class CinemachinePlayerRig : IDisposable
         {
             Reset(); actor = player; actorId = player.GetZDOID(); subjectId = target.Identity.Id;
             world = ZNet.instance; revision = selectionRevision; interior = inside;
-            previousFocus = focus; heading = settings.Azimuth.Value;
+            previousFocus = focus; heading = approvedHeading = settings.Azimuth.Value;
         }
         if (solvedFrame == Time.frameCount)
         { position = lastPosition; rotation = lastRotation; fov = lastFov; return lastSucceeded; }
         EnsureCreated();
         solvedFrame = Time.frameCount;
         float step = Mathf.Clamp(dt, 0, 0.1f);
-        bool priorUsable = lastSucceeded;
+        bool priorUsable = lastSucceeded && lastView.PrimaryInFrame &&
+            lastView.PrimaryVisibility >= 0.55f && lastView.PrimaryReadability >= 0.8f;
+        bool modeChanged = hasPose && lastDynamic != settings.DynamicShots.Value;
+        if (modeChanged) { director.Reset(); stableSelection.Reset(); }
+        lastDynamic = settings.DynamicShots.Value;
         scene.RemoteContext = RemoteContext == null ? null : RemoteContext.GetPlayerContext;
         PlayerSceneContext.Frame context = scene.Update(target, settings.GroupFraming.Value);
         velocity = context.Velocity;
@@ -101,18 +116,18 @@ internal sealed class CinemachinePlayerRig : IDisposable
         lookPoint!.position = focus;
         UpdateGroup(context);
         visibility.Refresh(focus);
-        if (settings.DynamicShots.Value && context.Activity == CinematicActivity.Travel && velocity.sqrMagnitude > 4f && space > 0.5f && now - lastCorrection > 5f && director.RecentCorrections == 0)
+        int selected = modeChanged ? previousChoice : settings.DynamicShots.Value ? director.SelectedIndex : stableSelection.SelectedIndex;
+        if (selected != motionChoice)
         {
-            float trailing = Mathf.Atan2(velocity.x, velocity.z) * Mathf.Rad2Deg + 155f;
-            // Preserve screen direction during turns; do not snap behind facing.
-            heading = Mathf.MoveTowardsAngle(heading, trailing, step * 5f);
+            motionChoice = selected; acceptedMotion = approvedMotion = NeutralMotion();
+            approvedHeading = heading; motionBlocked = false;
         }
-        int selected = settings.DynamicShots.Value ? director.SelectedIndex : stableSelection.SelectedIndex;
-        if (selected != motionChoice) { motionChoice = selected; acceptedMotion = approvedMotion = NeutralMotion(); motionBlocked = false; }
-        CinematicShotMotion requested = settings.DynamicShots.Value ? director.Motion(settings.ShotMotion.Value) : NeutralMotion();
+        CinematicShotMotion requested = settings.DynamicShots.Value ? director.Motion(settings.ShotMotion.Value) : acceptedMotion;
         if (selected >= 0 && hasPose && settings.DynamicShots.Value)
             AdvanceMotion(selected, requested, context, focus, settings, now, step, continuous, moveCarrier);
-        else acceptedMotion = approvedMotion = NeutralMotion();
+        // Steady freezes the accepted editorial offset. It does not teleport the
+        // same virtual camera back to a neutral orbit when the mode changes.
+        else if (selected < 0) acceptedMotion = approvedMotion = NeutralMotion();
         bool evaluateAll = selected < 0 || now >= evaluateAt || (focus - surveyedFocus).sqrMagnitude > 4f;
         if (evaluateAll)
         {
@@ -124,10 +139,12 @@ internal sealed class CinemachinePlayerRig : IDisposable
             space = Mathf.Lerp(space, clear / Count, interior ? 0.7f : 0.35f);
         }
         else Evaluate(selected, acceptedMotion, context, focus, settings, dt, continuous, moveCarrier);
+        PrepareSelection(focus, context, priorUsable, modeChanged);
+        var selectionEligibility = modeChanged && previousChoice >= 0 && eligible[previousChoice] ? seededEligibility : eligible;
         int choice = settings.DynamicShots.Value
-            ? director.Select(now, step, scores, eligible, context.Activity, velocity.magnitude,
+            ? director.Select(now, step, editorialScores, selectionEligibility, context.Activity, velocity.magnitude,
                 interior, space, priorUsable)
-            : stableSelection.Select(now, scores, eligible);
+            : stableSelection.Select(now, editorialScores, selectionEligibility);
         if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
             "No player camera with loaded geometry and safe physical clearance", out position, out rotation, out fov);
         if (choice != selected && !evaluateAll)
@@ -152,28 +169,38 @@ internal sealed class CinemachinePlayerRig : IDisposable
         PlayerShotVisibility.Result endpoint = candidate.Quality.Result;
         if (Quaternion.Angle(desiredRotation, chosen.GetFinalOrientation()) > 0.01f)
             endpoint = visibility.Evaluate(desired, desiredRotation, evaluatedSubjects, desiredFov, Aspect, NearClipPlane);
-        // Framing failure is corrected locally. It is not a scene-loading or
-        // teleport condition. This also protects the primary in large group shots.
-        if (!endpoint.PrimaryInFrame)
-        {
-            desiredRotation = Quaternion.LookRotation(focus - desired, Vector3.up);
-            endpoint = visibility.Evaluate(desired, desiredRotation, evaluatedSubjects, desiredFov, Aspect, NearClipPlane);
-            NoteCorrection(now);
-        }
+        // A framing correction is editorial, never a loading or travel request.
+        // Recover only as far toward the primary as its full body requires.
+        bool bodyClipped = endpoint.PrimaryReadability >= 0.5f &&
+            (endpoint.PrimarySafeFrame < 0.85f || endpoint.PrimaryHeadroom < 0.025f);
+        if (!endpoint.PrimaryInFrame || bodyClipped && now >= candidate.NextRecoveryAt)
+            RecoverFraming(candidate, chosen, focus, desired, evaluatedSubjects, now,
+                ref desiredRotation, desiredFov, ref endpoint);
         if (!endpoint.CameraClear || !PositionSupported(desired, focus, continuous, moveCarrier))
             return HoldValidPose(context, focus, now, continuous, moveCarrier,
                 "Solved camera physical support changed before presentation", out position, out rotation, out fov);
         PlayerShotVisibility.Result actualView = endpoint;
         string transition = "tracking";
         position = desired; rotation = desiredRotation; fov = desiredFov;
-        if (hasPose && choice != previousChoice)
+        if (hasPose && (choice != previousChoice || modeChanged))
         {
             transitionFrom = chosen;
             transitionFrom.RawPosition = lastPosition; transitionFrom.PositionCorrection = Vector3.zero;
             transitionFrom.RawOrientation = lastRotation; transitionFrom.OrientationCorrection = Quaternion.identity;
             transitionFrom.Lens.FieldOfView = lastFov;
-            transitionFrom.ReferenceLookAt = lastPoseFocus;
+            transitionFrom.ReferenceLookAt = lastAimAnchor;
             transitionFocus = focus; transitionElapsed = 0;
+            if (choice != previousChoice)
+            {
+                shotId++;
+                // A large change of viewpoint is an edit, not a fast orbit
+                // through the subject. The endpoint already passed physical checks.
+                if (ViewpointAngle(lastPosition - lastPoseFocus, desired - focus) > 80f)
+                {
+                    transitionElapsed = 2; transition = "validated continuity cut";
+                    NoteCorrection(now);
+                }
+            }
         }
         if (hasPose && transitionElapsed < 1.4f)
         {
@@ -220,6 +247,7 @@ internal sealed class CinemachinePlayerRig : IDisposable
             if ((lastView.VisibleMask & (1 << i)) != 0 && context.Subjects[i].Player)
                 visiblePlayers.Add(context.Subjects[i].Id);
         lastPosition = position; lastPoseFocus = focus; lastPoseAt = now; lastLead = lead;
+        lastAimAnchor = chosen.ReferenceLookAt;
         lastRotation = rotation; lastFov = fov; hasPose = lastSucceeded = true; previousChoice = choice; fallbackSince = -1;
         LastFailure = "none";
         Diagnostics = $"Procedural camera: Cinemachine 3.1.7; shot {choice + 1}/{Count}; {context.Description}; " +
@@ -227,6 +255,9 @@ internal sealed class CinemachinePlayerRig : IDisposable
             $"age {director.ShotAge:F1}/{director.DesiredSeconds:F0}s; quality {lastView.Score:F2}; " +
             $"space {space:F2}; {(motionBlocked ? "motion held for clearance" : transition)}; " +
             $"aim damping {settings.AimDamping.Value:F1}s / dead zone {settings.DeadZone.Value:F2}; " +
+            $"placement requested ({candidate.Composition.DesiredX:F2},{candidate.Composition.DesiredY:F2}), applied ({candidate.AppliedScreen.x:F2},{candidate.AppliedScreen.y:F2}), " +
+            $"primary focus ({lastView.PrimaryFocusX - 0.5f:F2},{lastView.PrimaryFocusY - 0.5f:F2}), body height {lastView.PrimaryFrameHeight:F2}, safe {lastView.PrimarySafeFrame:F2}; " +
+            $"{candidate.Composition.Reason}; recovery {candidate.RecoveryReason}; " +
             $"{director.Reason}; {lastView.Reason}";
         return true;
     }
@@ -262,7 +293,7 @@ internal sealed class CinemachinePlayerRig : IDisposable
             subjectPoints[i].position = s.Focus;
             group!.Targets[i].Weight = Mathf.Max(0.01f, s.Weight);
             group.Targets[i].Radius = Mathf.Clamp(s.Radius, 0.3f, 3f);
-            subjects.Add(new PlayerShotVisibility.Subject(s.Focus, s.Weight, s.Radius, s.IsPrimary));
+            subjects.Add(new PlayerShotVisibility.Subject(s.Focus, s.Weight, s.Radius, s.IsPrimary, s.Height, s.BottomOffset));
         }
         for (int i = subjects.Count; i < subjectPoints.Length; i++) group!.Targets[i].Weight = 0;
         if (subjects.Count > 0) primaryOnly.Add(subjects[0]);
@@ -290,20 +321,10 @@ internal sealed class CinemachinePlayerRig : IDisposable
             AngularDampingMode = AngularDampingMode.Quaternion
         };
         candidate.Aim.Damping = new Vector2(settings.AimDamping.Value, settings.AimDamping.Value * 1.2f);
-        var composition = ScreenComposerSettings.Default;
-        composition.DeadZone.Enabled = true;
-        composition.DeadZone.Size = new Vector2(settings.DeadZone.Value, settings.DeadZone.Value * 0.75f);
-        composition.HardLimits.Enabled = true;
-        composition.HardLimits.Size = new Vector2(0.75f, 0.70f);
-        // Small, slowly changing lead room. The subject need not be nailed to an
-        // exact point in the image, including when standing or changing facing.
-        float side = Vector3.Dot(velocity, candidate.Camera.State.GetFinalOrientation() * Vector3.right);
-        float leadRoom = context.Activity == CinematicActivity.Travel ? -Mathf.Clamp(side * 0.02f, -0.1f, 0.1f) : 0;
-        Vector2 previousScreen = candidate.Aim.Composition.ScreenPosition;
-        composition.ScreenPosition = Vector2.Lerp(previousScreen, new Vector2(leadRoom, 0.025f),
-            1f - Mathf.Exp(-Mathf.Max(0, dt) * 0.6f));
-        candidate.Aim.Composition = composition;
-        candidate.Framing.enabled = candidate.GroupShot;
+        candidate.Context = context; candidate.Settings = settings;
+        // Upstream group framing sizes the lens before RotationComposer aims.
+        // The group extension must not run a second, centered aim after it.
+        candidate.Framing.FrameGroup = candidate.GroupShot;
         candidate.Framing.FovRange = new Vector2(Mathf.Max(35f, settings.FieldOfView.Value - 8f), Mathf.Min(105f, settings.FieldOfView.Value + 12f));
         candidate.Framing.Damping = Mathf.Max(1.5f, settings.AimDamping.Value * 1.5f);
         if (RenderingCamera) candidate.Camera.Lens.PullInheritedPropertiesFromCamera(RenderingCamera);
@@ -314,13 +335,160 @@ internal sealed class CinemachinePlayerRig : IDisposable
         candidate.Quality.Subjects = candidate.GroupShot ? subjects : primaryOnly;
         candidate.Quality.Aspect = Aspect;
         candidate.Quality.NearClipPlane = NearClipPlane;
-        candidate.Quality.PreferredDistance = Mathf.Max(2f, settings.Distance.Value);
         ManualCameraUpdate.Update(candidate.Camera, Vector3.up, dt);
         CameraState state = candidate.Camera.State;
         Vector3 solved = state.GetFinalPosition();
         scores[index] = Mathf.Clamp01(state.ShotQuality + (candidate.GroupShot && candidate.Quality.Result.PrimaryVisibility > 0.65f ? 0.06f : 0));
         eligible[index] = candidate.Quality.Result.CameraClear && PositionSupported(solved, focus, continuous, moveCarrier);
     }
+
+    private void ConfigureComposition(Candidate candidate, CameraState state, float dt)
+    {
+        PlayerSceneContext.Frame context = candidate.Context!;
+        BroadcastSettings settings = candidate.Settings!;
+        Vector3 camera = state.GetCorrectedPosition(), anchor = state.ReferenceLookAt;
+        if (!TargetRoster.Finite(anchor) || (anchor - camera).sqrMagnitude < 0.01f) return;
+        Quaternion centered = Upright(Quaternion.LookRotation(anchor - camera, Vector3.up));
+        float fov = state.Lens.FieldOfView;
+        var framed = candidate.GroupShot ? subjects : primaryOnly;
+        var observation = new ShotCompositionObservation { Grouped = candidate.GroupShot };
+        float slackX = settings.DeadZone.Value * 0.5f, slackY = settings.DeadZone.Value * 0.375f;
+        foreach (PlayerShotVisibility.Subject subject in framed)
+        {
+            var envelope = visibility.ProjectSubject(camera, centered, subject, fov, Aspect, NearClipPlane);
+            if (!envelope.InFront)
+            {
+                observation.LeftExtent = observation.RightExtent = observation.TopExtent = observation.BottomExtent = 1;
+                break;
+            }
+            observation.LeftExtent = Mathf.Max(observation.LeftExtent, 0.5f - (float)envelope.MinX + slackX);
+            observation.RightExtent = Mathf.Max(observation.RightExtent, (float)envelope.MaxX - 0.5f + slackX);
+            observation.TopExtent = Mathf.Max(observation.TopExtent, (float)envelope.MaxY - 0.5f + slackY);
+            observation.BottomExtent = Mathf.Max(observation.BottomExtent, 0.5f - (float)envelope.MinY + slackY);
+        }
+        Vector3 projectedMotion = ProjectPoint(anchor + velocity * 0.1f, camera, centered, fov);
+        observation.MotionX = Mathf.Clamp(projectedMotion.x * 10, -3, 3);
+        observation.MotionY = Mathf.Clamp(projectedMotion.y * 10, -3, 3);
+        observation.FacingX = Vector3.Dot(context.FacingDirection, centered * Vector3.right);
+        observation.FacingConfidence = context.FacingConfidence;
+        if (context.HasInterest)
+        {
+            Vector3 interest = ProjectPoint(context.InterestFocus, camera, centered, fov);
+            if (interest.z > NearClipPlane)
+            {
+                observation.InterestX = Mathf.Clamp(interest.x, -1, 1);
+                observation.InterestY = Mathf.Clamp(interest.y, -1, 1);
+                observation.InterestConfidence = context.InterestConfidence;
+            }
+        }
+        Vector3 primary = ProjectPoint(context.PrimaryFocus, camera, centered, fov);
+        observation.PrimaryOffsetX = Mathf.Clamp(primary.x, -2, 2);
+        observation.PrimaryOffsetY = Mathf.Clamp(primary.y, -2, 2);
+        bool usable = !hasPose || lastSucceeded && lastView.PrimaryInFrame &&
+            lastView.PrimaryVisibility >= 0.55f && lastView.PrimaryReadability >= 0.8f;
+        float now = Time.unscaledTime;
+        candidate.Composition = candidate.Placement.Update(now, Mathf.Max(0, dt), shotId,
+            context.Activity, observation, interior, space, director.RecentCorrections, usable,
+            settings.DeliberateComposition.Value);
+        Vector2 wanted = now < candidate.RelaxUntil ? candidate.RecoveryScreen :
+            new Vector2(candidate.Composition.ScreenX, candidate.Composition.ScreenY);
+        if (now >= candidate.RelaxUntil) candidate.RecoveryReason = "none";
+        // RotationComposer deliberately does not damp changes of ScreenPosition.
+        // Policy easing plus this short handover preserves a corrected live pose.
+        candidate.AppliedScreen = candidate.Camera.PreviousStateIsValid
+            ? Vector2.Lerp(candidate.AppliedScreen, wanted, 1f - Mathf.Exp(-Mathf.Max(0, dt) / 0.35f))
+            : wanted;
+        var composition = ScreenComposerSettings.Default;
+        composition.DeadZone.Enabled = true;
+        composition.DeadZone.Size = new Vector2(settings.DeadZone.Value, settings.DeadZone.Value * 0.75f);
+        composition.HardLimits.Enabled = true;
+        composition.HardLimits.Size = new Vector2(0.75f, 0.70f);
+        // Core projection uses Y-up; Cinemachine's composition guides use Y-down.
+        composition.ScreenPosition = new Vector2(candidate.AppliedScreen.x, -candidate.AppliedScreen.y);
+        // Hard limits stay centered in the actual image, independently of the
+        // desired placement. A thirds preference cannot push limits offscreen.
+        composition.HardLimits.Offset = new Vector2(
+            -2 * composition.ScreenPosition.x / (composition.HardLimits.Size.x - composition.DeadZone.Size.x),
+            -2 * composition.ScreenPosition.y / (composition.HardLimits.Size.y - composition.DeadZone.Size.y));
+        composition.Validate();
+        candidate.Aim.Composition = composition;
+    }
+
+    private Vector3 ProjectPoint(Vector3 point, Vector3 camera, Quaternion rotation, float fov)
+    {
+        Vector3 local = Quaternion.Inverse(rotation) * (point - camera);
+        var projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, Aspect, Mathf.Max(0.01f, NearClipPlane));
+        return projected.InFront ? new Vector3((float)projected.X - 0.5f, (float)projected.Y - 0.5f, local.z)
+            : new Vector3(0, 0, -1);
+    }
+
+    private void RecoverFraming(Candidate candidate, CameraState state, Vector3 focus, Vector3 position,
+        IReadOnlyList<PlayerShotVisibility.Subject> framed, float now, ref Quaternion rotation,
+        float fov, ref PlayerShotVisibility.Result result)
+    {
+        Quaternion centered = Upright(Quaternion.LookRotation(focus - position, Vector3.up));
+        Quaternion original = rotation;
+        PlayerShotVisibility.Result best = result;
+        Quaternion bestRotation = original;
+        for (int i = 1; i <= 4; i++)
+        {
+            Quaternion proposed = Upright(Quaternion.Slerp(original, centered, i * 0.25f));
+            var view = visibility.Evaluate(position, proposed, framed, fov, Aspect, NearClipPlane);
+            if (view.PrimaryVisibility > best.PrimaryVisibility || view.PrimarySafeFrame > best.PrimarySafeFrame)
+            { best = view; bestRotation = proposed; }
+            if (view.PrimaryInFrame && view.PrimarySafeFrame >= 0.9f && view.PrimaryHeadroom >= 0.035f)
+            { best = view; bestRotation = proposed; break; }
+        }
+        rotation = bestRotation; result = best;
+        Vector3 screen = ProjectPoint(state.ReferenceLookAt, position, rotation, fov);
+        if (screen.z <= NearClipPlane) return;
+        candidate.AppliedScreen = candidate.RecoveryScreen = new Vector2(screen.x, screen.y);
+        candidate.RelaxUntil = now + 3f; candidate.NextRecoveryAt = now + 0.6f;
+        candidate.RecoveryReason = Quaternion.Angle(rotation, centered) < 0.5f ? "primary-centered safety fallback" : "relaxed placement to preserve full body";
+        var composition = candidate.Aim.Composition;
+        composition.ScreenPosition = new Vector2(screen.x, -screen.y);
+        candidate.Aim.Composition = composition;
+        // ForceCameraPosition alone leaves RotationComposer's previous screen
+        // offset intact. Re-run Aim only, at the same evaluated pose, to seed all
+        // its tracking history. Body/obstacle damping remains untouched.
+        state.RawPosition = position; state.PositionCorrection = Vector3.zero;
+        state.RawOrientation = rotation; state.OrientationCorrection = Quaternion.identity;
+        candidate.Aim.MutateCameraState(ref state, -1);
+        rotation = Upright(state.RawOrientation);
+        candidate.Aim.ForceCameraPosition(position, rotation);
+        result = visibility.Evaluate(position, rotation, framed, fov, Aspect, NearClipPlane);
+        NoteCorrection(now);
+    }
+
+    private void PrepareSelection(Vector3 focus, PlayerSceneContext.Frame context, bool usable, bool seed)
+    {
+        Array.Clear(seededEligibility, 0, Count);
+        if (seed && previousChoice >= 0) seededEligibility[previousChoice] = eligible[previousChoice];
+        bool preserveContinuity = usable && previousChoice >= 0 && eligible[previousChoice] && scores[previousChoice] >= 0.55f;
+        Vector3 oldOffset = Vector3.ProjectOnPlane(lastPosition - lastPoseFocus, Vector3.up);
+        Vector3 action = context.HasInterest ? context.InterestFocus - focus :
+            velocity.sqrMagnitude >= 1 ? velocity : context.FacingConfidence >= 0.5f ? context.FacingDirection : Vector3.zero;
+        Vector3 axisRight = Vector3.Cross(Vector3.up, Vector3.ProjectOnPlane(action, Vector3.up).normalized);
+        float oldSide = Vector3.Dot(oldOffset.normalized, axisRight);
+        for (int i = 0; i < Count; i++)
+        {
+            float score = scores[i];
+            if (preserveContinuity && i != previousChoice)
+            {
+                Vector3 offset = Vector3.ProjectOnPlane(candidates[i].Camera.State.GetFinalPosition() - focus, Vector3.up);
+                float angle = ViewpointAngle(oldOffset, offset);
+                score -= Mathf.InverseLerp(60, 150, angle) * 0.25f;
+                // Preserve established travel/activity screen direction during
+                // planned edits, while leaving every emergency camera eligible.
+                float side = Vector3.Dot(offset.normalized, axisRight);
+                if (oldSide * side < -0.04f) score -= 0.18f;
+            }
+            editorialScores[i] = Mathf.Clamp01(score);
+        }
+    }
+
+    private static float ViewpointAngle(Vector3 a, Vector3 b) =>
+        Vector3.Angle(Vector3.ProjectOnPlane(a, Vector3.up), Vector3.ProjectOnPlane(b, Vector3.up));
 
     private void AdvanceMotion(int index, CinematicShotMotion requested, PlayerSceneContext.Frame context, Vector3 focus,
         BroadcastSettings settings, float now, float step, bool continuous, bool moveCarrier)
@@ -330,9 +498,19 @@ internal sealed class CinemachinePlayerRig : IDisposable
         predictionAt = now + 0.2f;
         var shotSubjects = candidates[index].GroupShot ? subjects : primaryOnly;
         CinematicShotMotion preview = director.Motion(settings.ShotMotion.Value, 0.8);
+        float wantedHeading = heading, futureHeading = heading;
+        if (settings.ShotMotion.Value > 0 && context.Activity == CinematicActivity.Travel &&
+            velocity.sqrMagnitude > 4f && space > 0.5f && now - lastCorrection > 5f && director.RecentCorrections == 0)
+        {
+            float trailing = Mathf.Atan2(velocity.x, velocity.z) * Mathf.Rad2Deg + 155f;
+            wantedHeading = Mathf.MoveTowardsAngle(heading, trailing, 1f);
+            futureHeading = Mathf.MoveTowardsAngle(wantedHeading, trailing, 4f);
+        }
         Vector3 currentOffset = Offset(index, acceptedMotion, settings, interior);
-        Vector3 wanted = lastPosition + focus - lastPoseFocus + Offset(index, requested, settings, interior) - currentOffset;
-        Vector3 future = wanted + Vector3.ClampMagnitude(velocity * 0.8f, 3f) + Offset(index, preview, settings, interior) - Offset(index, requested, settings, interior);
+        Vector3 requestedOffset = OffsetAtHeading(index, requested, settings, interior, wantedHeading);
+        Vector3 wanted = lastPosition + focus - lastPoseFocus + requestedOffset - currentOffset;
+        Vector3 future = wanted + Vector3.ClampMagnitude(velocity * 0.8f, 3f) +
+            OffsetAtHeading(index, preview, settings, interior, futureHeading) - requestedOffset;
         Quaternion wantedRotation = PredictRotation(lastPosition, lastRotation, lastPoseFocus, wanted, focus);
         Quaternion futureRotation = PredictRotation(wanted, wantedRotation, focus, future, focus + Vector3.ClampMagnitude(velocity * 0.8f, 3f));
         var near = visibility.Evaluate(wanted, wantedRotation, shotSubjects, lastFov, Aspect, NearClipPlane);
@@ -341,7 +519,7 @@ internal sealed class CinemachinePlayerRig : IDisposable
         {
             PlayerSceneContext.Subject subject = context.Subjects[i];
             Vector3 predicted = subject.Focus + Vector3.ClampMagnitude(subject.Velocity * 0.8f, 3f);
-            futureSubjects.Add(new PlayerShotVisibility.Subject(predicted, subject.Weight, subject.Radius, subject.IsPrimary));
+            futureSubjects.Add(new PlayerShotVisibility.Subject(predicted, subject.Weight, subject.Radius, subject.IsPrimary, subject.Height, subject.BottomOffset));
         }
         var ahead = visibility.Evaluate(future, futureRotation, futureSubjects, lastFov, Aspect, NearClipPlane);
         bool safe = near.CameraClear && ahead.CameraClear && near.PrimaryInFrame &&
@@ -349,11 +527,11 @@ internal sealed class CinemachinePlayerRig : IDisposable
             ahead.Score >= Mathf.Max(0.2f, lastView.Score - 0.15f) &&
             visibility.SegmentClear(lastPosition, wanted) && visibility.SegmentClear(wanted, future) &&
             PositionSupported(wanted, focus, continuous, moveCarrier) && PositionSupported(future, focus, continuous, moveCarrier);
-        if (safe) { approvedMotion = requested; motionBlocked = false; }
+        if (safe) { approvedMotion = requested; approvedHeading = wantedHeading; motionBlocked = false; }
         else
         {
             if (!motionBlocked) NoteCorrection(now);
-            motionBlocked = true; approvedMotion = acceptedMotion;
+            motionBlocked = true; approvedMotion = acceptedMotion; approvedHeading = heading;
         }
         SmoothMotion(step);
     }
@@ -361,6 +539,7 @@ internal sealed class CinemachinePlayerRig : IDisposable
     private void SmoothMotion(float step)
     {
         float t = 1f - Mathf.Exp(-step * 5f);
+        heading = Mathf.LerpAngle(heading, approvedHeading, t);
         acceptedMotion = new CinematicShotMotion(
             Mathf.Lerp(acceptedMotion.AzimuthOffset, approvedMotion.AzimuthOffset, t),
             Mathf.Lerp(acceptedMotion.RadiusScale, approvedMotion.RadiusScale, t),
@@ -419,7 +598,10 @@ internal sealed class CinemachinePlayerRig : IDisposable
         return double.IsNaN(best) || double.IsInfinity(best) ? double.PositiveInfinity : best;
     }
 
-    private Vector3 Offset(int index, CinematicShotMotion motion, BroadcastSettings settings, bool inside)
+    private Vector3 Offset(int index, CinematicShotMotion motion, BroadcastSettings settings, bool inside) =>
+        OffsetAtHeading(index, motion, settings, inside, heading);
+
+    private static Vector3 OffsetAtHeading(int index, CinematicShotMotion motion, BroadcastSettings settings, bool inside, float heading)
     {
         AutonomyPosition value = ProceduralCameraGeometry.Offset(index, settings.Distance.Value,
             settings.Height.Value, heading + motion.AzimuthOffset, inside);
@@ -477,13 +659,15 @@ internal sealed class CinemachinePlayerRig : IDisposable
                 MinimumOcclusionTime = 0.15f, SmoothingTime = 0.4f, Damping = 1.2f, DampingWhenOccluded = 0.15f
             };
             obstacles.ShotQualityEvaluation = new CinemachineDeoccluder.QualityEvaluation { Enabled = false };
-            var framing = child.AddComponent<CinemachineGroupFraming>();
+            var framing = child.AddComponent<CinematicLensFraming>();
             framing.FramingSize = 0.65f;
             framing.SizeAdjustment = CinemachineGroupFraming.SizeAdjustmentModes.ZoomOnly;
             framing.LateralAdjustment = CinemachineGroupFraming.LateralAdjustmentModes.ChangeRotation;
-            framing.Damping = 1.5f; framing.enabled = false;
+            framing.Damping = 1.5f;
             var quality = child.AddComponent<FoliageShotQuality>(); quality.Visibility = visibility;
-            candidates[i] = new Candidate(camera, orbit, aim, framing, quality);
+            var candidate = new Candidate(camera, orbit, aim, framing, quality);
+            framing.BeforeAim = (state, delta) => ConfigureComposition(candidate, state, delta);
+            candidates[i] = candidate;
         }
         owner.SetActive(true);
     }
@@ -501,11 +685,17 @@ internal sealed class CinemachinePlayerRig : IDisposable
         Array.Clear(scores, 0, Count); Array.Clear(eligible, 0, Count); visiblePlayers.Clear(); subjects.Clear(); primaryOnly.Clear(); futureSubjects.Clear();
         if (owner)
             foreach (Candidate candidate in candidates)
-                if (candidate != null && candidate.Camera) candidate.Camera.PreviousStateIsValid = false;
+                if (candidate != null && candidate.Camera)
+                {
+                    candidate.Camera.PreviousStateIsValid = false; candidate.Placement.Reset();
+                    candidate.RelaxUntil = candidate.NextRecoveryAt = 0; candidate.RecoveryReason = "none";
+                    candidate.AppliedScreen = candidate.RecoveryScreen = Vector2.zero;
+                }
         actor = null; subjectId = null; world = null; revision = -1;
         velocity = lastLead = Vector3.zero; hasPose = lastSucceeded = false; solvedAt = lastPoseAt = -1; solvedFrame = -1;
         evaluateAt = predictionAt = 0; previousChoice = motionChoice = -1; transitionElapsed = 2; space = 1;
         motionBlocked = false; acceptedMotion = approvedMotion = NeutralMotion(); lastCorrection = -10; fallbackSince = -1;
+        shotId = 0; lastDynamic = false;
         LastFailure = "Awaiting player camera"; Diagnostics = "Procedural camera: awaiting player";
     }
 
@@ -526,4 +716,30 @@ internal sealed class CinemachinePlayerRig : IDisposable
 
     private static bool Finite(Quaternion value) => TargetRoster.Finite(new Vector3(value.x, value.y, value.z)) &&
         !float.IsNaN(value.w) && !float.IsInfinity(value.w);
+}
+
+// Reuse Cinemachine's bounded group-size solver without its competing centered
+// aim. Its normal Aim-stage rotation would otherwise overwrite RotationComposer.
+// Running the upstream calculation after Body gives Aim the final lens; keeping
+// only the lens also preserves the obstacle solver's physically validated pose.
+internal sealed class CinematicLensFraming : CinemachineGroupFraming
+{
+    internal bool FrameGroup;
+    internal Action<CameraState, float>? BeforeAim;
+    protected override void PostPipelineStageCallback(CinemachineVirtualCameraBase vcam,
+        CinemachineCore.Stage stage, ref CameraState state, float deltaTime)
+    {
+        if (stage != CinemachineCore.Stage.Body) return;
+        Vector3 position = state.RawPosition, positionCorrection = state.PositionCorrection;
+        Quaternion rotation = state.RawOrientation, rotationCorrection = state.OrientationCorrection;
+        LensSettings originalLens = state.Lens;
+        // Call even for solo frames: upstream initializes its callback stage only
+        // while PreviousStateIsValid is false. Otherwise a group joining an
+        // already-running solo camera would retain its uninitialized Finalize stage.
+        base.PostPipelineStageCallback(vcam, CinemachineCore.Stage.Aim, ref state, deltaTime);
+        state.RawPosition = position; state.PositionCorrection = positionCorrection;
+        state.RawOrientation = rotation; state.OrientationCorrection = rotationCorrection;
+        if (!FrameGroup) state.Lens = originalLens;
+        BeforeAim?.Invoke(state, deltaTime);
+    }
 }

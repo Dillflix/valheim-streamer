@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.13";
+    public const string PluginVersion = "0.8.14";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -853,13 +853,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void CameraCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | groups on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
+        const string usage = "broadcast camera procedural|fixed|dynamic|steady|status | composition on|off | groups on|off | motion <0-1.5> | damping <position seconds> <aim seconds>";
         if (args.Length < 2) { context?.AddString(usage); return; }
         string mode = args[1].ToLowerInvariant();
         if (mode == "status" && args.Length == 2)
         {
             context?.AddString(rig.Diagnostics);
-            context?.AddString($"Camera settings: dynamic {settings.DynamicShots.Value}; groups {settings.GroupFraming.Value}; motion {settings.ShotMotion.Value:F2}; position damping {settings.PositionDamping.Value:F2}s; aim damping {settings.AimDamping.Value:F2}s; dead zone {settings.DeadZone.Value:F2}");
+            context?.AddString($"Camera settings: composition {settings.DeliberateComposition.Value}; dynamic {settings.DynamicShots.Value}; groups {settings.GroupFraming.Value}; motion {settings.ShotMotion.Value:F2}; position damping {settings.PositionDamping.Value:F2}s; aim damping {settings.AimDamping.Value:F2}s; dead zone {settings.DeadZone.Value:F2}");
             return;
         }
         if ((mode == "procedural" || mode == "fixed") && args.Length == 2)
@@ -869,6 +869,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         }
         else if ((mode == "dynamic" || mode == "steady") && args.Length == 2)
             settings.DynamicShots.Value = mode == "dynamic";
+        else if (mode == "composition" && args.Length == 3 && (args[2] == "on" || args[2] == "off"))
+            settings.DeliberateComposition.Value = args[2] == "on";
         else if (mode == "groups" && args.Length == 3 && (args[2] == "on" || args[2] == "off"))
             settings.GroupFraming.Value = args[2] == "on";
         else if (mode == "motion" && args.Length == 3 && CameraNumber(args[2], 0, 1.5f, out float motion))
@@ -946,7 +948,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|camera procedural|fixed|dynamic|steady|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;

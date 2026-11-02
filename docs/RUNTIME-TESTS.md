@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.14 deliberate composition
+
+Built directly from 0.8.13 (`180f9b2`). The user reported that a single framed player remains centered. Source review confirmed the centered screen preference, common follow/look-at point and near-zero lead offset; a dead zone permits drift but does not choose off-center composition. Review also found competing group/aim adjustments, unconditional final recentering, a motion reset on dynamic-to-steady changes and pacing based on physical validity without sufficient readability. These are source findings; no captured runtime trace was available to attribute every perceived camera movement.
+
+This revision introduces persistent screen-placement intent, evidence-qualified movement/facing/activity space, body-envelope framing and headroom evaluation. It keeps physical readiness, observer authorization and travel separate from composition quality. `Camera.DeliberateComposition` defaults true; `broadcast camera composition on|off` compares deliberate versus centered preference without disabling damping or restarting the observer. Existing protocol-3 servers remain compatible, including the optional 0.8.13 context service. No server behavior or protocol is changed.
+
+Local validation: **204/204 core cases pass** (14 new composition-policy cases and seven additional full-body projection cases). Combined client and server sources compile with warnings treated as errors against the matching real Valheim 1.0.21 / Unity 6000 / BepInEx 5.4.23.2 / Jötunn 2.30.2 references and Cinemachine 3.1.7. The independent source review identified and corrected a group-lens initialization defect when companions join a previously solo shot. Local compilation used the SDK compiler; CI performs normal project builds, real-assembly audits and Windows/Linux RTMP checks. **No Unity/Valheim visual session has been run here.** Updated in-game cases remain pending in [CAMERA-DIRECTOR.md](CAMERA-DIRECTOR.md#runtime-validation). In particular, compare requested/actual viewport placement while stationary, walking, sprinting, reversing and entering constrained space; exercise group joins/splits, activity-point changes, dynamic/steady switches after developed movement, framing recovery and held/live RTMP transitions. Subject visibility and camera continuity take priority over thirds placement.
+
 ## 0.8.13 cooperative cinematic director
 
 Built directly from 0.8.12 (`6dd447f`), retaining observer admission protocol 3, discovery protocol 2, the existing camera compositor and continuous-follow acquisition geometry. The optional context extension has its own protocol 1 and falls back locally with an older compatible server; it does not change admission or require mods on ordinary players.

@@ -9,7 +9,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
     internal readonly ConfigEntry<float> ScenicDwell, CreatureDwell, CreatureRadius, AcquisitionCooldown;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
-    internal readonly ConfigEntry<bool> DynamicShots, GroupFraming;
+    internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
     internal readonly ConfigEntry<float> PositionDamping, AimDamping, DeadZone, ShotMotion;
     internal readonly ConfigEntry<KeyboardShortcut> Toggle, Next, Previous, Hold, SelfTest, StreamToggle;
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
@@ -51,6 +51,7 @@ internal sealed class BroadcastSettings
         AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use Cinemachine player-follow candidates with foliage-aware scoring and stable view selection. False restores the fixed-angle player camera; scenery is unchanged.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
+        DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent screen placement and headroom from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
         PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Procedural camera position damping in seconds; larger values follow more gently.", 0.1f, 3f));
         AimDamping = config.Bind("Camera", "AimDamping", 1f, Range("Procedural camera aim damping in seconds; larger values react more gently to subject movement.", 0.1f, 3f));

@@ -15,7 +15,7 @@ internal sealed class PlayerSceneContext
         internal Player? Player;
         internal string Id = "", CharacterId = "";
         internal Vector3 Focus, Velocity;
-        internal float Weight, Radius;
+        internal float Weight, Radius, Height, BottomOffset;
         internal bool IsPrimary, IsOpponent;
     }
 
@@ -23,6 +23,11 @@ internal sealed class PlayerSceneContext
     {
         internal readonly List<Subject> Subjects = new List<Subject>(6);
         internal Vector3 PrimaryFocus, Focus, Velocity, GroupVelocity;
+        // Body orientation is observable, but is not a claim about eye gaze or intent.
+        internal Vector3 FacingDirection, InterestFocus;
+        internal float FacingConfidence, InterestConfidence;
+        internal bool HasInterest;
+        internal string InterestKind = "none";
         internal float Spread, Confidence;
         internal bool Interior;
         internal CinematicActivity Activity;
@@ -50,17 +55,26 @@ internal sealed class PlayerSceneContext
     private float surveyAt = -1, frameAt = -1, activitySince;
     private CinematicActivity pendingActivity;
     private int sampledFrame = -1, mask;
+    private string interestId = "", pendingInterestId = "", interestKind = "none";
+    private Character? interestActor;
+    private Collider? interestResource;
+    private Vector3 interestPoint;
+    private float interestSince, interestSeenAt = -1, interestStrength;
+    private bool facingInitialized;
     internal Func<string, string, ObserverPlayerContext?>? RemoteContext { get; set; }
 
     internal Frame Update(TargetRoster.Target primary, bool groupsEnabled = true)
     {
         Player? player = primary.LoadedPlayer;
         float now = Time.unscaledTime;
-        if (!player || !player.gameObject.activeInHierarchy || !TargetRoster.Finite(player.transform.position))
+        if (!player || !player.gameObject.activeInHierarchy || player.IsDead() || !TargetRoster.Finite(player.transform.position) ||
+            !Finite(now) || Mathf.Abs(player.transform.position.x) > 20000 || Mathf.Abs(player.transform.position.y) > 20000 ||
+            Mathf.Abs(player.transform.position.z) > 20000)
         { Reset(); return frame; }
         string characterId = player.GetZDOID().ToString();
         if (primaryActor != player || primaryId != primary.Identity.Id || primaryCharacter != characterId ||
-            world != ZNet.instance || now < frameAt || frameAt >= 0 && now - frameAt > 1)
+            world != ZNet.instance || now < frameAt || frameAt >= 0 && (now - frameAt > 1 ||
+            Vector3.Distance(player.transform.position + Vector3.up * 1.5f, frame.PrimaryFocus) > 16f))
         {
             Reset(); primaryActor = player; primaryId = primary.Identity.Id; primaryCharacter = characterId; world = ZNet.instance;
         }
@@ -98,6 +112,7 @@ internal sealed class PlayerSceneContext
             frame.Focus = frame.PrimaryFocus + Vector3.ClampMagnitude(sum / totalWeight - frame.PrimaryFocus, frame.Interior ? 2.5f : 6f);
             frame.GroupVelocity = velocity / totalWeight;
         }
+        UpdateCompositionEvidence(player, now, dt);
         return frame;
     }
 
@@ -173,11 +188,30 @@ internal sealed class PlayerSceneContext
         for (int i = 0; i < Math.Min(2, opponents.Count); i++)
             Add(opponents[i].Actor, opponents[i].Actor.GetZDOID().ToString(), false, true, old);
 
+        bool work = ObservedWork(player, primaryObservation, now, out string workEvidence,
+            out Collider? resource, out Vector3 resourceFocus, out string resourceId);
+        // Retain a credible opponent before considering another. The candidate
+        // list is already bounded to the current encounter, not arbitrary AI.
+        Observation? interestOpponent = null;
+        for (int i = 0; i < Math.Min(2, opponents.Count); i++)
+        {
+            Observation candidate = opponents[i];
+            if (interestOpponent == null || "opponent:" + candidate.Actor.GetZDOID() == interestId)
+                interestOpponent = candidate;
+            if ("opponent:" + candidate.Actor.GetZDOID() == interestId) break;
+        }
+        if (interestOpponent != null)
+            ConsiderInterest("opponent:" + interestOpponent.Actor.GetZDOID(), "opponent", Focus(interestOpponent.Actor),
+                .8f, interestOpponent.Actor, null, now);
+        else if (resource)
+            ConsiderInterest(resourceId, "resource", resourceFocus, .65f, null, resource, now);
+        else pendingInterestId = "";
+
         CinematicActivity desired;
         string evidence;
         float confidence;
         if (opponents.Count > 0) { desired = CinematicActivity.Combat; evidence = "hostile action observed nearby"; confidence = .8f; }
-        else if (ObservedWork(player, primaryObservation, now, out evidence)) { desired = CinematicActivity.Work; confidence = .65f; }
+        else if (work) { desired = CinematicActivity.Work; evidence = workEvidence; confidence = .65f; }
         else if (primaryObservation.Velocity.magnitude > 1.2f) { desired = CinematicActivity.Travel; evidence = "sustained observed movement"; confidence = .95f; }
         else { desired = CinematicActivity.Idle; evidence = damaged ? "recent health loss; cause unknown" : attack ? "action observed; activity unknown" : "stationary or slow movement"; confidence = attack || damaged ? .35f : .85f; }
         if (desired != pendingActivity) { pendingActivity = desired; activitySince = now; }
@@ -186,7 +220,8 @@ internal sealed class PlayerSceneContext
         int players = 0;
         foreach (Subject subject in frame.Subjects) if (subject.Player) players++;
         string place = player.GetBaseValue() >= 3 ? "; base-area hint" : frame.Interior ? "; interior" : "";
-        frame.Description = $"{frame.Activity}; {players} player(s), {Math.Min(2, opponents.Count)} opponent(s); {evidence}{place}";
+        frame.Description = $"{frame.Activity}; {players} player(s), {Math.Min(2, opponents.Count)} opponent(s); {evidence}{place}" +
+            (frame.HasInterest ? $"; {frame.InterestKind} interest {frame.InterestConfidence:F2}" : "");
         stale.Clear();
         foreach (KeyValuePair<string, Observation> pair in observations)
             if (!pair.Value.Actor || now - pair.Value.LastAt > 4) stale.Add(pair.Key);
@@ -216,24 +251,95 @@ internal sealed class PlayerSceneContext
         return item;
     }
 
-    private bool ObservedWork(Player player, Observation observation, float now, out string evidence)
+    private bool ObservedWork(Player player, Observation observation, float now, out string evidence,
+        out Collider? resourceCollider, out Vector3 resourceFocus, out string resourceId)
     {
+        resourceCollider = null; resourceFocus = Vector3.zero; resourceId = "";
         // These two APIs read local fields, not replicated remote-player state.
         if (player == Player.m_localPlayer && (player.InPlaceMode() || player.GetCurrentCraftingStation()))
         { evidence = "local building/crafting interface"; return true; }
-        if (observation.AttackUntil > now)
+        Vector3 facing = player.transform.forward;
+        if (observation.AttackUntil > now && TargetRoster.Finite(facing) && facing.sqrMagnitude > .001f)
         {
             Vector3 start = player.transform.position + Vector3.up;
-            int count = Physics.RaycastNonAlloc(start, player.transform.forward, hits, 4f, mask, QueryTriggerInteraction.Ignore);
+            int count = Physics.RaycastNonAlloc(start, facing.normalized, hits, 4f, mask, QueryTriggerInteraction.Ignore);
+            // A saturated unordered hit buffer cannot establish the nearest hit.
+            if (count >= hits.Length) { evidence = ""; return false; }
             float nearest = float.MaxValue; Collider? first = null;
+            Vector3 nearestPoint = Vector3.zero;
             for (int i = 0; i < count; i++)
-                if (hits[i].collider && !hits[i].collider.GetComponentInParent<Character>() && hits[i].distance < nearest)
-                { nearest = hits[i].distance; first = hits[i].collider; }
-            if (first && (first.GetComponentInParent<TreeBase>() || first.GetComponentInParent<TreeLog>() ||
-                first.GetComponentInParent<MineRock>() || first.GetComponentInParent<MineRock5>()))
-            { evidence = "resource-facing attack; gathering inferred"; return true; }
+                if (hits[i].collider && !hits[i].collider.GetComponentInParent<Character>() &&
+                    Finite(hits[i].distance) && TargetRoster.Finite(hits[i].point) && hits[i].distance < nearest)
+                { nearest = hits[i].distance; first = hits[i].collider; nearestPoint = hits[i].point; }
+            Component? resource = first ? first.GetComponentInParent<TreeBase>() : null;
+            if (!resource && first) resource = first.GetComponentInParent<TreeLog>();
+            if (!resource && first) resource = first.GetComponentInParent<MineRock>();
+            if (!resource && first) resource = first.GetComponentInParent<MineRock5>();
+            if (resource && Vector3.Distance(start, nearestPoint) <= 4.1f)
+            {
+                resourceCollider = first; resourceFocus = nearestPoint; resourceId = "resource:" + resource.GetInstanceID();
+                evidence = "resource-facing attack; gathering inferred"; return true;
+            }
         }
         evidence = ""; return false;
+    }
+
+    private void ConsiderInterest(string id, string kind, Vector3 point, float strength,
+        Character? actor, Collider? resource, float now)
+    {
+        if (!TargetRoster.Finite(point) || Vector3.Distance(frame.PrimaryFocus, point) > 24f) return;
+        if (id != interestId)
+        {
+            if (pendingInterestId != id) { pendingInterestId = id; interestSince = now; return; }
+            if (now - interestSince < (kind == "resource" ? .75f : .5f)) return;
+        }
+        interestId = id; interestKind = kind; interestPoint = point; interestActor = actor; interestResource = resource;
+        interestStrength = Mathf.Clamp01(strength); interestSeenAt = now; pendingInterestId = "";
+    }
+
+    private void UpdateCompositionEvidence(Player player, float now, float dt)
+    {
+        Vector3 observedFacing = player.transform.forward; observedFacing.y = 0;
+        if (TargetRoster.Finite(observedFacing) && observedFacing.sqrMagnitude > .001f)
+        {
+            observedFacing.Normalize();
+            if (!facingInitialized) { frame.FacingDirection = observedFacing; facingInitialized = true; }
+            float before = Mathf.Atan2(frame.FacingDirection.x, frame.FacingDirection.z) * Mathf.Rad2Deg;
+            float after = Mathf.Atan2(observedFacing.x, observedFacing.z) * Mathf.Rad2Deg;
+            float difference = Mathf.DeltaAngle(before, after);
+            float turn = Mathf.Clamp(difference * (1f - Mathf.Exp(-2f * dt)), -45f * dt, 45f * dt);
+            float radians = (before + turn) * Mathf.Deg2Rad;
+            frame.FacingDirection = new Vector3(Mathf.Sin(radians), 0, Mathf.Cos(radians));
+            // Large body turns temporarily weaken lead-room evidence instead of
+            // swinging the camera immediately to the newly observed heading.
+            float confidence = Mathf.Abs(difference) > 75f ? .2f : .7f;
+            frame.FacingConfidence = Mathf.MoveTowards(frame.FacingConfidence, confidence, dt * .8f);
+        }
+        else frame.FacingConfidence = Mathf.MoveTowards(frame.FacingConfidence, 0, dt);
+
+        bool fresh = interestSeenAt >= 0 && now - interestSeenAt <= 1.25f;
+        if (interestActor)
+        {
+            fresh &= Valid(interestActor);
+            if (fresh) interestPoint = Focus(interestActor);
+        }
+        else if (interestKind == "opponent") fresh = false;
+        if (interestKind == "resource" && (!interestResource || !interestResource.enabled ||
+            !interestResource.gameObject.activeInHierarchy)) fresh = false;
+        fresh &= TargetRoster.Finite(interestPoint) && Vector3.Distance(frame.PrimaryFocus, interestPoint) <= 24f;
+        float desired = fresh ? interestStrength : 0;
+        frame.InterestConfidence = Mathf.MoveTowards(frame.InterestConfidence, desired, dt * (fresh ? .8f : 1.2f));
+        if (fresh)
+        {
+            if (frame.InterestConfidence <= .001f || !frame.HasInterest) frame.InterestFocus = interestPoint;
+            else frame.InterestFocus = Vector3.Lerp(frame.InterestFocus, interestPoint, 1f - Mathf.Exp(-2f * dt));
+            frame.InterestFocus = frame.PrimaryFocus + Vector3.ClampMagnitude(frame.InterestFocus - frame.PrimaryFocus, 24f);
+        }
+        // Removed/dead actors and expired points are never presented as live
+        // interests, even while confidence decays for a later clean transition.
+        frame.HasInterest = fresh && frame.InterestConfidence >= .15f;
+        frame.InterestKind = frame.HasInterest ? interestKind : "none";
+        if (!frame.HasInterest && frame.InterestConfidence <= .001f) frame.InterestFocus = frame.PrimaryFocus;
     }
 
     private bool Connected(Vector3 from, Vector3 to)
@@ -259,11 +365,21 @@ internal sealed class PlayerSceneContext
             subject = new Subject { Actor = actor, Weight = primary ? 2f : .05f };
         subject.Id = id; subject.CharacterId = character; subject.Player = actor as Player;
         subject.IsPrimary = primary; subject.IsOpponent = opponent; subject.Focus = Focus(actor);
-        subject.Radius = actor is Player ? .6f : Mathf.Clamp(actor.GetRadius(), .45f, 3f);
+        float radius = actor.GetRadius();
+        subject.Radius = actor is Player ? .6f : Finite(radius) ? Mathf.Clamp(radius, .45f, 3f) : .6f;
+        float height = actor.GetHeight();
+        subject.Height = Finite(height) ? Mathf.Clamp(height, .5f, 8f) : 2f;
+        subject.BottomOffset = subject.Focus.y - actor.transform.position.y;
         frame.Subjects.Add(subject);
     }
 
-    private static Vector3 Focus(Character actor) => actor.transform.position + Vector3.up * (actor is Player ? 1.5f : Mathf.Clamp(actor.GetHeight() * .6f, .5f, 4f));
+    private static Vector3 Focus(Character actor)
+    {
+        float height = actor.GetHeight();
+        float offset = actor is Player ? 1.5f : Finite(height) ? Mathf.Clamp(height * .6f, .5f, 4f) : 1.2f;
+        return actor.transform.position + Vector3.up * offset;
+    }
+    private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     private static bool Valid(Character? actor) => actor && actor.gameObject.activeInHierarchy && !actor.IsDead() &&
         !actor.GetZDOID().IsNone() && TargetRoster.Finite(actor.transform.position) &&
         Mathf.Abs(actor.transform.position.x) <= 20000 && Mathf.Abs(actor.transform.position.y) <= 20000 && Mathf.Abs(actor.transform.position.z) <= 20000;
@@ -272,6 +388,10 @@ internal sealed class PlayerSceneContext
     {
         grouping.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
         frame.PrimaryFocus = frame.Focus = frame.Velocity = frame.GroupVelocity = Vector3.zero;
+        frame.FacingDirection = Vector3.forward; frame.InterestFocus = Vector3.zero;
+        frame.FacingConfidence = frame.InterestConfidence = 0; frame.HasInterest = false; frame.InterestKind = "none";
+        interestId = pendingInterestId = ""; interestKind = "none"; interestActor = null; interestResource = null;
+        interestPoint = Vector3.zero; interestSince = interestStrength = 0; interestSeenAt = -1; facingInitialized = false;
         frame.Spread = frame.Confidence = 0; frame.Interior = false; frame.Activity = pendingActivity = CinematicActivity.Idle;
         frame.Description = "Awaiting loaded player context";
         primaryActor = null; primaryId = primaryCharacter = ""; world = null;

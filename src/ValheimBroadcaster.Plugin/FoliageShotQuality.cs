@@ -11,7 +11,7 @@ internal sealed class FoliageShotQuality : CinemachineExtension, IShotQualityEva
     internal PlayerShotVisibility? Visibility;
     internal Vector3 Focus;
     internal IReadOnlyList<PlayerShotVisibility.Subject>? Subjects = null;
-    internal float Aspect = 16f / 9f, NearClipPlane = 0.3f, PreferredDistance = 18f;
+    internal float Aspect = 16f / 9f, NearClipPlane = 0.3f;
     internal PlayerShotVisibility.Result Result;
 
     protected override void PostPipelineStageCallback(CinemachineVirtualCameraBase vcam,
@@ -23,10 +23,9 @@ internal sealed class FoliageShotQuality : CinemachineExtension, IShotQualityEva
         Result = Subjects == null || Subjects.Count == 0
             ? Visibility.Evaluate(position, rotation, Focus, state.Lens.FieldOfView, Aspect, NearClipPlane)
             : Visibility.Evaluate(position, rotation, Subjects, state.Lens.FieldOfView, Aspect, NearClipPlane);
-        // A shortened but readable forest shot is useful. Penalize severe
-        // compression without making wide framing mandatory under a canopy.
-        float distance = Vector3.Distance(position, Focus);
-        float framing = Mathf.Lerp(0.65f, 1f, Mathf.Clamp01(distance / Mathf.Max(2f, PreferredDistance * 0.5f)));
-        state.ShotQuality = Mathf.Clamp01(Result.Score * framing);
+        // Full projected body size, safe-frame coverage and headroom are lens-
+        // aware. World distance is not a composition preference: the same image
+        // at another focal length should receive the same readability score.
+        state.ShotQuality = Mathf.Clamp01(Result.Score);
     }
 }
