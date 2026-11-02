@@ -15,6 +15,7 @@ internal sealed class StreamRecovery
     private long handledFailure = -1;
     private bool permitted;
     private string encoder = "not started";
+    internal bool Blocked => policy.Blocked;
     internal bool Desired => policy.Desired;
     internal bool ManualSuppressed => policy.ManualSuppressed;
     internal string Status => !policy.Desired ? "Stopped" : policy.Blocked ? "Blocked: " + policy.LastFailure :

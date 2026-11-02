@@ -20,6 +20,23 @@ jobs:
       - name: Test director logic
         run: dotnet run --project tests/ValheimBroadcaster.Core.Tests/ValheimBroadcaster.Core.Tests.csproj --configuration Release
 
+  supervisor:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Test unattended supervisor and release inventory
+        run: |
+          python -m unittest discover -s tests/release -v
+          python -m unittest discover -s tools/broadcaster-supervisor/tests -v
+
   streaming:
     strategy:
       fail-fast: false
@@ -55,7 +72,7 @@ jobs:
         run: dotnet run --project tests/ValheimBroadcaster.Streaming.Tests --configuration Release -warnaserror
 
   plugin:
-    needs: [core, streaming]
+    needs: [core, streaming, supervisor]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -97,11 +114,26 @@ jobs:
             third_party/Cinemachine/obj/upstream/package.json third_party/Cinemachine/obj/upstream/source-record.json \
             artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/
           cp third_party/Cinemachine/README.md artifacts/ValheimBroadcaster/ThirdParty/Cinemachine/BUILD.md
+      - name: Record exact updater payload identity
+        run: python3 scripts/create-release-manifest.py --staging artifacts --source-sha "$GITHUB_SHA"
       - name: Upload test build (not a validated game release)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: valheim-broadcaster-${{ github.sha }}
           path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Stage unattended supervisor separately
+        run: |
+          mkdir -p supervisor-artifacts
+          cp tools/broadcaster-supervisor/supervisor.py tools/broadcaster-supervisor/sandboxie.py \
+            tools/broadcaster-supervisor/example-config.json \
+            docs/UNATTENDED-UPDATES.md supervisor-artifacts/
+      - name: Upload unattended supervisor and setup guide
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: valheim-broadcaster-supervisor-${{ github.sha }}
+          path: supervisor-artifacts/
           if-no-files-found: error
           retention-days: 14
       - name: Stage server companion separately

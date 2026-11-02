@@ -20,6 +20,7 @@ internal sealed class StreamCapture : MonoBehaviour
     private int fps;
     private Action<string>? reportFailure;
     private bool failureReported;
+    internal int EncoderProcessId => session?.ProcessId ?? 0;
     internal bool Active => active;
     internal bool IsPublishing => active && session?.IsPublishing == true;
     internal bool HasCompletedFailure => session?.IsClosed == true && session.FailureDetails.Length != 0;

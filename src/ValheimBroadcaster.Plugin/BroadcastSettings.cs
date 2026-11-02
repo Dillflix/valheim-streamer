@@ -21,6 +21,8 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> AutoStream, RetryStream, Automation, ScenicTravel, Unattended;
     internal readonly ConfigEntry<float> RegionSeconds, RegionRevisitSeconds, AcquireSeconds, TargetRetrySeconds;
     internal readonly ConfigEntry<float> MinimumRegionDistance, MaximumRegionDistance;
+    internal readonly ConfigEntry<bool> StartupEnabled;
+    internal readonly ConfigEntry<string> StartupCharacter, StartupCharacterSource, StartupServer, StartupPasswordFile;
 
     internal BroadcastSettings(ConfigFile config)
     {
@@ -33,7 +35,12 @@ internal sealed class BroadcastSettings
         TargetRetrySeconds = config.Bind("Automation", "RetrySeconds", 30f, Range("Cooldown after an unreachable player or scenic destination.", 5f, 600f));
         MinimumRegionDistance = config.Bind("Automation", "MinimumRegionDistance", 256f, Range("Minimum distance for a fresh scenic region, in metres.", 128f, 2000f));
         MaximumRegionDistance = config.Bind("Automation", "MaximumRegionDistance", 10000f, Range("Maximum distance of an autonomous scenic transfer, in metres. Player acquisition is not constrained by this limit.", 256f, 20000f));
-        Unattended = config.Bind("Unattended", "Enabled", false, "Opt in to reconnecting the same server/character after unexpected loss of an authorized observer session. First join is manual; credentials stay in memory. Explicit off/logout cancels recovery. Keeps the game running in the background.");
+        Unattended = config.Bind("Unattended", "Enabled", false, "Opt in to reconnecting the same server/character after unexpected loss of an authorized observer session. Initial join is manual unless Startup.Enabled is configured; credentials are retained in memory. Explicit off/logout cancels recovery. Keeps the game running in the background.");
+        StartupEnabled = config.Bind("Startup", "Enabled", false, "Join the explicitly configured existing character and dedicated Steam server at game startup. Requires Unattended.Enabled and Multiplayer.ObserverConnection. Manual interaction cancels startup for this process.");
+        StartupCharacter = config.Bind("Startup", "CharacterFile", "", "Exact existing character filename without .fch, not the display name. Use broadcast startup profiles at the main menu. No character is created or selected by fallback.");
+        StartupCharacterSource = config.Bind("Startup", "CharacterSource", "Local", "Exact character save source: Local or Cloud. Automatic source selection and legacy fallback are not allowed.");
+        StartupServer = config.Bind("Startup", "ServerAddress", "", "Dedicated Steam server DNS name or IPv4 address and explicit port, for example server.example:2456. Crossplay/join codes are not supported.");
+        StartupPasswordFile = config.Bind("Startup", "PasswordFile", "", "Absolute path to a private local file containing the server password on one line. Empty means passwordless server. Never put the password in this setting or launch arguments.");
         FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
         VideoEncoder = config.Bind("Streaming", "VideoEncoder", VideoEncoderKind.libx264, "H.264 encoder: libx264 for CPU or h264_nvenc for NVIDIA GPU. Requires encoder support in the actual FFmpeg executable and a compatible driver.");
         NvencGpu = config.Bind("Streaming", "NvencGpu", -1, "NVIDIA encoder device index, or -1 for automatic selection.");

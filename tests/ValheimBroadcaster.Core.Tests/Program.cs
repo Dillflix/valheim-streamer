@@ -70,6 +70,7 @@ internal static class Program
             .Concat(ObserverAdmissionTests.Cases())
             .Concat(ObserverDiscoveryTests.Cases())
             .Concat(ConnectionRecoveryTests.Cases())
+            .Concat(StartupJoinTests.Cases())
             .Concat(CameraReachabilityTests.Cases())
             .Concat(PlayerFollowContinuityTests.Cases())
             .Concat(ProceduralShotPolicyTests.Cases())
