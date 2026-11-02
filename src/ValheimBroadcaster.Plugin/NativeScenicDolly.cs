@@ -70,15 +70,9 @@ internal sealed class ScenicSplinePath : IDisposable
         return Length * Ease(Mathf.Clamp01(progress));
     }
 
-    // Rest-to-rest progress is applied to distance, not knot parameter. Unequal
+    // Short smooth ramps and a steady cruise apply to distance, not knot parameter. Unequal
     // knot spacing therefore cannot produce accidental acceleration or stalls.
-    private static float Ease(float value)
-    {
-        // Double precision avoids float cancellation near the end making
-        // successive distance requests briefly move backwards.
-        double t = value;
-        return (float)Math.Max(0, Math.Min(1, t * t * t * (t * (t * 6 - 15) + 10)));
-    }
+    private static float Ease(float value) => (float)ScenicMotionProfile.Progress(value);
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     private static Vector3 FromCore(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);
     private static AutonomyPosition ToCore(Vector3 value) => new AutonomyPosition(value.x, value.y, value.z);

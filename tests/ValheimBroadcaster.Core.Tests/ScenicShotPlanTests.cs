@@ -64,7 +64,7 @@ internal static class ScenicShotPlanTests
             double beginning = plan.Sample(0.01).CameraPosition.Distance(initial.CameraPosition);
             double middle = plan.Sample(0.51).CameraPosition.Distance(plan.Sample(0.5).CameraPosition);
             double ending = plan.Sample(1).CameraPosition.Distance(plan.Sample(0.99).CameraPosition);
-            Check(beginning < middle * 0.01 && ending < middle * 0.01,
+            Check(beginning < middle * 0.03 && ending < middle * 0.03,
                 "An environmental shot starts or ends with abrupt motion.");
             Check(plan.Sample(1).CameraPosition.Distance(plan.Sample(10).CameraPosition) < 0.001,
                 "A completed environmental path loops or continues drifting.");

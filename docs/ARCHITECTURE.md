@@ -16,6 +16,8 @@ Version 0.8.21 builds directly on 0.8.20 (`94e563f`). Native Position Composer o
 
 Version 0.8.22 builds directly on 0.8.21 (`9ae20da`). Encounter observation separates evidence of active combat, inferred ranged hunting and nearby powerful threats. Stable target selection supplies bounded participant and action-axis preferences to the shared camera rig; it does not claim remote private aim or unreplicated AI targets. Pass-by shots hold a world-space camera position during a finite qualified travel opportunity and use native Rotation Composer for aim, with ordinary tracking alternatives on interruption. No new gameplay, networking or simulation authority is introduced.
 
+Version 0.8.23 repairs scenic presentation contracts. `ScenicPresentationPolicy` separates live-picture quality, scheduled novelty and persistent recovery exhaustion; the autonomous director receives independent useful-footage and scene-availability evidence. `ScenicReadinessPolicy` permits only recent, same-plan/world/carrier geometry continuation. Scenic candidate selection retains readable views without actor-paced edits, the configured landscape lens stays stable across sequence beats, and native Dolly has no competing Deoccluder translation. Shared `ScenicMotionProfile` and `ScenicMotionClock` provide steady cruising and discard paused progress instead of causing catch-up moves. Actor camera and observer/network contracts remain intact.
+
 ## Components
 
 | Component | Responsibility |

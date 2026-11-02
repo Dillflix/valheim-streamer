@@ -15,15 +15,18 @@ internal sealed class IdleShots
     private readonly List<CreatureCandidate> nearby = new List<CreatureCandidate>(MaximumCreatures);
     private readonly Queue<ShownPlace> recentPlaces = new Queue<ShownPlace>(12);
     private readonly ScenicVisibility visibility = new ScenicVisibility();
+    private readonly ScenicPresentationPolicy presentation = new ScenicPresentationPolicy();
+    private readonly ScenicShotReadiness readiness = new ScenicShotReadiness();
     private float radius = 50;
     private Vector3 surveyOrigin, creatureOrigin, selectedPlace, bestPlace;
     private int sample, attemptsLeft, attemptsMade, viablePlans;
     private long nextPlanId;
     private ScenicShotPlan? bestPlan;
-    private float bestScore, lastFraction, shownSeconds, presentationAt = -1, blockedSince = -1, nextViewCheck;
-    private bool recorded, previousUsable, lastViewClear;
+    private float bestScore, lastFraction, nextViewCheck;
+    private bool recorded, lastViewClear;
     internal bool Searching => attemptsLeft > 0;
     internal bool NeedsReplacement { get; private set; }
+    internal bool RecoveryExhausted => presentation.RecoveryExhausted;
     internal ScenicVisibility Visibility => visibility;
     internal ScenicShotPlan? Plan { get; private set; }
     internal long PlanId => Plan?.Id ?? 0;
@@ -41,10 +44,15 @@ internal sealed class IdleShots
     internal string Diagnostics => "Scenic view: " + ViewReason + "; style " + (Plan?.Style.ToString() ?? "none") +
         "; path " + PlanId + "; progress " + (lastFraction * 100).ToString("F0") + "%" +
         "; searching " + Searching + "; viable " + viablePlans + "; rejected " + RejectedViews +
-        "; shown places " + recentPlaces.Count + "; loaded creatures " + creatures.Count;
+        "; shown places " + recentPlaces.Count + "; loaded creatures " + creatures.Count +
+        "; replacement " + (presentation.Scheduled ? "scheduled" : NeedsReplacement ? "picture recovery" : "none") +
+        "; recovery exhausted " + RecoveryExhausted;
     internal bool HasRegion { get; private set; }
     internal bool HasScenicPath => Plan != null;
-    internal bool SceneReady => HasRegion && Ready(surveyOrigin);
+    internal bool CanContinue => Plan != null && readiness.CanContinue(Plan.Id,
+        FromCore(Plan.Sample(lastFraction).AimPosition));
+    internal bool SceneReady => HasRegion && (CanContinue
+        ? PlayerShotReadiness.PositionReady(surveyOrigin, true) : Ready(surveyOrigin));
 
     private readonly struct ShownPlace
     {
@@ -67,8 +75,8 @@ internal sealed class IdleShots
         creatureOrigin = default;
         HasRegion = NeedsReplacement = false; Plan = bestPlan = null;
         sample = attemptsLeft = attemptsMade = viablePlans = 0;
-        blockedSince = presentationAt = -1; nextViewCheck = lastFraction = shownSeconds = 0;
-        lastViewClear = recorded = previousUsable = false; RejectedViews = 0;
+        presentation.Reset(); readiness.Reset(); nextViewCheck = lastFraction = 0;
+        lastViewClear = recorded = false; RejectedViews = 0;
         ViewReason = "No scenic shot"; visibility.Reset();
         // IDs remain unique across region resets, so stale render proof cannot
         // credit a replacement with the same numeric identifier.
@@ -76,6 +84,7 @@ internal sealed class IdleShots
 
     internal void BeginScenicPath()
     {
+        if (!NeedsReplacement) presentation.ScheduleReplacement();
         NeedsReplacement = true;
         if (Searching) return;
         attemptsLeft = SceneReady ? SearchBudget : 0;
@@ -87,8 +96,9 @@ internal sealed class IdleShots
     // scenic interval before its replacement has passed validation.
     internal float PlanFraction(double elapsed, double duration)
     {
-        if (!Searching && !NeedsReplacement)
-            lastFraction = (float)Math.Max(0, Math.Min(1, duration > 0 ? elapsed / duration : 0));
+        // Consume the coverage clock even while a recovery search freezes this
+        // plan. Resuming must not repay that time as a sudden camera movement.
+        lastFraction = (float)presentation.AdvancePlan(elapsed, duration, Searching || NeedsReplacement);
         return lastFraction;
     }
 
@@ -131,7 +141,8 @@ internal sealed class IdleShots
             float screenY = style == ScenicShotStyle.Approach ? -0.04f : -0.1f;
             var candidate = new ScenicShotPlan(nextPlanId + 1, style, ToCore(start + Vector3.up * 1.5f),
                 ToCore(end + Vector3.up * 1.5f), ToCore(offset), screenX, screenY);
-            if (!EvaluatePath(candidate, settings, aspect, nearClip, out float score, out string reason))
+            if (!EvaluatePath(candidate, settings, aspect, nearClip, out float score, out bool readable, out string reason) ||
+                HasScenicPath && !readable)
             { RejectedViews++; ViewReason = reason; continue; }
             viablePlans++;
             // Measured terrain relief supplies a modest interest preference. It
@@ -148,21 +159,23 @@ internal sealed class IdleShots
         if (!enough && attemptsLeft > 0) return false;
         if (bestPlan == null)
         {
+            presentation.SearchCompleted(false);
             attemptsLeft = 0; ViewReason = "No fresh physically supported scenic path in this loaded region";
             return false;
         }
         Plan = bestPlan; selectedPlace = bestPlace; nextPlanId = Plan.Id;
+        readiness.Reset();
         bestPlan = null; attemptsLeft = 0; NeedsReplacement = false;
-        lastFraction = shownSeconds = 0; recorded = previousUsable = false; presentationAt = -1;
-        blockedSince = -1; nextViewCheck = 0; lastViewClear = true;
+        lastFraction = 0; recorded = false; presentation.Accept(Time.unscaledTime);
+        nextViewCheck = 0; lastViewClear = true;
         ViewReason = "Selected " + Plan.Style + " scenic path from " + viablePlans + " supported candidates";
         return true;
     }
 
     private bool EvaluatePath(ScenicShotPlan candidate, BroadcastSettings settings, float aspect, float nearClip,
-        out float score, out string reason)
+        out float score, out bool readable, out string reason)
     {
-        score = 0; reason = "Scenic path has unsupported geometry";
+        score = 0; readable = true; reason = "Scenic path has unsupported geometry";
         Vector3 previous = default;
         float worst = 1f, average = 0;
         // Validate the full allowed movement envelope so changing motion strength
@@ -182,6 +195,8 @@ internal sealed class IdleShots
                 settings.DeliberateComposition.Value ? sample.ScreenY : 0, settings.FieldOfView.Value, aspect);
             ScenicVisibility.Result result = visibility.Evaluate(camera, rotation, focus, settings.FieldOfView.Value, aspect, nearClip);
             if (!result.CameraClear) { reason = result.Reason; return false; }
+            readable &= PictureQuality.Scenic(result.CameraClear, result.FocusVisible, result.Score,
+                result.ForegroundOcclusion, result.SurveyComplete).Readable;
             average += result.Score / 9f;
             worst = Mathf.Min(worst, result.Score);
             previous = camera;
@@ -190,7 +205,7 @@ internal sealed class IdleShots
         // This ranks picture quality; even poor but physically safe coverage is
         // retained as a fallback when the loaded region offers nothing better.
         score = worst * 0.55f + average * 0.45f;
-        reason = "Supported scenic path";
+        reason = readable ? "Supported readable scenic path" : "Supported scenic path has unreadable intervals";
         return true;
     }
 
@@ -214,14 +229,18 @@ internal sealed class IdleShots
     internal bool ReportPresentation(bool ready, string reason, bool usable = true)
     {
         if (Plan == null) return false;
-        float now = Time.unscaledTime;
-        float dt = presentationAt >= 0 && now >= presentationAt && now - presentationAt <= 0.25f ? now - presentationAt : 0;
-        presentationAt = now;
+        if (ready) readiness.Presented(Plan.Id, FromCore(Plan.Sample(lastFraction).AimPosition));
+        bool recovered = presentation.Observe(Time.unscaledTime, ready, usable);
+        if (recovered)
+        {
+            // A better view of the retained plan has already restored footage.
+            // A pending search must not cut away after that recovery succeeds.
+            attemptsLeft = 0; bestPlan = null; NeedsReplacement = false;
+            ViewReason = "Retained scenic composition recovered";
+        }
         if (ready && usable)
         {
-            if (previousUsable && !recorded) shownSeconds += dt;
-            previousUsable = true; blockedSince = -1;
-            if (!recorded && shownSeconds >= 2f)
+            if (!recorded && presentation.ShownSeconds >= 2f)
             {
                 recentPlaces.Enqueue(new ShownPlace(selectedPlace, Plan.Style));
                 if (recentPlaces.Count > 12) recentPlaces.Dequeue();
@@ -229,13 +248,8 @@ internal sealed class IdleShots
             }
             return false;
         }
-        previousUsable = false;
-        if (!recorded) shownSeconds = 0;
         ViewReason = reason;
-        if (blockedSince < 0) blockedSince = now;
-        // Start seeking before the compositor's 0.75s hold expires. Keep the
-        // current plan available: poor foliage quality is not scene unavailability.
-        if (now - blockedSince < 0.4f || Searching) return false;
+        if (!presentation.ReplacementRequested || Searching || NeedsReplacement) return false;
         NeedsReplacement = true;
         return true;
     }

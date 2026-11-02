@@ -33,6 +33,7 @@ internal static class Program
         yield return ("A new scenic plan replaces all prior path geometry", NewPlan);
         yield return ("Zero-length paths retain a safe stationary fallback", ZeroLength);
         yield return ("Distance progress is bounded, monotonic and starts/ends at rest", RestToRest);
+        yield return ("Long scenic splines establish movement promptly and cruise without a midpoint surge", ScenicCruise);
         yield return ("Large world coordinates retain finite bounded spline positions", WorldBounds);
         yield return ("Malformed spline progress and shape strength are rejected", InvalidInputs);
         yield return ("Native FreeLook lens interpolation preserves camera mode and clip planes", LensModifierContract);
@@ -116,6 +117,15 @@ internal static class Program
         Check(path.Distance(.01f) < path.Distance(.51f) - path.Distance(.5f), "Start does not ease from rest.");
         Check(path.Length - path.Distance(.99f) < path.Distance(.51f) - path.Distance(.5f), "End does not settle.");
         Check(path.Distance(-4) == 0 && path.Distance(4) == path.Length, "Distance did not clamp to endpoints.");
+    }
+    private static void ScenicCruise()
+    {
+        using var path = new ScenicSplinePath(); path.Prepare(Plan(ScenicShotStyle.Lateral), 1);
+        Check(path.Distance(3f / 45) > path.Length * .025f, "Long path still spends its opening nearly motionless.");
+        float cruise = path.Distance(.3f) - path.Distance(.2f);
+        foreach (float p in new[] { .3f, .4f, .5f, .6f, .7f, .8f })
+            Check(Math.Abs((path.Distance(p + .1f) - path.Distance(p)) - cruise) < .0001f,
+                "Native distance pacing surged or stalled during the cruise.");
     }
     private static void WorldBounds()
     {

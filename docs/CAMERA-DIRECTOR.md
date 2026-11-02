@@ -1,10 +1,10 @@
-# Shared camera director (0.8.22)
+# Shared camera director (0.8.23)
 
-Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.22 builds directly on 0.8.21 (`9ae20da`), adding evidence-qualified encounter direction and finite world-position pass-by shots. Observational Position Composer shots, validated group Dolly Then Zoom and coordinated FreeLook Modifier profiles remain available. The preceding native Confiner 3D, Spline Dolly, ClearShot, blend curves and automatic clean-feed orientation calibration remain active. Existing future-readability ranking, activity sequences, deliberate scales, room/opening measurements, group continuity and observer limits remain active. Wildlife cutaways retain their existing global-idle requirements.
+Player, creature and scenic coverage use one Cinemachine pipeline for damping, composition, candidate selection, physical validation and continuity. Version 0.8.23 builds directly on 0.8.22 (`7bda56a`), repairing scenic motion ownership, presentation pacing and recovery while retaining evidence-qualified encounter direction and finite world-position pass-by shots. Observational Position Composer shots, validated group Dolly Then Zoom and coordinated FreeLook Modifier profiles remain available. The preceding native Confiner 3D, Spline Dolly, ClearShot, blend curves and automatic clean-feed orientation calibration remain active. Existing future-readability ranking, activity sequences, deliberate scales, room/opening measurements, group continuity and observer limits remain active. Wildlife cutaways retain their existing global-idle requirements.
 
 Scenery supplies planned world camera and aim paths; creatures supply their actual dimensions and observed movement. Neither is represented as a fake player. The observer's travel/authorization rules remain separate. Probe viewing stays a fixed acquisition measurement, while travel and recovery use the existing held-frame/slate presentation.
 
-Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.22 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
+Build and test evidence is recorded in [RUNTIME-TESTS.md](RUNTIME-TESTS.md). **The 0.8.23 runtime cases have not been run in Unity/Valheim here.** Pure tests and compilation do not establish composition quality, runtime cost or multiplayer behavior.
 
 ## Controls and configuration
 
@@ -221,6 +221,16 @@ Nearby relevant opponents and cooperative players can share the native Target Gr
 
 Pass-by candidates require sustained walking/running through known open space without an active encounter. The camera takes a point ahead of and beside the projected route, holds that position, and uses native Rotation Composer to pan through approach, crossing and departure. Native body tracking, obstacle repositioning, group dolly and elevation modifiers do not compete for that camera position. The shot is finite, with a cooldown before another opportunity; stopping, reversing, veering, changing elevation, entering an encounter or losing clearance/readability returns selection to the existing tracking views. Endpoints and the predicted crossing/departure must pass the existing visibility and movement checks. This is an additional eligible shot family, not a guarantee that every walk triggers one.
 
+## Scenic continuity repair (0.8.23)
+
+A blocked movement is not an unreadable image, and an unreadable image is not proof of a missing region. A supported readable camera can pause while movement is reconsidered and still earn actual scenic viewing time. Local picture recovery no longer directly feeds the region-unavailable timer; useful footage advances the configured regional dwell, while actual missing output or exhausted persistent recovery drives the bounded unavailable-region path.
+
+Scenic paths now retain a quality-selected viewpoint instead of following actor shot-duration/sequence cuts between nearby offsets. Their baseline lens uses `Camera.FieldOfView`, consistently with the path survey, rather than changing between humanoid wide/full/medium presets. Deliberate elevation profiles remain available on eligible scenic rises. The authored native Dolly path owns camera translation; scenic Deoccluder translation is disabled, while actual pose, swept path, foliage and carrier validation remain enforced. A rejected move holds its safe distance without accumulating a later catch-up movement. Short smooth acceleration/deceleration ramps replace whole-shot quintic easing, allowing a steady cruise through most of the path.
+
+A retained plan cancels an obsolete obstruction-recovery search when live readable footage returns. Scheduled novelty remains independent. Replacement candidates for an existing view must have readable surveyed paths; failed recovery retries retain their backoff and exhausted status. Initial physically supported fallback coverage remains possible when a region has no attractive view. Established scenic coverage can use fresh, same-plan/world/carrier geometry continuity for up to 0.75 seconds since actual live proof. New plans, stale evidence, world changes and large discontinuities still require full acquisition. Continuation does not permit movement into missing geometry.
+
+The supplied 48.6-second hillside recording shows repeated pauses and short reframing moves within the same landscape. It documents the pre-fix symptom; it does not establish which internal control caused each move. Source review identified the conflicting motion/presentation/pacing paths above. A matching recording with 0.8.23 is still required to validate the visual correction.
+
 ## Reading camera diagnostics
 
 `broadcast camera status` identifies the active scene kind. Actor diagnostics report trajectory mode, `anchor lag`, planned anchor `speed`, `rendered camera` speed and `subject` speed, plus the trajectory validation/correction reason. The anchor is a planned position reference; it is not the observer body or necessarily the final camera position. Rendered-camera speed is a smoothed estimate with a cap for cuts, not an isolated measurement of one camera component. Similar camera/player speeds during sustained travel are expected. Look at the response to starts, stops, reversals and shot development when checking whether movement is still being copied.
@@ -244,7 +254,7 @@ The companion added in 0.8.13 can supply observation ages, coarse velocity and r
 
 The client probes support after observer authorization. An older server that does not reply falls back to local context after six seconds. Freshness, character identity and packet bounds are checked; stale or invalid optional context does not revoke an approved observer role. The camera currently uses fresh primary health-loss hints as supporting evidence, not as sufficient proof of combat.
 
-The 0.8.22 production-camera changes require only the client update: install its three DLLs and included `ThirdParty` notices together, preserving configuration. The 0.8.18 server remains optional for remote event evidence; global-idle wildlife cutaways still require the 0.8.17-or-later activity service. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
+The 0.8.23 production-camera changes require only the client update: install its three DLLs and included `ThirdParty` notices together, preserving configuration. The 0.8.18 server remains optional for remote event evidence; global-idle wildlife cutaways still require the 0.8.17-or-later activity service. The source change does not install files or restart the server. See [MULTIPLAYER-OBSERVER.md](MULTIPLAYER-OBSERVER.md) for deployment and authorization.
 
 ## Reused Cinemachine components
 
@@ -295,10 +305,14 @@ Keep the custom activity/group evidence, foliage and rendered-picture measuremen
 
 ## Runtime validation
 
-**The 0.8.22 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
+**The 0.8.23 runtime cases below are pending.** Use a disposable profile/world first. F10 / `broadcast self` needs no second player or server mod and exercises the actual camera; it does not validate replicated groups or opponents. Record build, game/dependency versions, mode, camera status, relevant diagnostics and a short local/RTMP clip when reporting a defect. Compare obscured-shot duration, corrective cuts per minute and camera motion across the same short routes; a favorable numeric score alone is not visual validation.
 
 | Exercise | Expected result to verify |
 | --- | --- |
+| Repeat the supplied hillside scene for several full scenic intervals | Continuous developing motion with smooth ramps, stable baseline FOV, no repeated short offset hops, and normal fresh-plan progression |
+| Block a scenic path ahead while its current view remains clear | Safe motion pause retains live readable coverage; no 0.4-second replacement cascade or ten-second travel caused solely by the pause |
+| Temporarily obscure a scene, let it recover during a replacement search, then test a genuinely exhausted region | Recovered shot cancels obsolete recovery; sustained real failure still searches/retries and eventually permits bounded region recovery |
+| Load background objects beside an established scenic shot; then remove actual supporting geometry or change worlds | Background loading preserves acquired footage; real geometry loss and identity changes still revoke continuation |
 | Aim a bow at a distant loaded creature; hold, release, turn away; repeat with two creatures close to the aim line | Hunting is labelled inferred, qualified target persists briefly after release, ambiguity does not invent certainty, and distant target cannot force the player into a tiny wide shot |
 | Fight one enemy, then several; repeat with multiple cooperative players | Key opponent receives framing priority, companion/foe count remains bounded, fight axis develops smoothly, hidden or dead enemies do not keep control of composition |
 | Stand near a large hostile without fighting; compare a passive small creature and a tamed animal | Threat stays distinct from active combat; proximity alone does not invent an attack or select a pet as an enemy |

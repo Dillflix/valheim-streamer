@@ -93,7 +93,8 @@ internal sealed class AutonomousBroadcast
         return movement >= 0 && movement < CameraReachability.ImmediateLimit;
     }
 
-    internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true)
+    internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true,
+        bool? idleSceneAvailable = null)
     {
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
@@ -205,7 +206,7 @@ internal sealed class AutonomousBroadcast
         IReadOnlyList<ScenicRegion> destinations = remote.DiscoveryFresh && settings.ScenicTravel.Value ? regions : Array.Empty<ScenicRegion>();
         policy.Tick(now, dt, players, destinations, Convert(Player.m_localPlayer.transform.position),
             presentedId, idleReady, observer.Phase == ObserverPhase.Travelling,
-            wildlifeCutaway && observer.Phase == ObserverPhase.Watching, activity, usablePlayerFootage);
+            wildlifeCutaway && observer.Phase == ObserverPhase.Watching, activity, usablePlayerFootage, idleSceneAvailable);
         targetDiagnostics = "none";
         foreach (AutonomyPlayer player in players)
             if (player.Id == policy.TargetId)

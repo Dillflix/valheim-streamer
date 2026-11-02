@@ -188,7 +188,8 @@ namespace ValheimBroadcaster.Core
 
         public void Tick(double now, double dt, IReadOnlyList<AutonomyPlayer> players, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false,
-            bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true)
+            bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
+            bool? idleSceneAvailable = null)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (players == null) throw new ArgumentNullException(nameof(players));
@@ -339,15 +340,19 @@ namespace ValheimBroadcaster.Core
                 if (PresentationGraceActive || selected.SceneReady || selected.HasFreshPosition(now)) return;
                 // A connected player without a usable position does not freeze idle coverage.
             }
-            TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady);
+            TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady,
+                idleSceneAvailable ?? idleShotReady);
         }
 
         private void TickScenery(double now, double footage, int connected, IReadOnlyList<ScenicRegion> regions,
-            AutonomyPosition currentPosition, bool ready)
+            AutonomyPosition currentPosition, bool ready, bool available)
         {
+            // Useful footage advances dwell. A live picture recovering its
+            // composition is not evidence that its loaded region is unavailable.
+            available |= ready;
             if (!idleActive)
             {
-                idleActive = true; idleDwell = 0; idleUnreadyBegan = ready ? -1 : now;
+                idleActive = true; idleDwell = 0; idleUnreadyBegan = available ? -1 : now;
                 // Record the arrival area so the first roaming destination cannot immediately revisit it.
                 ScenicRegion? nearest = null; double nearestDistance = 64;
                 foreach (ScenicRegion region in regions)
@@ -358,9 +363,10 @@ namespace ValheimBroadcaster.Core
                 if (nearest != null)
                 { CurrentRegionId = nearest.Id; CurrentRegionName = nearest.Name; Remember(nearest.Id, now); }
             }
-            State = ready ? AutonomyState.Scenic : AutonomyState.Waiting;
-            Reason = connected > 0 ? "Scenery while waiting for an available player" : ready ? "Exploring the current scenic region" : "Waiting for a valid scenic shot";
-            if (ready) idleUnreadyBegan = -1;
+            State = available ? AutonomyState.Scenic : AutonomyState.Waiting;
+            Reason = connected > 0 ? "Scenery while waiting for an available player" : ready ? "Exploring the current scenic region" :
+                available ? "Retaining the loaded scenic region while local composition recovers" : "Waiting for a valid scenic shot";
+            if (available) idleUnreadyBegan = -1;
             else if (idleUnreadyBegan < 0) idleUnreadyBegan = now;
             if (Held) { Reason += " (held)"; return; }
             if (ready) idleDwell += footage;

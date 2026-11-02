@@ -52,7 +52,7 @@ namespace ValheimBroadcaster.Core
             if (double.IsNaN(progress) || double.IsInfinity(progress) || !Finite(strength) || strength < 0)
                 throw new ArgumentOutOfRangeException(nameof(progress));
             double t = Math.Max(0, Math.Min(1, progress));
-            double ease = t * t * t * (t * (t * 6 - 15) + 10);
+            double ease = ScenicMotionProfile.Progress(t);
             double move = dynamic ? ease * Math.Min(1.5, strength) : 0;
             double dx = end.X - start.X, dy = end.Y - start.Y, dz = end.Z - start.Z;
             double x = offset.X, y = offset.Y, z = offset.Z;
