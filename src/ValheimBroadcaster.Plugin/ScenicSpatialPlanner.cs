@@ -13,8 +13,8 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class ScenicSpatialPlanner
 {
     private const int MaximumNodes = 48, MaximumProbes = 96, MaximumSeeds = 16;
-    private const float MaximumSeconds = 5f, UrgentSeconds = 1.5f, UnknownWait = .8f, EdgeStep = 5f;
-    private readonly ScenicVisibility visibility = new ScenicVisibility();
+    private const float EdgeStep = 5f;
+    private readonly ScenicVisibility visibility = new ScenicVisibility("spatial");
     private readonly CameraSpatialPlanner search = new CameraSpatialPlanner();
     private readonly CameraSpatialPlanner fallbackSearch = new CameraSpatialPlanner();
     private readonly List<CameraSpatialNode> nodes = new List<CameraSpatialNode>(MaximumNodes);
@@ -115,7 +115,8 @@ internal sealed class ScenicSpatialPlanner
         if (epoch != CameraSpatialScene.Shared.Epoch)
         { Finish("Spatial scene changed; discard the prior observation graph"); return true; }
         long begin = Stopwatch.GetTimestamp();
-        bool expired = Time.unscaledTime - started >= (priority == CameraQueryPriority.OnAir ? UrgentSeconds : MaximumSeconds);
+        bool expired = ScenicObservationPolicy.SearchExpired(Time.unscaledTime, started, priority == CameraQueryPriority.OnAir);
+        TraceBudget("step", current, expired);
         if (graphSearching)
         {
             search.Step(128);
@@ -132,7 +133,7 @@ internal sealed class ScenicSpatialPlanner
         if (expired || nodes.Count >= MaximumNodes || Attempts >= MaximumProbes)
         {
             if (edges.Count > 0) { BeginGraph(); search.Step(512); if (TryResult() || TryFallback()) return true; }
-            Finish("No connected readable movement in the observed local space"); return true;
+            Finish($"Camera-route search expired: {nodes.Count} clear viewpoints, {edges.Count / 2} validated corridors; last observation: {Reason}"); return true;
         }
         for (int work = 0; work < queryBudget; work++)
         {
@@ -187,6 +188,8 @@ internal sealed class ScenicSpatialPlanner
     // retains the same probe and cannot become a free graph node or corridor.
     private bool Advance(Probe probe)
     {
+        visibility.QueryId = id;
+        visibility.QueryStage = $"probe {Attempts}, stage {probe.Stage}, sample {probe.ViewSample}";
         if (probe.Stage == 0)
         {
             // Do not spend a pending-surface wait on a point that is already
@@ -383,11 +386,23 @@ internal sealed class ScenicSpatialPlanner
         float now = Time.unscaledTime;
         if (probe.WaitingAt < 0) probe.WaitingAt = now;
         Reason = reason;
-        if (now - probe.WaitingAt >= UnknownWait) return Reject("Unknown spatial evidence timed out: " + reason);
+        TraceBudget("wait", probe, ScenicObservationPolicy.WaitExpired(now, probe.WaitingAt));
+        if (ScenicObservationPolicy.WaitExpired(now, probe.WaitingAt)) return Reject("Unknown spatial evidence timed out: " + reason);
         return false;
     }
-    private bool Reject(string reason) { Rejected++; Reason = reason; return true; }
-    private void Finish(string reason) { Complete = true; Plan = null; Reason = reason; }
+    private bool Reject(string reason) { Rejected++; Reason = reason; ScenicTrace.Event("spatial-reject", reason, id); return true; }
+    private void Finish(string reason) { Complete = true; Plan = null; Reason = reason; ScenicTrace.Event("spatial-finish", reason, id); }
+    private void TraceBudget(string operation, Probe? probe, bool expired)
+    {
+        if (!ScenicTrace.Enabled) return;
+        CameraTraceRecord row = ScenicTrace.Row("budget").Field("operation", operation).Field("query", id)
+            .Field("started", started).Field("waitingAt", probe?.WaitingAt ?? -1)
+            .Field("urgent", priority == CameraQueryPriority.OnAir).Field("expired", expired)
+            .Field("probe", Attempts).Field("stage", probe?.Stage ?? -1).Field("sample", probe?.ViewSample ?? -1)
+            .Field("nodes", nodes.Count).Field("edges", edges.Count).Field("rejected", Rejected).Field("pending", frontier.Count)
+            .Field("reason", Reason);
+        ScenicTrace.Record(probe == null ? row : ScenicTrace.Vector(row, "camera", probe.Position));
+    }
     private ScenicPose MakePose(Vector3 position) => new ScenicPose(position, focus,
         ScenicVisibility.Compose(position, focus, screenX, screenY, fov, aspect), fov, 0);
     internal void Reset()

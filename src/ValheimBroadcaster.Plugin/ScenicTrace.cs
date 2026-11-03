@@ -1,0 +1,67 @@
+using System;
+using System.IO;
+using UnityEngine;
+using ValheimBroadcaster.Core;
+
+namespace ValheimBroadcaster.Plugin;
+
+/// <summary>Local automatic evidence, independent of the operator overlay and
+/// video encoder. Only the main thread supplies Unity observations.</summary>
+internal static class ScenicTrace
+{
+    private static CameraTraceWriter? writer;
+    private static Action<string>? log;
+    private static string? directory;
+    private static long sequence;
+    private static bool reportedError;
+    private static float nextPicture, nextWarning;
+    private static bool lastUsable, lastOnAir;
+    internal static bool Enabled => writer != null && writer.Error == null;
+    internal static string Status => writer == null ? "Scenic trace: disabled" :
+        $"Scenic trace: {writer.Written} records, {writer.Pending} queued, {writer.Dropped} dropped; " +
+        (writer.Error == null ? writer.DirectoryPath : "I/O stopped: " + writer.Error);
+
+    internal static void Initialize(string root, Action<string> logger)
+    { directory = Path.Combine(root, "diagnostics", "ValheimBroadcaster"); log = logger; Start(); }
+    internal static void Start()
+    {
+        if (writer != null || directory == null) return;
+        string header = new CameraTraceRecord("header", 0).Field("version", BroadcasterPlugin.PluginVersion)
+            .Field("protocol", ObserverProtocol.Version).Field("unity", Application.unityVersion)
+            .Field("utc", DateTime.UtcNow.ToString("O")).ToString();
+        writer = new CameraTraceWriter(directory, header); reportedError = false;
+        log?.Invoke("Automatic scenic evidence capture enabled: " + directory + " (up to 8 files / approximately 32 MiB). No upload is performed.");
+    }
+    internal static CameraTraceRecord Row(string kind) => new CameraTraceRecord(kind, Time.unscaledTime)
+        .Field("seq", ++sequence).Field("frame", Time.frameCount).Field("epoch", CameraSpatialScene.Shared.Epoch);
+    internal static void Record(CameraTraceRecord record) { writer?.Record(record.ToString()); }
+    internal static CameraTraceRecord Vector(CameraTraceRecord row, string name, Vector3 value) =>
+        row.Field(name + "X", value.x).Field(name + "Y", value.y).Field(name + "Z", value.z);
+    internal static void Event(string source, string reason, long plan = 0)
+    { if (Enabled) Record(Row("event").Field("owner", source).Field("reason", reason).Field("plan", plan)); }
+    internal static void Picture(bool onAir, bool usable, bool held, long plan, float elapsed, bool expired, string reason)
+    {
+        if (!Enabled || !onAir && !lastOnAir) return;
+        float now = Time.unscaledTime;
+        if (onAir != lastOnAir || usable != lastUsable || now >= nextPicture)
+        {
+            Record(Row("picture").Field("onAir", onAir).Field("usable", usable).Field("held", held)
+                .Field("plan", plan).Field("missingSeconds", elapsed).Field("expired", expired).Field("reason", reason));
+            nextPicture = now + .25f;
+        }
+        lastOnAir = onAir; lastUsable = usable;
+    }
+    internal static void Tick()
+    {
+        if (writer?.Error != null && !reportedError)
+        { reportedError = true; log?.Invoke(Status + "; camera operation continues without file recording."); }
+    }
+    internal static void Incomplete(string owner, ScenicCoverageGap gap, float distance, float radius, int omitted)
+    {
+        if (Time.unscaledTime < nextWarning) return;
+        nextWarning = Time.unscaledTime + 15;
+        log?.Invoke($"Scenic survey evidence: {owner}; missing {gap}; camera/survey distance {distance:F1}m; " +
+            $"retained radius {radius:F1}m; omitted {omitted}. Details are captured automatically. {Status}");
+    }
+    internal static void Stop() { writer?.Dispose(); writer = null; }
+}

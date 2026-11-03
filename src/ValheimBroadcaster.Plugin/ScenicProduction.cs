@@ -22,9 +22,9 @@ internal sealed class ScenicProduction
     private ScenicShotPlan? lastPresentedPlan;
     private Vector3 lastPresentedFocus;
     private Vector3 lastAdmittedFocus;
-    internal readonly ScenicVisibility Visibility = new ScenicVisibility();
+    internal readonly ScenicVisibility Visibility = new ScenicVisibility("live");
     // Candidate surveys must never recenter the live camera's foliage cache.
-    private readonly ScenicVisibility planningVisibility = new ScenicVisibility();
+    private readonly ScenicVisibility planningVisibility = new ScenicVisibility("live");
     private Vector3 origin;
     private long nextId;
     private long bestEpoch, preparedEpoch;
@@ -71,6 +71,7 @@ internal sealed class ScenicProduction
     {
         Clear(); origin = value; HasRegion = TargetRoster.Finite(value);
         if (HasRegion) survey.Begin(value);
+        if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("region"), "origin", value));
     }
     internal void Clear()
     {
@@ -146,6 +147,7 @@ internal sealed class ScenicProduction
         bool knownPicture = planId > 0 && (Plan?.Id == planId || lastPresentedPlan?.Id == planId);
         HasUsablePicture = onAir && usableLive && knownPicture;
         recovery.Observe(Time.unscaledTime, onAir && HasRegion, HasUsablePicture, held);
+        ScenicTrace.Picture(onAir && HasRegion, HasUsablePicture, held, planId, (float)recovery.ElapsedSeconds, recovery.Expired, Reason);
         if (!recovery.Active) deadlineHandled = false;
         if (usableLive && knownPicture) RecoveryExhausted = false;
         else if (recovery.Expired) RecoveryExhausted = true;
@@ -166,6 +168,9 @@ internal sealed class ScenicProduction
         if (!hasSettings || plannedFov != settings.FieldOfView.Value ||
             plannedComposition != settings.DeliberateComposition.Value || plannedNative != settings.NativeSplineDolly.Value)
         {
+            if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Row("settings").Field("fov", settings.FieldOfView.Value)
+                .Field("composition", settings.DeliberateComposition.Value).Field("nativeSpline", settings.NativeSplineDolly.Value)
+                .Field("dynamic", settings.DynamicShots.Value).Field("motion", settings.ShotMotion.Value));
             hasSettings = true; plannedFov = settings.FieldOfView.Value;
             plannedComposition = settings.DeliberateComposition.Value; plannedNative = settings.NativeSplineDolly.Value;
             director.TakePrepared(); testing = best = null; searching = planning = false;

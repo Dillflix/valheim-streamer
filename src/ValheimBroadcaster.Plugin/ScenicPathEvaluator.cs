@@ -93,6 +93,7 @@ internal static class ScenicPoseValidation
         out float score, out ScenicRejectionKind kind, out string reason)
     {
         score = 0; kind = ScenicRejectionKind.None; reason = "Readable directed scenic view";
+        visibility.QueryId = plan.Id; visibility.QueryStage = "pose " + pose.Progress.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
         if (!TargetRoster.Finite(pose.Position) || !TargetRoster.Finite(pose.Focus) ||
             Vector3.ProjectOnPlane(pose.Focus - pose.Position, Vector3.up).sqrMagnitude < .25f)
             return Reject(ScenicRejectionKind.InvalidPlan, "Invalid scenic pose or near-vertical aim", out kind, out reason);

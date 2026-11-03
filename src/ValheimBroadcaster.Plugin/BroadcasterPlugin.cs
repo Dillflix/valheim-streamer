@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.28";
+    public const string PluginVersion = "0.8.29";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -87,6 +87,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     {
         if (GUIManager.IsHeadless()) { enabled = false; return; }
         settings = new BroadcastSettings(Config);
+        ScenicTrace.Initialize(BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
         rig.RemoteContext = remote;
         rig.PictureMonitor = pictureMonitor;
@@ -159,6 +160,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void Update()
     {
         if (settings == null) return;
+        ScenicTrace.Tick();
         try { remote.Tick(); }
         catch (Exception error) { remote.Fail("Observer connection error: " + error.GetType().Name); }
         if (remote.TerminalFailure && !terminalReported)
@@ -1026,12 +1028,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         Stop();
     }
 
-    private void OnDisable() { connection?.Dispose(); CancelIntent(); remote?.Close(); Stop(true); RestoreBackground(); }
+    private void OnDisable() { connection?.Dispose(); CancelIntent(); remote?.Close(); Stop(true); RestoreBackground(); ScenicTrace.Stop(); }
     private void OnDestroy()
     {
         connection?.Dispose(); CancelIntent(); remote?.Close();
         Stop(true);
         pictureMonitor.Dispose();
+        ScenicTrace.Stop();
         harmony?.UnpatchSelf();
         RestoreBackground();
         if (instance == this) instance = null;
@@ -1041,7 +1044,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + ScenicTrace.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {
@@ -1168,7 +1171,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|trace on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1250,6 +1253,12 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         foreach (TargetRoster.Target target in plugin.roster.Targets.Values)
                             context?.AddString($"{target.Identity.Id}  {target.Identity.Name} | {(plugin.CanShow(target) ? "camera-ready" : target.PublicPosition.HasValue && plugin.remote.DiscoveryFresh ? "awaiting acquisition" : "waiting for scene/coordinates")}");
                         break;
+                    case "trace":
+                        if (args.Length == 2 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase)) ScenicTrace.Stop();
+                        else if (args.Length == 2 && args[1].Equals("on", StringComparison.OrdinalIgnoreCase)) ScenicTrace.Start();
+                        else if (args.Length != 1 && !(args.Length == 2 && args[1].Equals("status", StringComparison.OrdinalIgnoreCase)))
+                        { context?.AddString("broadcast trace on|off|status"); return; }
+                        context?.AddString(ScenicTrace.Status); return;
                     case "diagnostics": context?.AddString(plugin.Diagnostics()); return;
                     case "status": break;
                     default: context?.AddString(Help); return;

@@ -11,8 +11,17 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class ScenicVisibility
 {
     private const int Capacity = 512;
-    private const float SurveyRadius = 110f, ForegroundRange = 6f, DetailRadius = 16f, ReuseDistance = 8f;
+    private const float SurveyRadius = 110f, ForegroundRange = ScenicObservationPolicy.ForegroundRange, DetailRadius = ScenicObservationPolicy.DetailRadius;
     private const int DetailBudget = 1024;
+    private readonly string owner;
+    private long surveyNumber;
+    private int omitted, candidates, detailed, coarseCount;
+    private Bounds nearestOmitted;
+    private float nearestOmittedDistance, surveyMilliseconds;
+    private ScenicSurveyRefresh refreshAction;
+    internal long QueryId;
+    internal string QueryStage = "unspecified";
+    internal ScenicVisibility(string owner = "unspecified") { this.owner = owner; }
     private readonly List<Entry> foliage = new List<Entry>(Capacity);
     private readonly ScenicFoliageGeometry geometry = new ScenicFoliageGeometry();
     private readonly List<float> distances = new List<float>(Capacity);
@@ -48,6 +57,7 @@ internal sealed class ScenicVisibility
 
     internal void Reset()
     {
+        ScenicTrace.Event(owner, "Survey reset", QueryId);
         foliage.Clear(); distances.Clear(); groups.Clear(); refreshedAt = float.NegativeInfinity;
         coveredRadius = 0; furthest = 0; furthestDistance = 0;
         geometry.Reset(); checkedFrame = -1; activeCount = 0;
@@ -56,15 +66,19 @@ internal sealed class ScenicVisibility
     internal void Refresh(Vector3 surveyOrigin)
     {
         float now = Time.unscaledTime;
-        // Candidate poses must not trigger repeated whole-scene surveys in one
-        // render frame when opposite viewpoints cross the refresh distance.
-        if (now >= refreshedAt && now - refreshedAt < 0.5f) return;
         float displacement = Vector3.Distance(surveyOrigin, origin);
-        // Reuse stays inside the detailed foreground neighborhood. A truncated
-        // nearest-renderer set cannot certify an omitted foreground, so refresh
-        // as soon as the minimum survey throttle permits in that case too.
-        if (now >= refreshedAt && now - refreshedAt < 5f && displacement <= ReuseDistance &&
-            displacement + ForegroundRange < coveredRadius) return;
+        refreshAction = ScenicObservationPolicy.Refresh(now, refreshedAt, displacement, coveredRadius);
+        if (ScenicTrace.Enabled)
+        {
+            CameraTraceRecord row = ScenicTrace.Row("refresh").Field("owner", owner).Field("query", QueryId)
+                .Field("stage", QueryStage).Field("survey", surveyNumber).Field("refreshedAt", refreshedAt)
+                .Field("distance", displacement).Field("radius", coveredRadius).Field("action", refreshAction.ToString());
+            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(row, "camera", surveyOrigin), "origin", origin));
+        }
+        if (!ScenicObservationPolicy.NeedsRefresh(refreshAction)) return;
+        surveyNumber++; omitted = candidates = detailed = coarseCount = 0;
+        nearestOmitted = default; nearestOmittedDistance = float.PositiveInfinity;
+        long surveyStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         origin = surveyOrigin; refreshedAt = now; coveredRadius = SurveyRadius;
         foliage.Clear(); distances.Clear(); groups.Clear(); furthest = 0; furthestDistance = 0;
         geometry.BeginSurvey(); detailRemaining = DetailBudget; checkedFrame = -1;
@@ -99,6 +113,17 @@ internal sealed class ScenicVisibility
             }
             else Add(renderer);
         }
+        surveyMilliseconds = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - surveyStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+        if (ScenicTrace.Enabled)
+        {
+            CameraTraceRecord row = ScenicTrace.Row("survey").Field("owner", owner).Field("survey", surveyNumber)
+                .Field("query", QueryId).Field("stage", QueryStage).Field("radius", coveredRadius)
+                .Field("retained", foliage.Count).Field("omitted", omitted).Field("candidates", candidates)
+                .Field("detailCellsUsed", DetailBudget - detailRemaining).Field("milliseconds", surveyMilliseconds)
+                .Field("nearestOmittedDistance", nearestOmittedDistance);
+            row = ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Vector(row, "origin", origin), "omittedCentre", nearestOmitted.center), "omittedExtent", nearestOmitted.extents);
+            ScenicTrace.Record(row);
+        }
     }
 
     private static bool Vegetation(Transform transform)
@@ -129,12 +154,12 @@ internal sealed class ScenicVisibility
             Bounds[]? cells = geometry.Get(renderer);
             if (cells != null && cells.Length <= detailRemaining)
             {
-                detailRemaining -= cells.Length;
+                detailRemaining -= cells.Length; detailed++;
                 Add(new Entry(renderer, cells), coarse);
                 return;
             }
         }
-        Add(new Entry(renderer, null), coarse);
+        coarseCount++; Add(new Entry(renderer, null), coarse);
     }
 
     private void Add(Entry entry, Bounds bounds)
@@ -143,6 +168,7 @@ internal sealed class ScenicVisibility
         bounds.Expand(0.4f); // Clearance from shader-animated leaf edges.
         float distance = Mathf.Sqrt(bounds.SqrDistance(origin));
         if (distance >= SurveyRadius) return;
+        candidates++;
         if (foliage.Count < Capacity)
         {
             foliage.Add(entry); distances.Add(distance);
@@ -151,12 +177,19 @@ internal sealed class ScenicVisibility
         }
         // Keep the nearest bounds. Retain a conservative coverage radius so a
         // truncated cache never silently declares an unexamined position clear.
-        if (distance >= furthestDistance) { coveredRadius = Mathf.Min(coveredRadius, distance); return; }
-        coveredRadius = Mathf.Min(coveredRadius, furthestDistance);
+        if (distance >= furthestDistance) { Omit(bounds, distance); return; }
+        Bounds evicted = foliage[furthest].Renderer.bounds; evicted.Expand(.4f);
+        Omit(evicted, furthestDistance);
         foliage[furthest] = entry; distances[furthest] = distance;
         furthestDistance = 0;
         for (int i = 0; i < distances.Count; i++)
             if (distances[i] >= furthestDistance) { furthest = i; furthestDistance = distances[i]; }
+    }
+
+    private void Omit(Bounds bounds, float distance)
+    {
+        omitted++; coveredRadius = Mathf.Min(coveredRadius, distance);
+        if (distance < nearestOmittedDistance) { nearestOmittedDistance = distance; nearestOmitted = bounds; }
     }
 
     // Landscape quality uses the actual presented orientation/lens. Foliage and
@@ -185,8 +218,9 @@ internal sealed class ScenicVisibility
         // A far coarse canopy is discovery evidence, not proof that a queried
         // camera lies inside leaves. Hold the same candidate until the bounded
         // survey can recenter and inspect its own local foreground.
-        float requiredRadius = Vector3.Distance(camera, origin) + ForegroundRange;
-        bool complete = requiredRadius < coveredRadius && requiredRadius < DetailRadius;
+        float displacement = Vector3.Distance(camera, origin);
+        ScenicCoverageGap gap = ScenicObservationPolicy.Coverage(displacement, coveredRadius);
+        bool complete = gap == ScenicCoverageGap.None;
         float foreground = 0;
         bool insideLeaves = false;
         for (int i = 0; i < activeCount; i++)
@@ -214,9 +248,23 @@ internal sealed class ScenicVisibility
             foreground = blocked / 12f;
         }
         float score = (focusVisible ? 1f : 0.3f) * (1f - 0.85f * foreground) * (complete ? 1f : 0.65f);
-        string reason = !complete ? "Scenic foliage survey incomplete" : insideLeaves ? "Scenic camera intersects retained vegetation bounds" :
+        string reason = !complete ? "Scenic foliage survey incomplete: " + gap + " (" + refreshAction + ")" : insideLeaves ? "Scenic camera intersects retained vegetation bounds" :
             foreground >= 0.5f ? "Foreground vegetation dominates the scenic frame" :
             !focusVisible ? "Scenic feature is outside the frame or hidden" : "Readable scenic composition";
+        if (ScenicTrace.Enabled)
+        {
+            CameraTraceRecord row = ScenicTrace.Row("coverage").Field("owner", owner).Field("query", QueryId).Field("stage", QueryStage)
+                .Field("survey", surveyNumber).Field("distance", displacement).Field("radius", coveredRadius)
+                .Field("age", Time.unscaledTime - refreshedAt).Field("gap", (long)gap)
+                .Field("retained", foliage.Count).Field("omitted", omitted).Field("candidates", candidates)
+                .Field("detailed", detailed).Field("coarse", coarseCount).Field("detailRemaining", detailRemaining)
+                .Field("activeBounds", activeCount).Field("surveyMilliseconds", surveyMilliseconds).Field("focusVisible", focusVisible).Field("foreground", foreground)
+                .Field("score", score).Field("fov", fov).Field("aspect", aspect).Field("near", nearClip)
+                .Field("rotationX", rotation.x).Field("rotationY", rotation.y).Field("rotationZ", rotation.z).Field("rotationW", rotation.w)
+                .Field("reason", reason);
+            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Vector(row, "camera", camera), "origin", origin), "focus", focus));
+        }
+        if (!complete) ScenicTrace.Incomplete(owner, gap, displacement, coveredRadius, omitted);
         return new Result(true, focusVisible, complete, Mathf.Clamp01(score), foreground, reason);
     }
 
@@ -252,8 +300,9 @@ internal sealed class ScenicVisibility
         lift = 0;
         if (!TargetRoster.Finite(camera)) return false;
         Refresh(camera); RefreshActive();
-        float requiredRadius = Vector3.Distance(camera, origin) + ForegroundRange;
-        bool complete = requiredRadius < coveredRadius && requiredRadius < DetailRadius;
+        float displacement = Vector3.Distance(camera, origin);
+        ScenicCoverageGap gap = ScenicObservationPolicy.Coverage(displacement, coveredRadius);
+        bool complete = gap == ScenicCoverageGap.None;
         return FoliageGeometryMath.TryCanopyLift(camera, activeBounds, activeCount,
             complete, ForegroundRange, out lift);
     }
@@ -348,5 +397,6 @@ internal sealed class ScenicVisibility
     private static bool Solid(Collider collider) => collider && collider.enabled && !collider.isTrigger &&
         !collider.GetComponentInParent<Character>();
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
-    private static Result Invalid(string reason) => new Result(false, false, false, 0, 0, reason);
+    private Result Invalid(string reason)
+    { ScenicTrace.Event(owner + "-invalid", reason, QueryId); return new Result(false, false, false, 0, 0, reason); }
 }

@@ -219,6 +219,11 @@ internal sealed class AutonomousBroadcast
         AutonomyTravelRequest? request = policy.PendingTravel;
         if (request == null || observer.Phase != ObserverPhase.Watching) return;
         lastTravelReason = request.Reason;
+        if (ScenicTrace.Enabled && request.Kind == AutonomyTravelKind.Scenic)
+            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("travel").Field("reason", request.Reason)
+                .Field("sceneAvailable", idleSceneAvailable ?? idleReady).Field("usablePicture", idleReady)
+                .Field("searchExpired", idleSearchExpired).Field("readyDwell", policy.ReadyDwellSeconds),
+                "destination", new Vector3(request.Position.X, request.Position.Y, request.Position.Z)));
         try
         {
             observer.TravelTo(new Vector3(request.Position.X, request.Position.Y, request.Position.Z));

@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.29 evidence build:** automatic bounded Scenic capture and standalone coverage/deadline replay. See [capture instructions and limitations](docs/SCENIC-EVIDENCE.md). Built directly on 0.8.28; protocol 3 unchanged; no server update needed. This is not a claim that Scenic recovery is fixed.
+
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 
 **0.8.28 introduces shared spatial planning and local place awareness.** Built directly on 0.8.27 (`025fe85`), Scenic discovers clear viewpoints, connects verified corridors and builds multiwaypoint shots before native trajectory validation. Player and Creature use adaptive future-corridor planning through their existing Cinemachine controller. Loaded construction is organized into buildings, districts, settlements and directly measured local spaces with explicit partial coverage. Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. Logic, native mathematics and compilation are testable here; visual quality and frame cost still require Valheim runtime validation. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md).

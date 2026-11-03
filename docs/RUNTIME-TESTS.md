@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.29 automatic Scenic evidence
+
+Built directly on 0.8.28 (`da0c7ed99884c34dc418d95dae39778091001ea6`). The supplied 0.8.28 log confirms the correct plugin/protocol loaded, successful observer authorization, RTMP publishing and recurring incomplete foliage surveys. The recordings still show long recovery intervals. Those logs do not identify the underlying coverage/scheduling cause. This build extracts existing coverage/refresh/deadline decisions into replayable Core functions, records their runtime inputs and outputs, and adds a bounded asynchronous JSONL writer plus standalone replay CLI. Camera admission/route/travel behavior and protocol 3 are preserved.
+
+Local validation: **763/763 core cases**, **57/57 native math cases**, warnings-as-errors client/server compilation against the real matching assemblies. New tests exercise recenter throttling versus truncated coverage, competing deadlines, divergent/incomplete captures, invariant JSON encoding, actual file rotation/drain and I/O failure isolation. The replay fixture is synthetic. No Unity runtime capture with this build is available yet, so neither a root cause nor a Scenic quality improvement is established. See [SCENIC-EVIDENCE.md](SCENIC-EVIDENCE.md) for collection and the explicit limits of offline replay.
+
 ## 0.8.28 shared spatial planning
 
 Built directly from 0.8.27 (`025fe857eac396c4027d7bb1d4c98960cc6df433`). This is an architectural implementation, not a claim that the earlier scenic recordings now pass. Scenic production constructs routes from measured clear viewpoints/corridors; Player/Creature orbital coverage adds bounded adaptive future planning; construction observations supply local hierarchical context. Full native path validation, actual output evidence and observer protocol 3 remain required. No server update is required.

@@ -19,6 +19,17 @@ jobs:
           dotnet-version: '8.0.427'
       - name: Test director logic
         run: dotnet run --project tests/ValheimBroadcaster.Core.Tests/ValheimBroadcaster.Core.Tests.csproj --configuration Release
+      - name: Build and exercise standalone evidence replay
+        run: |
+          dotnet publish tools/ValheimBroadcaster.Replay --configuration Release -warnaserror --output replay-artifacts
+          dotnet replay-artifacts/ValheimBroadcaster.Replay.dll tests/fixtures/scenic-evidence/competing-deadlines.jsonl
+          cp docs/SCENIC-EVIDENCE.md replay-artifacts/README.md
+      - name: Upload standalone replay tool
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ValheimBroadcaster-Replay
+          path: replay-artifacts/
+          if-no-files-found: error
 
   streaming:
     strategy:
