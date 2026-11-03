@@ -20,6 +20,11 @@ internal sealed class IdleShots
     internal bool RecoveryExhausted => scenic.RecoveryExhausted;
     internal bool RecoveryExpired => scenic.RecoveryExpired;
     internal bool HasUsableScenicPicture => scenic.HasUsablePicture;
+    internal bool DestinationSubjectShown => scenic.DestinationSubjectShown;
+    internal bool DestinationSubjectSatisfied => scenic.DestinationSubjectSatisfied;
+    internal bool DestinationSubjectUnavailable => scenic.DestinationSubjectUnavailable;
+    internal string DestinationSubjectStatus => scenic.DestinationSubjectStatus;
+    internal void SetDestinationSubject(WorldInterestSite? site) => scenic.SetDestinationSubject(site);
     internal ScenicVisibility Visibility => scenic.Visibility;
     internal ScenicShotPlan? Plan => scenic.Plan;
     internal long PlanId => Plan?.Id ?? 0;

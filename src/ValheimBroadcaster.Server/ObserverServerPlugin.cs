@@ -12,7 +12,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.32")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.33")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 public sealed class ObserverServerPlugin : BaseUnityPlugin
@@ -49,8 +49,8 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         contextEnabled = Config.Bind("Observer", "ContextEnabled", true, "Optional timestamped character observations and replicated health-loss hints for authorized broadcasters. Does not change observer admission, activate regions, or require mods on ordinary players.");
         activityEnabled = Config.Bind("Observer", "ActivityEnabled", true, "Optional observed-idle evidence for all ordinary players, for wildlife cutaways. Uses existing replicated movement, actions and heartbeat; cannot prove absence of local menu/input activity. Does not alter observer admission or simulate regions.");
         eventsEnabled = Config.Bind("Observer", "EventsEnabled", true, "Optional timestamped movement, generic action, crafting and health-loss evidence for activity-aware coverage. Generic action/health loss does not prove combat. Reads the existing activity samples; no ordinary-player mod or simulation changes. Respects SharePrivatePlayerPositions.");
-        interestsEnabled = Config.Bind("Observer", "WorldInterestEnabled", true, "Optional metadata-only discovery of player bases and already-placed landmarks, with destination feedback. Requires observer authorization and DiscoveryEnabled. Does not simulate regions or change admission.");
-        interests = new ObserverWorldInterestService(message => Logger.LogInfo(message));
+        interestsEnabled = Config.Bind("Observer", "WorldInterestEnabled", true, "Optional metadata-only discovery of natural landscapes/coasts, player bases and already-placed landmarks, with destination feedback. Requires observer authorization and DiscoveryEnabled. Does not simulate regions or change admission.");
+        interests = new ObserverWorldInterestService(message => Logger.LogInfo(message), () => discovery.NaturalDestinations);
         instance = this;
         try
         {
@@ -73,7 +73,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.32 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.33 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {
@@ -134,7 +134,9 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         __0.m_rpc.Register<int>(ObserverActivityProtocol.Request, plugin.ActivityRequest);
         __0.m_rpc.Register<int>(ObserverEventProtocol.Request, plugin.EventRequest);
         __0.m_rpc.Register<int>(WorldInterestProtocol.Request, plugin.InterestRequest);
+        __0.m_rpc.Register<int>(WorldInterestProtocol.Request2, plugin.InterestRequest2);
         __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Feedback, plugin.InterestFeedback);
+        __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Feedback2, plugin.InterestFeedback2);
     }
     private void Request(ZRpc rpc, int version)
     {
@@ -192,25 +194,29 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
             ZNet.instance.Disconnect(peer);
         }
     }
-    private void InterestRequest(ZRpc rpc, int version)
+    private void InterestRequest(ZRpc rpc, int version) => InterestRequest(rpc, version, false);
+    private void InterestRequest2(ZRpc rpc, int version) => InterestRequest(rpc, version, true);
+    private void InterestRequest(ZRpc rpc, int version, bool version2)
     {
-        if (!Serving || version != WorldInterestProtocol.Version || Find(rpc) is not ZNetPeer peer || !peer.IsReady() || !Authorized(peer) ||
+        if (!Serving || version != (version2 ? WorldInterestProtocol.Version2 : WorldInterestProtocol.Version) || Find(rpc) is not ZNetPeer peer || !peer.IsReady() || !Authorized(peer) ||
             !leases.TryGetValue(peer, out ObserverLease lease) || !lease.Confirmed) return;
         try
         {
-            WorldInterestPage? page = interests.Request(peer, Time.realtimeSinceStartup, interestsEnabled.Value && discoveryEnabled.Value && !interestsFailed);
-            if (page != null) rpc.Invoke(WorldInterestProtocol.Reply, new ZPackage(WorldInterestProtocol.Encode(page)));
+            WorldInterestPage? page = interests.Request(peer, Time.realtimeSinceStartup, interestsEnabled.Value && discoveryEnabled.Value && !interestsFailed, version2);
+            if (page != null) rpc.Invoke(version2 ? WorldInterestProtocol.Reply2 : WorldInterestProtocol.Reply, new ZPackage(version2 ? WorldInterestProtocol.EncodeV2(page) : WorldInterestProtocol.Encode(page)));
         }
         catch (Exception error) { Logger.LogWarning("Optional world-interest response failed after " + error.GetType().Name + "; normal discovery remains available."); }
     }
-    private void InterestFeedback(ZRpc rpc, ZPackage package)
+    private void InterestFeedback(ZRpc rpc, ZPackage package) => InterestFeedback(rpc, package, false);
+    private void InterestFeedback2(ZRpc rpc, ZPackage package) => InterestFeedback(rpc, package, true);
+    private void InterestFeedback(ZRpc rpc, ZPackage package, bool version2)
     {
         if (!Serving || !interestsEnabled.Value || !discoveryEnabled.Value || interestsFailed || Find(rpc) is not ZNetPeer peer || !peer.IsReady() ||
             !Authorized(peer) || !leases.TryGetValue(peer, out ObserverLease lease) || !lease.Confirmed) return;
         try
         {
             if (package.Size() > 128) return;
-            interests.Feedback(peer, WorldInterestProtocol.DecodeFeedback(package.GetArray()), Time.realtimeSinceStartup);
+            interests.Feedback(peer, WorldInterestProtocol.DecodeFeedback(package.GetArray()), Time.realtimeSinceStartup, version2);
         }
         catch (Exception error) { Logger.LogWarning("Destination feedback ignored after " + error.GetType().Name + "."); }
     }

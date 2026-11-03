@@ -139,6 +139,7 @@ internal sealed partial class RemoteObserverClient
             __0.m_rpc.Register<ZPackage>(ObserverActivityProtocol.Reply, client.ActivityReply);
             __0.m_rpc.Register<ZPackage>(ObserverEventProtocol.Reply, client.EventReply);
             __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Reply, client.InterestReply);
+            __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Reply2, client.InterestReply2);
         }
     }
     private static bool RequestBeforeAdmission(ZRpc __0)

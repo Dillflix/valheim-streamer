@@ -23,6 +23,9 @@ internal sealed class ObserverWorldInterestService
     private readonly Dictionary<string, Record> catalogue = new Dictionary<string, Record>(StringComparer.Ordinal);
     private readonly Dictionary<string, WorldInterestSite> landmarks = new Dictionary<string, WorldInterestSite>(StringComparer.Ordinal);
     private readonly Dictionary<ZNetPeer, Reader> readers = new Dictionary<ZNetPeer, Reader>();
+    private readonly Dictionary<ZNetPeer, Reader> readers2 = new Dictionary<ZNetPeer, Reader>();
+    private readonly Func<IReadOnlyList<WorldInterestSite>> naturalProvider;
+    private readonly Dictionary<string, int> preparationGroups = new Dictionary<string, int>(StringComparer.Ordinal);
     private readonly DestinationFeedbackLedger history = new DestinationFeedbackLedger();
     private readonly Action<string> log;
     private ZDOMan? manager;
@@ -50,12 +53,12 @@ internal sealed class ObserverWorldInterestService
         internal Record[] Sites = Array.Empty<Record>();
         internal readonly Dictionary<string, float> Issued = new Dictionary<string, float>(StringComparer.Ordinal);
     }
-    internal ObserverWorldInterestService(Action<string> log) { this.log = log; }
+    internal ObserverWorldInterestService(Action<string> log, Func<IReadOnlyList<WorldInterestSite>> naturalProvider) { this.log = log; this.naturalProvider = naturalProvider; }
     internal string Status => $"World interests: {catalogue.Count} destinations; {bases.Count} construction cells; {objects} objects examined; " +
         $"{(collecting ? "indexing" : complete ? "survey complete" : "partial survey")}; {rejectedApproaches} approaches outside eligible generated dry land; feedback history {history.Count}";
     internal void Reset()
     {
-        Save(); locations?.Dispose(); locations = null; bases.Clear(); prefabKinds.Clear(); catalogue.Clear(); landmarks.Clear(); readers.Clear(); history.Clear();
+        Save(); locations?.Dispose(); locations = null; bases.Clear(); prefabKinds.Clear(); catalogue.Clear(); landmarks.Clear(); readers.Clear(); readers2.Clear(); preparationGroups.Clear(); history.Clear();
         manager = null; zones = null; sectors = null; generated = null; historyPath = null; worldId = sequence = cycle = 0;
         collecting = complete = mutated = haveSweep = historyDirty = false; nextTick = nextSweep = nextPublish = nextSave = 0;
         sector = item = expectedCount = objects = scannedLocations = 0;
@@ -75,7 +78,8 @@ internal sealed class ObserverWorldInterestService
             catch (Exception error) { log("Destination history ignored after " + error.GetType().Name + "; rebuilding from current world evidence."); }
         }
         if (sectors == null || generated == null) return;
-        foreach (ZNetPeer peer in readers.Keys.Where(p => !ZNet.instance.GetPeers().Contains(p)).ToArray()) readers.Remove(peer);
+        foreach (var readersByVersion in new[] { readers, readers2 })
+            foreach (ZNetPeer peer in readersByVersion.Keys.Where(p => !ZNet.instance.GetPeers().Contains(p)).ToArray()) readersByVersion.Remove(peer);
         if (historyDirty && now >= nextSave) { nextSave = now + 60; Save(); }
         if (proposals != null && !PublishStep()) return;
         if (!collecting)
@@ -152,7 +156,12 @@ internal sealed class ObserverWorldInterestService
     {
         proposals = bases.Build().Concat(landmarks.Values).OrderByDescending(s => s.Priority).ThenBy(s => s.Id, StringComparer.Ordinal).ToArray();
         preparing.Clear(); proposalIndex = baseCount = landmarkCount = rejectedApproaches = 0;
-        proposedAt = sweepAt; proposedComplete = full;
+        proposedAt = sweepAt; proposedComplete = full; preparationGroups.Clear();
+        // These approaches were already sampled by the generated-terrain survey.
+        IReadOnlyList<WorldInterestSite> natural = naturalProvider();
+        if (natural.Count > 512) proposedComplete = false;
+        foreach (WorldInterestSite site in WorldInterestDistribution.Take(natural, 512))
+            preparing.Add(site.Id, new Record { At = now, Site = site });
     }
     private bool PublishStep()
     {
@@ -162,14 +171,23 @@ internal sealed class ObserverWorldInterestService
         while (proposalIndex < proposals!.Length && checks < 2 && visited++ < 64)
         {
             WorldInterestSite s = proposals[proposalIndex++]; bool landmark = s.Kind == WorldInterestKind.Landmark;
-            if ((landmark ? landmarkCount : baseCount) >= WorldInterestProtocol.MaxSites / 2) { proposedComplete = false; continue; }
+            string biome = WorldGenerator.instance.GetBiome(Vector(s.Arrival)).ToString();
+            string group = (landmark ? "landmark:" : "base:") + biome;
+            preparationGroups.TryGetValue(group, out int retained);
+            if (retained >= 128) { proposedComplete = false; continue; }
             checks++;
             if (!Arrival(s, out ObserverPoint arrival)) { rejectedApproaches++; continue; }
             if (landmark) landmarkCount++; else baseCount++;
-            preparing.Add(s.Id, new Record { At = proposedAt, Site = new WorldInterestSite(s.Id, s.ParentId, s.Name, s.Kind, s.Center, s.Extents, arrival, s.Pieces, s.Priority) });
+            preparationGroups[group] = retained + 1;
+            preparing.Add(s.Id, new Record { At = proposedAt, Site = new WorldInterestSite(s.Id, s.ParentId, s.Name, s.Kind, s.Center, s.Extents, arrival, s.Pieces, s.Priority, biome: biome) });
         }
         if (proposalIndex < proposals.Length) return false;
-        catalogue.Clear(); foreach (var pair in preparing) catalogue.Add(pair.Key, pair.Value);
+        catalogue.Clear();
+        if (baseCount > 256 || landmarkCount > 256) proposedComplete = false;
+        var chosen = preparing.Values.Where(r => r.Site.Kind == WorldInterestKind.Natural).Select(r => r.Site)
+            .Concat(WorldInterestDistribution.Take(preparing.Values.Where(r => r.Site.Kind == WorldInterestKind.Base || r.Site.Kind == WorldInterestKind.BaseArea).Select(r => r.Site), 256))
+            .Concat(WorldInterestDistribution.Take(preparing.Values.Where(r => r.Site.Kind == WorldInterestKind.Landmark).Select(r => r.Site), 256));
+        foreach (WorldInterestSite site in chosen) catalogue.Add(site.Id, preparing[site.Id]);
         complete = proposedComplete; preparing.Clear(); proposals = null; log(Status); return true;
     }
     private bool Arrival(WorldInterestSite site, out ObserverPoint arrival)
@@ -194,15 +212,16 @@ internal sealed class ObserverWorldInterestService
         }
         return false;
     }
-    internal WorldInterestPage? Request(ZNetPeer peer, float now, bool enabled)
+    internal WorldInterestPage? Request(ZNetPeer peer, float now, bool enabled, bool version2 = false)
     {
+        var readers = version2 ? readers2 : this.readers;
         if (!readers.TryGetValue(peer, out Reader? reader)) { if (readers.Count >= 64) return null; readers.Add(peer, reader = new Reader()); }
         if (now < reader.NextRequest) return null; reader.NextRequest = now + 1;
         if (!enabled)
         { reader.Sites = Array.Empty<Record>(); reader.Issued.Clear(); reader.Page = 0; return new WorldInterestPage(ZNet.instance.GetWorldUID(), ++sequence, ++cycle, 0, 1, false, false, Array.Empty<WorldInterestSite>()); }
         if (reader.Page == 0)
         {
-            reader.Cycle = ++cycle; reader.Sites = catalogue.Values.OrderBy(r => r.Site.Id, StringComparer.Ordinal).ToArray(); reader.Complete = complete;
+            reader.Cycle = ++cycle; reader.Sites = catalogue.Values.Where(r => version2 || r.Site.Kind != WorldInterestKind.Natural).OrderBy(r => r.Site.Id, StringComparer.Ordinal).ToArray(); reader.Complete = complete;
         }
         int pages = Math.Max(1, (reader.Sites.Length + WorldInterestProtocol.PageSize - 1) / WorldInterestProtocol.PageSize);
         var rows = new List<WorldInterestSite>(); double utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -217,8 +236,9 @@ internal sealed class ObserverWorldInterestService
         var page = new WorldInterestPage(ZNet.instance.GetWorldUID(), ++sequence, reader.Cycle, reader.Page, pages, true, reader.Complete, rows);
         reader.Page = (reader.Page + 1) % pages; return page;
     }
-    internal bool Feedback(ZNetPeer peer, DestinationFeedback feedback, float now)
+    internal bool Feedback(ZNetPeer peer, DestinationFeedback feedback, float now, bool version2 = false)
     {
+        var readers = version2 ? readers2 : this.readers;
         if (feedback.World != worldId || !readers.TryGetValue(peer, out Reader? reader) || now < reader.NextFeedback ||
             feedback.Sequence <= reader.FeedbackSequence || !reader.Issued.TryGetValue(feedback.Id, out float issued) || now - issued > 600 ||
             !catalogue.TryGetValue(feedback.Id, out Record? record)) return false;

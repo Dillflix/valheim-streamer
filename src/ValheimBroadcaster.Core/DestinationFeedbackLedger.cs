@@ -77,15 +77,17 @@ public sealed class DestinationVisit
 {
     public string? Id { get; private set; }
     public float FootageSeconds { get; private set; }
-    private bool reported;
-    public void Begin(string id) { Id = WorldInterestProtocol.Identity(id); FootageSeconds = 0; reported = false; }
+    private bool reported, requiresSubject;
+    public void Begin(string id, bool requiresSubject = false) { Id = WorldInterestProtocol.Identity(id); FootageSeconds = 0; reported = false; this.requiresSubject = requiresSubject; }
     public void Reset() { Id = null; FootageSeconds = 0; reported = false; }
-    public DestinationOutcome? Observe(float dt, bool scenicPicture, bool searchExpired)
+    public DestinationOutcome? Observe(float dt, bool scenicPicture, bool searchExpired, bool subjectShown = false, bool subjectUnavailable = false, bool subjectSatisfied = false)
     {
         WorldInterestProtocol.Number(dt, 3600);
         if (Id == null || reported) return null;
-        if (scenicPicture) FootageSeconds += Math.Min(dt, 1);
-        if (FootageSeconds >= 15) { reported = true; return DestinationOutcome.UsableFootage; }
+        if (scenicPicture && (!requiresSubject || subjectShown)) FootageSeconds += Math.Min(dt, 1);
+        if (requiresSubject && subjectSatisfied) FootageSeconds = Math.Max(15, FootageSeconds);
+        if (FootageSeconds >= 15 && (!requiresSubject || subjectSatisfied)) { reported = true; return DestinationOutcome.UsableFootage; }
+        if (requiresSubject && (subjectUnavailable || searchExpired && !subjectShown)) { reported = true; return DestinationOutcome.SubjectUnavailable; }
         if (!scenicPicture && searchExpired) { reported = true; return DestinationOutcome.PictureUnavailable; }
         return null;
     }

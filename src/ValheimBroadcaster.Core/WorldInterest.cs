@@ -6,8 +6,8 @@ using System.Text;
 
 namespace ValheimBroadcaster.Core;
 
-public enum WorldInterestKind : byte { Base = 1, BaseArea = 2, Landmark = 3 }
-public enum DestinationOutcome : byte { UsableFootage = 1, PictureUnavailable = 2, TravelFailed = 3 }
+public enum WorldInterestKind : byte { Base = 1, BaseArea = 2, Landmark = 3, Natural = 4 }
+public enum DestinationOutcome : byte { UsableFootage = 1, PictureUnavailable = 2, TravelFailed = 3, SubjectUnavailable = 4 }
 
 // These extents describe a subject, not collision clearance or scene readiness.
 public sealed class WorldInterestSite
@@ -23,8 +23,10 @@ public sealed class WorldInterestSite
     public float Priority { get; }
     public float Age { get; }
     public float RetryAfter { get; }
+    public string Biome { get; }
+    public ScenicLandscape Landscape { get; }
     public WorldInterestSite(string id, string parent, string name, WorldInterestKind kind, ObserverPoint center,
-        ObserverPoint extents, ObserverPoint arrival, int pieces, float priority, float age = 0, float retryAfter = 0)
+        ObserverPoint extents, ObserverPoint arrival, int pieces, float priority, float age = 0, float retryAfter = 0, string biome = "", ScenicLandscape landscape = ScenicLandscape.Unknown)
     {
         Id = WorldInterestProtocol.Identity(id); ParentId = WorldInterestProtocol.Identity(parent, true);
         Name = ObserverDiscoveryProtocol.Text(name, 64, false);
@@ -32,10 +34,13 @@ public sealed class WorldInterestSite
             extents.X < 0 || extents.Y < 0 || extents.Z < 0 || extents.X > 512 || extents.Y > 256 || extents.Z > 512)
             throw new ArgumentException("Invalid world-interest subject.");
         WorldInterestProtocol.Number(priority, 100); WorldInterestProtocol.Number(age, 86400); WorldInterestProtocol.Number(retryAfter, 3600);
+        Biome = ObserverDiscoveryProtocol.Text(biome, 32, true);
+        if (!Enum.IsDefined(typeof(ScenicLandscape), landscape)) throw new ArgumentException("Invalid landscape.");
+        Landscape = landscape;
         Kind = kind; Center = center; Extents = extents; Arrival = arrival; Pieces = pieces; Priority = priority; Age = age; RetryAfter = retryAfter;
     }
     public WorldInterestSite WithReport(float age, float priority, float retry) =>
-        new WorldInterestSite(Id, ParentId, Name, Kind, Center, Extents, Arrival, Pieces, priority, age, retry);
+        new WorldInterestSite(Id, ParentId, Name, Kind, Center, Extents, Arrival, Pieces, priority, age, retry, Biome, Landscape);
 }
 
 public sealed class WorldInterestPage
@@ -81,6 +86,8 @@ public static class WorldInterestProtocol
 {
     public const string Request = "ValheimBroadcaster.Observer.InterestRequest1", Reply = "ValheimBroadcaster.Observer.InterestReply1",
         Feedback = "ValheimBroadcaster.Observer.InterestFeedback1";
+    public const string Request2 = "ValheimBroadcaster.Observer.InterestRequest2", Reply2 = "ValheimBroadcaster.Observer.InterestReply2", Feedback2 = "ValheimBroadcaster.Observer.InterestFeedback2";
+    public const int Version2 = 2;
     public const int Version = 1, PageSize = 64, MaxSites = 1024, MaxPages = MaxSites / PageSize, MaxPacketBytes = 32768;
     public const double FreshSeconds = 45, SiteSeconds = 600, ProbeSeconds = 8;
     private const int Magic = 0x56424931, FeedbackMagic = 0x56424631;
@@ -92,28 +99,41 @@ public static class WorldInterestProtocol
         return value;
     }
     internal static void Number(float v, float maximum) { if (float.IsNaN(v) || float.IsInfinity(v) || v < 0 || v > maximum) throw new ArgumentOutOfRangeException(nameof(v)); }
-    public static byte[] Encode(WorldInterestPage page)
+    public static byte[] Encode(WorldInterestPage page) => EncodePage(page, Version);
+    public static byte[] EncodeV2(WorldInterestPage page) => EncodePage(page, Version2);
+    private static byte[] EncodePage(WorldInterestPage page, int version)
     {
         using var stream = new MemoryStream(); using var w = new BinaryWriter(stream, Utf8, true);
-        w.Write(Magic); w.Write(Version); w.Write(page.World); w.Write(page.Sequence); w.Write(page.Cycle);
+        w.Write(Magic); w.Write(version); w.Write(page.World); w.Write(page.Sequence); w.Write(page.Cycle);
         w.Write(page.Page); w.Write(page.Pages); w.Write(page.Enabled); w.Write(page.Complete); w.Write((ushort)page.Sites.Count);
         foreach (var s in page.Sites)
         {
+            if (version == Version && s.Kind == WorldInterestKind.Natural) throw new ArgumentException("Natural destinations require interest protocol 2.");
             Text(w, s.Id); Text(w, s.ParentId); Text(w, s.Name); w.Write((byte)s.Kind);
             Point(w, s.Center); Point(w, s.Extents); Point(w, s.Arrival); w.Write(s.Pieces); w.Write(s.Priority); w.Write(s.Age); w.Write(s.RetryAfter);
+            if (version == Version2) { Text(w, s.Biome); w.Write((byte)s.Landscape); }
         }
         w.Flush(); if (stream.Length > MaxPacketBytes) throw new ArgumentException("Interest packet exceeds limit."); return stream.ToArray();
     }
-    public static WorldInterestPage Decode(byte[] bytes)
+    public static WorldInterestPage Decode(byte[] bytes) => DecodePage(bytes, Version);
+    public static WorldInterestPage DecodeV2(byte[] bytes) => DecodePage(bytes, Version2);
+    private static WorldInterestPage DecodePage(byte[] bytes, int version)
     {
         using var stream = Read(bytes, 44, MaxPacketBytes); using var r = new BinaryReader(stream, Utf8, true);
-        if (r.ReadInt32() != Magic || r.ReadInt32() != Version) throw new ArgumentException("Unsupported interest protocol.");
+        if (r.ReadInt32() != Magic || r.ReadInt32() != version) throw new ArgumentException("Unsupported interest protocol.");
         long world = r.ReadInt64(), sequence = r.ReadInt64(), cycle = r.ReadInt64(); int page = r.ReadInt32(), pages = r.ReadInt32();
         bool enabled = Flag(r), complete = Flag(r); int count = r.ReadUInt16();
         if (count > PageSize) throw new ArgumentException("Interest count exceeds limit.");
         var sites = new WorldInterestSite[count];
-        for (int i = 0; i < count; i++) sites[i] = new WorldInterestSite(Text(r), Text(r), Text(r), (WorldInterestKind)r.ReadByte(),
-            Point(r), Point(r), Point(r), r.ReadInt32(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+        for (int i = 0; i < count; i++)
+        {
+            string id = Text(r), parent = Text(r), name = Text(r); var kind = (WorldInterestKind)r.ReadByte();
+            ObserverPoint center = Point(r), extents = Point(r), arrival = Point(r);
+            int pieces = r.ReadInt32(); float priority = r.ReadSingle(), age = r.ReadSingle(), retry = r.ReadSingle();
+            if (version == Version && kind == WorldInterestKind.Natural) throw new ArgumentException("Natural destination in legacy packet.");
+            sites[i] = new WorldInterestSite(id, parent, name, kind, center, extents, arrival, pieces, priority, age, retry,
+                version == Version2 ? Text(r) : "", version == Version2 ? (ScenicLandscape)r.ReadByte() : ScenicLandscape.Unknown);
+        }
         End(stream); return new WorldInterestPage(world, sequence, cycle, page, pages, enabled, complete, sites);
     }
     public static byte[] Encode(DestinationFeedback feedback)

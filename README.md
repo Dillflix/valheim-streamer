@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.33 repairs destination variety and carries selected structures into Scenic composition.** Recent coverage balances natural landscapes, bases and landmarks across available biomes; the updated companion identifies coastal approaches even when a zone centre is underwater. Structural visits require readable coverage of observed structures before earning positive feedback. Update both components for the complete landscape metadata feed; observer admission remains protocol 3. [Behaviour and validation](docs/WORLD-DESTINATIONS.md). In-game validation remains pending.
+
 **0.8.32 adds server-guided base/settlement and placed-landmark destinations, plus persistent visit feedback.** Install the matching client and companion to enable the optional capability; observer admission remains protocol 3, and older companions retain ordinary discovery. Existing terrain/foliage/picture validation stays authoritative. See [destination discovery, upgrade and test instructions](docs/WORLD-DESTINATIONS.md). In-game validation remains pending.
 
 **0.8.31:** repairs scene-wide foliage coverage collapse in 0.8.30: distinguishes empty renderers, recovers valid transformed local bounds, and localizes unknown/omitted geometry. [Evidence and limits](docs/SCENIC-EVIDENCE.md). Automatic capture remains enabled; protocol 3 is unchanged; no server update is required. In-game validation remains pending.

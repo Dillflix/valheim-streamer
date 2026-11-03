@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.32";
+    public const string PluginVersion = "0.8.33";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -279,7 +279,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 (usableIdlePicture || idle.HasUsableScenicPicture) && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
                 localActivities, usablePlayerPicture, idleSceneAvailable, idle.RecoveryExpired,
                 coverage.Mode == CoverageMode.Scenic && idle.HasUsableScenicPicture,
-                coverage.Mode == CoverageMode.Creature && usableIdlePicture);
+                coverage.Mode == CoverageMode.Creature && usableIdlePicture, idle.DestinationSubjectShown, idle.DestinationSubjectUnavailable, idle.DestinationSubjectSatisfied);
+            idle.SetDestinationSubject(automatic?.ScenicInterest);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
             if (automatic?.ControlsSelection == true && automatic.TargetId != null) director.Select(automatic.TargetId);
@@ -411,6 +412,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         playerShots.Reset();
         creatureAdmission.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
+        idle.SetDestinationSubject(automatic?.ScenicInterest);
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false;
         localActivities.Clear();
         nextCreatureRefresh = 0;

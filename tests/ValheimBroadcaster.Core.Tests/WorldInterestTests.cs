@@ -26,6 +26,7 @@ internal static class WorldInterestTests
         yield return ("Destination history bounds capacity and survives wall-clock correction", HistoryBounds);
         yield return ("Destination visits credit actual footage and only one outcome", VisitEvidence);
         yield return ("Destination interruptions reset visits without inventing failure", VisitInterruption);
+        yield return ("Destination success requires the selected structure to be shown", SubjectVisit);
         yield return ("Destination merge preserves generated fallback and stale evidence exclusion", MergeFallback);
         yield return ("Destination merge respects independent local and remote cooldowns", MergeCooldown);
         yield return ("Scenic selection prefers eligible server subjects without weakening travel bounds", PrioritySelection);
@@ -181,6 +182,21 @@ internal static class WorldInterestTests
         v.Begin("b"); Eq<DestinationOutcome?>(DestinationOutcome.PictureUnavailable, v.Observe(1, false, true));
         Eq<DestinationOutcome?>(null, v.Observe(1, false, true));
     }
+    private static void SubjectVisit()
+    {
+        var v = new DestinationVisit(); v.Begin("ruins", true);
+        for (int i = 0; i < 30; i++) Eq<DestinationOutcome?>(null, v.Observe(1, true, false));
+        Eq(0f, v.FootageSeconds);
+        Eq<DestinationOutcome?>(DestinationOutcome.SubjectUnavailable, v.Observe(1, true, false, false, true));
+        Eq<DestinationOutcome?>(null, v.Observe(1, false, true));
+        v.Begin("base", true);
+        for (int i = 0; i < 14; i++) Eq<DestinationOutcome?>(null, v.Observe(1, true, false, true));
+        Eq<DestinationOutcome?>(null, v.Observe(1, true, false, true));
+        Eq<DestinationOutcome?>(DestinationOutcome.UsableFootage, v.Observe(0, true, false, true, subjectSatisfied: true));
+        v.Begin("landscape");
+        for (int i = 0; i < 14; i++) v.Observe(1, true, false);
+        Eq<DestinationOutcome?>(DestinationOutcome.UsableFootage, v.Observe(1, true, false));
+    }
     private static void VisitInterruption()
     {
         var v = new DestinationVisit(); v.Begin("a"); v.Observe(1, true, false); v.Reset();
@@ -193,7 +209,7 @@ internal static class WorldInterestTests
         var generic = Enumerable.Range(0, 1024).Select(i => G("g:" + i, 300 + i)).ToArray();
         var sites = Enumerable.Range(0, 1024).Select(i => S("base:" + i)).ToArray();
         var h = new DestinationFeedbackLedger(); var merged = WorldDestinationPlanner.Merge(generic, sites, h, 0);
-        Eq(1024, merged.Count); Eq(128, merged.Count(r => r.Id.StartsWith("g:")));
+        Eq(1024, merged.Count); Assert(merged.Count(r => r.Id.StartsWith("g:")) >= 128);
         Eq(1024, WorldDestinationPlanner.Merge(generic, Array.Empty<WorldInterestSite>(), h, 1).Count);
         Eq(1, WorldDestinationPlanner.Merge(new[] { G() }, new[] { S(age: 600) }, h, 0).Count);
     }

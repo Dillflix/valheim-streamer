@@ -52,11 +52,19 @@ namespace ValheimBroadcaster.Core
         public AutonomyPosition Position { get; }
         public float Preference { get; }
         public double AvailableAfter { get; }
-        public ScenicRegion(string id, string name, AutonomyPosition position, float preference = 0, double availableAfter = 0)
+        public string Biome { get; }
+        public ScenicLandscape Landscape { get; }
+        public ScenicDestinationKind Kind { get; }
+        public string FamilyId { get; }
+        public ScenicRegion(string id, string name, AutonomyPosition position, float preference = 0, double availableAfter = 0,
+            string biome = "", ScenicLandscape landscape = ScenicLandscape.Unknown, ScenicDestinationKind kind = ScenicDestinationKind.Landscape, string? familyId = null)
         {
             Id = AutonomousDirector.Label(id, nameof(id)); Name = AutonomousDirector.Label(name, nameof(name)); Position = position;
             WorldInterestProtocol.Number(preference, 100); AutonomousDirector.Time(availableAfter, nameof(availableAfter));
             Preference = preference; AvailableAfter = availableAfter;
+            if (!Enum.IsDefined(typeof(ScenicLandscape), landscape) || !Enum.IsDefined(typeof(ScenicDestinationKind), kind)) throw new ArgumentException("Invalid scenic category.");
+            Biome = ScenicDestinationDiversity.BiomeName(biome.Length == 0 && kind == ScenicDestinationKind.Landscape ? name : biome);
+            Landscape = landscape; Kind = kind; FamilyId = AutonomousDirector.Label(familyId ?? id, nameof(familyId));
         }
     }
 
@@ -87,6 +95,9 @@ namespace ValheimBroadcaster.Core
         private readonly PlayerCoverageHistory coverage = new PlayerCoverageHistory();
         private readonly PlayerActivitySelection activitySelection = new PlayerActivitySelection();
         private readonly PlayerPictureRecovery pictureRecovery = new PlayerPictureRecovery();
+        private readonly ScenicDestinationDiversity scenicDiversity = new ScenicDestinationDiversity();
+        private readonly List<ScenicRegion> scenicCandidates = new List<ScenicRegion>(1024);
+        private ScenicRegion? pendingScenic;
         private readonly List<string> activityRoster = new List<string>(128);
         private string? targetId, lastPlayer, requestedSelection;
         private int requestedStep;
@@ -135,6 +146,9 @@ namespace ValheimBroadcaster.Core
         public bool PresentationGraceActive { get; private set; }
         public bool WildlifeCutawayActive { get; private set; }
         public string ActivityReason => activitySelection.Reason;
+        public string ScenicSelectionReason => scenicDiversity.Reason;
+        public string CurrentScenicDescription => scenicDiversity.CurrentDescription;
+        public int SustainedScenicVisits => scenicDiversity.CompletedVisits;
         public bool CanStartWildlifeCutaway => Enabled && !paused && !Held && State == AutonomyState.Following &&
             hasPresentedTarget && targetId != null && PendingTravel == null && ActiveTravel == null && route == null &&
             requestedSelection == null && requestedStep == 0;
@@ -156,6 +170,7 @@ namespace ValheimBroadcaster.Core
             if (Enabled == enabled) return;
             Enabled = enabled;
             coverage.Reset(); activitySelection.Reset(); pictureRecovery.Reset();
+            scenicDiversity.StopVisit(); pendingScenic = null;
             WildlifeCutawayActive = false;
             paused = false; PendingTravel = ActiveTravel = null; route = null;
             SetTarget(null, 0); started = false; idleActive = false; idleDwell = 0; idleUnreadyBegan = -1;
@@ -170,7 +185,7 @@ namespace ValheimBroadcaster.Core
             paused = value;
             WildlifeCutawayActive = false;
             PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
-            if (value) { PendingTravel = ActiveTravel = null; State = AutonomyState.Paused; Reason = "Automatic direction paused"; }
+            if (value) { scenicDiversity.StopVisit(); pendingScenic = null; PendingTravel = ActiveTravel = null; State = AutonomyState.Paused; Reason = "Automatic direction paused"; }
             else { acquisitionBegan = lastNow; idleUnreadyBegan = -1; }
         }
         public void SetHolding(bool value) { if (Held != value) { activitySelection.ResetRetention(); pictureRecovery.ResetCurrent(); } Held = value; }
@@ -195,9 +210,10 @@ namespace ValheimBroadcaster.Core
         public void Tick(double now, double dt, IReadOnlyList<AutonomyPlayer> players, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false,
             bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
-            bool? idleSceneAvailable = null, bool idleSearchExpired = false)
+            bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool? scenicFootageReady = null, double? scenicFootageDelta = null)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
+            if (scenicFootageDelta.HasValue) Time(scenicFootageDelta.Value, nameof(scenicFootageDelta));
             if (players == null) throw new ArgumentNullException(nameof(players));
             if (regions == null) throw new ArgumentNullException(nameof(regions));
             if (players.Count > 128 || regions.Count > 1024) throw new ArgumentException("Discovery inputs exceed the bounded policy capacity.");
@@ -240,6 +256,7 @@ namespace ValheimBroadcaster.Core
             AutonomyPlayer? selected = Find(players, targetId);
             if (wildlifeCutaway && selected != null && (WildlifeCutawayActive || CanStartWildlifeCutaway))
             {
+                scenicDiversity.StopVisit();
                 WildlifeCutawayActive = true;
                 TargetName = selected.Name;
                 // Rebase only acquisition clocks. Preserve target dwell and real
@@ -285,7 +302,7 @@ namespace ValheimBroadcaster.Core
                 if (selected.SceneReady)
                 {
                     outOfReachSince = -1;
-                    idleActive = false;
+                    idleActive = false; scenicDiversity.StopVisit();
                     if (string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal))
                     {
                         State = AutonomyState.Following; Reason = "Following " + selected.Name;
@@ -347,18 +364,18 @@ namespace ValheimBroadcaster.Core
                 // A connected player without a usable position does not freeze idle coverage.
             }
             TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady,
-                idleSceneAvailable ?? idleShotReady, idleSearchExpired);
+                idleSceneAvailable ?? idleShotReady, idleSearchExpired, scenicFootageReady ?? idleShotReady, scenicFootageDelta.HasValue ? Math.Min(footage, scenicFootageDelta.Value) : footage);
         }
 
         private void TickScenery(double now, double footage, int connected, IReadOnlyList<ScenicRegion> regions,
-            AutonomyPosition currentPosition, bool ready, bool available, bool searchExpired)
+            AutonomyPosition currentPosition, bool ready, bool available, bool searchExpired, bool scenicPicture, double scenicFootage)
         {
             // Useful footage advances dwell. A live picture recovering its
             // composition is not evidence that its loaded region is unavailable.
             available |= ready;
             if (!idleActive)
             {
-                idleActive = true; idleDwell = 0; idleUnreadyBegan = available ? -1 : now;
+                idleActive = true; idleDwell = 0; idleUnreadyBegan = available ? -1 : now; scenicDiversity.StopVisit();
                 // Record the arrival area so the first roaming destination cannot immediately revisit it.
                 ScenicRegion? nearest = null; double nearestDistance = 64;
                 foreach (ScenicRegion region in regions)
@@ -367,7 +384,12 @@ namespace ValheimBroadcaster.Core
                     if (distance < nearestDistance) { nearest = region; nearestDistance = distance; }
                 }
                 if (nearest != null)
-                { CurrentRegionId = nearest.Id; CurrentRegionName = nearest.Name; Remember(nearest.Id, now); }
+                {
+                    CurrentRegionId = nearest.Id; CurrentRegionName = nearest.Name; Remember(nearest.Id, now);
+                    // Proximity cannot prove that an initial base/landmark is
+                    // framed; explicit visits carry the adapter's subject gate.
+                    if (nearest.Kind == ScenicDestinationKind.Landscape) scenicDiversity.Begin(nearest);
+                }
             }
             State = available ? AutonomyState.Scenic : AutonomyState.Waiting;
             Reason = connected > 0 ? "Scenery while waiting for an available player" : ready ? "Exploring the current scenic region" :
@@ -376,6 +398,7 @@ namespace ValheimBroadcaster.Core
             { State = AutonomyState.Waiting; Reason = "No readable scenic output within the local recovery budget"; }
             if (available) idleUnreadyBegan = -1;
             else if (idleUnreadyBegan < 0) idleUnreadyBegan = now;
+            scenicDiversity.Observe(scenicFootage, scenicPicture);
             if (Held) { Reason += " (held)"; return; }
             if (ready) idleDwell += footage;
             // A loaded region can still fail to produce a picture. The client
@@ -384,19 +407,16 @@ namespace ValheimBroadcaster.Core
             bool exhausted = !ready && searchExpired || idleUnreadyBegan >= 0 && now - idleUnreadyBegan >= UnreadyScenicSeconds;
             if (idleDwell < RegionSeconds && !exhausted) return;
             if (now - lastTravelAt < MinimumTravelSeconds) { Reason = "Waiting for the travel cooldown"; return; }
-            ScenicRegion? chosen = null; double oldest = double.PositiveInfinity, nearestChoice = double.PositiveInfinity;
+            scenicCandidates.Clear();
             foreach (ScenicRegion region in regions)
             {
                 double distance = currentPosition.HorizontalDistance(region.Position);
                 if (region.Id == CurrentRegionId || now < region.AvailableAfter || distance < MinimumScenicTravelDistance || distance > MaximumScenicTravelDistance || Blocked("s:" + region.Id, now)) continue;
-                bool seen = visited.TryGetValue(region.Id, out double lastVisit);
-                if (seen && now - lastVisit < RevisitSeconds) continue;
-                double rank = seen ? lastVisit : double.NegativeInfinity;
-                if (chosen == null || region.Preference > chosen.Preference || region.Preference == chosen.Preference &&
-                    (rank < oldest || rank == oldest && (distance < nearestChoice ||
-                    distance == nearestChoice && StringComparer.Ordinal.Compare(region.Id, chosen.Id) < 0)))
-                { chosen = region; oldest = rank; nearestChoice = distance; }
+                if (visited.TryGetValue(region.Id, out double lastVisit) && now - lastVisit < RevisitSeconds) continue;
+                scenicCandidates.Add(region);
             }
+            ScenicRegion? chosen = scenicDiversity.Choose(scenicCandidates, currentPosition,
+                id => visited.TryGetValue(id, out double lastVisit) ? lastVisit : double.NegativeInfinity);
             if (chosen == null)
             {
                 Reason = regions.Count == 0 ? "Waiting for scenic destinations from the server" : "No fresh scenic destination available; distance, revisit and feedback cooldowns remain active";
@@ -404,6 +424,7 @@ namespace ValheimBroadcaster.Core
             }
             if (!visited.ContainsKey(chosen.Id) && !HasVisitCapacity(now))
             { Reason = "Scenic history is full; waiting for a revisit cooldown before recording another region"; return; }
+            pendingScenic = chosen; scenicDiversity.Attempt(chosen);
             Request(AutonomyTravelKind.Scenic, chosen.Id, chosen.Name, chosen.Position, now,
                 !ready && searchExpired ? "Scenic picture-recovery budget exhausted" :
                 exhausted ? "Scenic scene-readiness deadline exhausted" : "Scenic footage dwell completed");
@@ -428,6 +449,7 @@ namespace ValheimBroadcaster.Core
             ActiveTravel = PendingTravel = null; lastTravelAt = now;
             if (!success)
             {
+                pendingScenic = null;
                 FailedTravels++;
                 Fail((request.Kind == AutonomyTravelKind.Player ? "p:" : "s:") + request.TargetId, now,
                     reason ?? "Travel to " + request.Name + " failed");
@@ -442,6 +464,8 @@ namespace ValheimBroadcaster.Core
             else if (request.Kind == AutonomyTravelKind.Scenic)
             {
                 CurrentRegionId = request.TargetId; CurrentRegionName = request.Name; Remember(request.TargetId, now);
+                if (pendingScenic != null && pendingScenic.Id == request.TargetId) scenicDiversity.Begin(pendingScenic);
+                pendingScenic = null;
                 idleActive = true; idleDwell = 0; idleUnreadyBegan = now;
                 State = AutonomyState.Scenic; Reason = "Arrived in " + request.Name;
             }
@@ -456,6 +480,7 @@ namespace ValheimBroadcaster.Core
             if (destinations == null || destinations.Count == 0 || destinations.Count > 32) throw new ArgumentException("A solo route needs one to 32 marked destinations.", nameof(destinations));
             var copy = new ScenicRegion[destinations.Count];
             for (int i = 0; i < copy.Length; i++) copy[i] = destinations[i] ?? throw new ArgumentException("A route destination cannot be null.", nameof(destinations));
+            scenicDiversity.StopVisit(); pendingScenic = null;
             PendingTravel = null; SetTarget(null, now); route = copy; routeIndex = 0; routeArrived = false; routeDwell = 0;
             paused = false; Held = false; RouteTestResult = "Running " + copy.Length + " marked destinations";
             State = AutonomyState.RouteTest; Reason = RouteTestResult;
@@ -497,6 +522,7 @@ namespace ValheimBroadcaster.Core
         public void Reset()
         {
             SetEnabled(false); PendingTravel = ActiveTravel = null; visited.Clear(); failures.Clear();
+            scenicDiversity.Reset(); scenicCandidates.Clear(); pendingScenic = null;
             coverage.Reset(); activitySelection.Reset(); pictureRecovery.Reset();
             targetId = lastPlayer = requestedSelection = null; requestedStep = 0;
             Held = paused = started = idleActive = false; idleUnreadyBegan = -1; idleDwell = dwell = 0;
@@ -570,6 +596,7 @@ namespace ValheimBroadcaster.Core
 
         private void Request(AutonomyTravelKind kind, string id, string name, AutonomyPosition position, double now, string? reason = null)
         {
+            if (kind != AutonomyTravelKind.Scenic) { scenicDiversity.StopVisit(); pendingScenic = null; }
             PendingTravel = new AutonomyTravelRequest(++token, kind, id, name, position, reason ?? (kind + " destination selected")); pendingAt = now;
             State = AutonomyState.Acquiring; Reason = "Preparing travel to " + name;
         }

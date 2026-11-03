@@ -10,6 +10,20 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class ScenicProduction
 {
     private readonly ScenicDirector director = new ScenicDirector();
+    private readonly DestinationSubjectCoverage destinationSubject = new DestinationSubjectCoverage();
+    private readonly ScenicFeatureSurvey destinationSurvey = new ScenicFeatureSurvey();
+    private readonly List<ScenicFeature> destinationFeatures = new List<ScenicFeature>(32);
+    private Vector3 destinationSurveyOrigin;
+    private float nextDestinationSurvey;
+    internal bool DestinationSubjectShown => destinationSubject.Shown;
+    internal bool DestinationSubjectSatisfied => destinationSubject.Satisfied;
+    internal bool DestinationSubjectUnavailable => destinationSubject.Unavailable;
+    internal string DestinationSubjectStatus => destinationSubject.Site == null ? "No nominated destination subject" :
+        destinationSubject.Site.Name + " / " + destinationSubject.Site.Id + "; destination subject footage " +
+        destinationSubject.ShownSeconds.ToString("F1") + "/15s; establishing " + destinationSubject.EstablishedSeconds.ToString("F1") +
+        "/6s; " + destinationSubject.CoverageScope + "; " +
+        (destinationSubject.Satisfied ? "local subject sequence fulfilled" : destinationSubject.Unavailable ?
+        "subject not covered within local search budget; landscape fallback" : "seeking readable coverage of the destination subject");
     private ScenicFeatureSurvey survey = new ScenicFeatureSurvey();
     private ScenicFeatureSurvey refreshSurvey = new ScenicFeatureSurvey();
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
@@ -65,7 +79,7 @@ internal sealed class ScenicProduction
         $"lens {Plan?.FieldOfView ?? 0:F0}; blocked {director.BlockedSeconds:F1}s; staged {director.Prepared?.Id ?? 0}; " +
         $"search {Searching}, routes {attempts}, accepted {accepted}, rejected {RejectedViews}; last rejection {lastRejection}; " +
         $"recovery exhausted {RecoveryExhausted}{RecoveryStatus}; {spatial.Diagnostics}; {survey.Diagnostics}; " +
-        PlaceSurvey.Shared.Diagnostics + "; " + CameraSpatialScene.Shared.Diagnostics;
+        PlaceSurvey.Shared.Diagnostics + "; " + CameraSpatialScene.Shared.Diagnostics + "; destination: " + DestinationSubjectStatus;
 
     internal void SetRegion(Vector3 value)
     {
@@ -73,8 +87,29 @@ internal sealed class ScenicProduction
         if (HasRegion) { ScenicFoliageScene.Shared.SetRegion(value); survey.Begin(value); }
         if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("region"), "origin", value));
     }
+    internal void SetDestinationSubject(WorldInterestSite? site)
+    {
+        if (!destinationSubject.Set(site)) return;
+        destinationSurvey.Reset(); destinationFeatures.Clear(); nextDestinationSurvey = 0;
+        if (destinationSubject.Site != null && HasRegion)
+        {
+            WorldInterestSite target = destinationSubject.Site;
+            Vector3 center = new Vector3(target.Center.X, target.Center.Y, target.Center.Z);
+            // Broad settlements are approached at a particular local area. Do
+            // not demand an unloaded whole-settlement centroid to tell its story.
+            if (Vector3.ProjectOnPlane(center - origin, Vector3.up).sqrMagnitude > 64f * 64f)
+                center = origin;
+            destinationSurveyOrigin = center; destinationSurvey.Begin(center);
+        }
+        // A subject change invalidates only unshown preparation. A readable
+        // current picture can remain on air while its purposeful replacement is prepared.
+        director.TakePrepared(); testing = best = null; searching = planning = false;
+        evaluator.Reset(); spatial.Reset(); subjectRetry.Clear(); retryAt = 0;
+        if (Plan != null && destinationSubject.Prioritize) director.RequestReplacement("Preparing coverage of the selected destination");
+    }
     internal void Clear()
     {
+        destinationSubject.Reset(); destinationSurvey.Reset(); destinationFeatures.Clear(); nextDestinationSurvey = 0;
         director.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
         refreshingSurvey = false; surveyRefreshAt = 0;
         readiness.Reset(); liveSceneReadiness.Reset(); recovery.Reset(); testingKey = null;
@@ -146,6 +181,8 @@ internal sealed class ScenicProduction
     {
         bool knownPicture = planId > 0 && (Plan?.Id == planId || lastPresentedPlan?.Id == planId);
         HasUsablePicture = onAir && usableLive && knownPicture;
+        ScenicShotPlan? actualPlan = Plan?.Id == planId ? Plan : lastPresentedPlan?.Id == planId ? lastPresentedPlan : null;
+        destinationSubject.Observe(Time.unscaledTime, onAir, HasUsablePicture, held, actualPlan?.Feature, actualPlan?.Role ?? ScenicShotRole.Establish);
         recovery.Observe(Time.unscaledTime, onAir && HasRegion, HasUsablePicture, held);
         ScenicTrace.Picture(onAir && HasRegion, HasUsablePicture, held, planId, (float)recovery.ElapsedSeconds, recovery.Expired, Reason);
         if (!recovery.Active) deadlineHandled = false;
@@ -157,6 +194,27 @@ internal sealed class ScenicProduction
     {
         if (!HasRegion || !SceneReady) return false;
         PlaceSurvey.Shared.Update(origin, Time.unscaledTime);
+        if (destinationSubject.Site != null)
+        {
+            if (destinationSubject.Prioritize && destinationSurvey.Complete && Time.unscaledTime >= nextDestinationSurvey)
+                destinationSurvey.Begin(destinationSurveyOrigin);
+            if (!destinationSurvey.Complete && destinationSurvey.Step())
+            {
+                destinationFeatures.Clear();
+                foreach (ScenicFeature feature in destinationSurvey.Features)
+                    if (destinationSubject.Matches(feature) && destinationFeatures.Count < 16) destinationFeatures.Add(feature);
+                nextDestinationSurvey = Time.unscaledTime + 10;
+                if (destinationSubject.Prioritize)
+                {
+                    // Newly loaded subject evidence must enter scheduling now,
+                    // not after an unrelated prepared shot's full lifetime.
+                    director.TakePrepared(); testing = best = null; searching = planning = false;
+                    evaluator.Reset(); spatial.Reset(); retryAt = 0;
+                    if (Plan != null && !destinationSubject.Matches(Plan.Feature))
+                        director.RequestReplacement("Loaded destination subject available for a purposeful shot");
+                }
+            }
+        }
         // Finish the outstanding sweep once the on-air search budget expires.
         // Region travel may be unavailable/cooling down; bounded later sweeps
         // may still find footage, but never renew the expired output deadline.
@@ -235,7 +293,7 @@ internal sealed class ScenicProduction
             if (director.CanOffer(testing!))
             {
                 accepted++;
-                double score = director.Rank(testing!, evaluator.Score);
+                double score = director.Rank(testing!, evaluator.Score) + (testing!.Feature == null ? 0 : destinationSubject.Priority(testing.Feature));
                 if (score > bestScore)
                 { best = testing; bestScore = score; bestValidatedAt = Time.unscaledTime; bestEpoch = evaluator.SceneEpoch; }
             }
@@ -286,7 +344,8 @@ internal sealed class ScenicProduction
     {
         ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.SelectSpatial(subjects, CurrentFeatureIndex(), sweep, attempts++);
         ScenicFeature feature = subjects[candidate.FeatureIndex];
-        ScenicShotRole preferred = director.PreferredRole(feature);
+        ScenicShotRole preferred = destinationSubject.Prioritize && destinationSubject.Meaningful(feature) &&
+            destinationSubject.EstablishedSeconds < DestinationSubjectCoverage.ContextSeconds ? ScenicShotRole.Establish : director.PreferredRole(feature);
         ScenicShotRole role = ScenicCandidateSchedule.Role(feature, preferred, candidate.RoleIndex);
         testingKey = feature.Id + "/" + role;
         if (subjectRetry.TryGetValue(testingKey, out float retry) && Time.unscaledTime < retry) return false;
@@ -309,6 +368,8 @@ internal sealed class ScenicProduction
     private void CaptureSubjects()
     {
         subjects.Clear();
+        // Nominated subject evidence is refreshed independently around its
+        // observed location, not merely around the carrier's approach point.
         foreach (ScenicFeature feature in PlaceSurvey.Shared.ScenicFeatures(origin, 80f, Plan?.FeatureId))
         {
             if (subjects.Count >= 16) break;
@@ -323,6 +384,21 @@ internal sealed class ScenicProduction
             if (places && feature.Kind == ScenicFeatureKind.Structure) continue;
             subjects.Add(feature);
         }
+        // Keep real landmark pieces even when an unrelated player place exists
+        // elsewhere in the arrival survey. Deduplicate exact observed identities.
+        foreach (ScenicFeature feature in destinationFeatures)
+        {
+            bool exists = false;
+            foreach (ScenicFeature retained in subjects) if (retained.Id == feature.Id) { exists = true; break; }
+            if (exists) continue;
+            if (subjects.Count >= 32)
+            {
+                int discard = subjects.FindLastIndex(f => !destinationSubject.Matches(f));
+                if (discard < 0) break;
+                subjects.RemoveAt(discard);
+            }
+            subjects.Add(feature);
+        }
         subjects.Sort((a, b) =>
         {
             int order = SubjectPriority(b).CompareTo(SubjectPriority(a));
@@ -331,13 +407,24 @@ internal sealed class ScenicProduction
     }
     private float SubjectPriority(ScenicFeature feature)
     {
-        float priority = feature.Confidence;
+        float priority = feature.Confidence + (float)destinationSubject.Priority(feature);
         if (Plan != null && feature.ParentId == Plan.FeatureId && director.ElapsedSeconds >= 2) priority += .35f;
         if (!feature.IsPartial && (feature.ScopeLabel == "Settlement" || feature.ScopeLabel == "District")) priority += .1f;
         return priority;
     }
     private int CurrentFeatureIndex()
     {
+        if (destinationSubject.Prioritize)
+        {
+            if (Plan != null && destinationSubject.EstablishedSeconds >= DestinationSubjectCoverage.ContextSeconds && director.ElapsedSeconds >= 2)
+                for (int i = 0; i < subjects.Count; i++)
+                    if (subjects[i].ParentId == Plan.FeatureId && destinationSubject.Matches(subjects[i])) return i;
+            // Pin one meaningful observed structure ahead of unrelated scenery
+            // in every bounded search, including subsequent survey rounds.
+            for (int i = 0; i < subjects.Count; i++)
+                if (destinationSubject.Meaningful(subjects[i]) && subjects[i].Id != Plan?.FeatureId) return i;
+            for (int i = 0; i < subjects.Count; i++) if (destinationSubject.Matches(subjects[i])) return i;
+        }
         // A shown establishing view of a settlement should develop into its
         // districts/buildings. Give a child the first spatial-search budget;
         // the final editorial score still compares only validated routes.
