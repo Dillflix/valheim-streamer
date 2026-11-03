@@ -79,7 +79,7 @@ namespace ValheimBroadcaster.Core
             IReadOnlyList<bool> eligible, CinematicActivity currentActivity, float speed,
             bool confined, float spaceFraction, bool usableFootage = true,
             IReadOnlyList<bool>? readable = null, ShotSituation? situation = null, ShotRole? roleOverride = null,
-            IShotCandidateRanker? ranker = null)
+            IShotCandidateRanker? ranker = null, bool protectMoment = false)
         {
             Validate(now, deltaSeconds, scores, eligible, speed, spaceFraction);
             if (hasCheckpoint && checkpoint.Now != now) hasCheckpoint = false;
@@ -127,7 +127,7 @@ namespace ValheimBroadcaster.Core
             bool improving = previous >= 0 && best >= 0 && best != previous &&
                 scores[best] >= scores[previous] + ProceduralShotPolicy.ImprovementMargin;
             bool canPlan = usableFootage && previous >= 0 && eligible[previous] && !constrained &&
-                !settling && !improving && activity != CinematicActivity.Combat && ShotAge >= DesiredSeconds;
+                !settling && !improving && !protectMoment && activity != CinematicActivity.Combat && ShotAge >= DesiredSeconds;
             if (!canPlan) plannedIndex = -1;
             else
             {
@@ -166,10 +166,10 @@ namespace ValheimBroadcaster.Core
                     deliberate ? "Fresh composition after usable shot duration" : "Reframing for visibility or clearance";
             }
             else Reason = !usableFootage ? "Shot pacing paused while footage is unavailable" :
-                settling ? "Settling after camera corrections" : constrained ? "Holding within limited camera space" :
+                protectMoment ? "Preserving an observed action moment" : settling ? "Settling after camera corrections" : constrained ? "Holding within limited camera space" :
                 plannedIndex >= 0 ? "Confirming a fresh readable composition" : "Developing " + family.ToLowerInvariant() + " shot";
 
-            motionPaused = !usableFootage || now < settleUntil || corrections.Count >= 3;
+            motionPaused = !usableFootage || protectMoment || now < settleUntil || corrections.Count >= 3;
             if (!motionPaused) motionAge += step;
             float freedom = Clamp01((spaceFraction - 0.25f) / 0.65f);
             if (confined || adequate < 2) freedom *= 0.12f;

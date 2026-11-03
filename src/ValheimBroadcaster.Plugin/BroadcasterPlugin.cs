@@ -21,10 +21,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.33";
+    public const string PluginVersion = "0.8.34";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
+    private DiagnosticCapture? diagnosticCapture;
     private StreamRecovery? output;
     private ConnectionRecovery? connection;
     private AutonomousBroadcast? automatic;
@@ -35,6 +36,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private CoverageMode presentedMode;
     private long presentedRevision = -1, presentedScenicPlan = -1;
     private bool presentedIdleUsable, presentedPlayerUsable;
+    private bool presentedRelatedPlayerView;
     private float nextStatusLog;
     private bool terminalReported;
     private bool listenerPatchAvailable;
@@ -94,6 +96,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         pictureMonitor.IsProgramGenerationCurrent = frameHold.IsGenerationCurrent;
         frameHold.PictureUnavailable = pictureMonitor.Suspend;
         frameHold.ObserveLiveFrame = ObserveProgramPicture;
+        frameHold.DescribePicture = DescribeDiagnosticPicture;
         observer.RemoteApproved = () => remote.Isolated && remote.Approved;
         automatic = new AutonomousBroadcast(settings, remote, observer, playerShots,
             (target, point) => rig.RequiredPlayerCameraMovement(target, point, settings), ResetShot, message => Logger.LogInfo(message));
@@ -116,6 +119,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             connection.Install(harmony);
             harmony.Patch(cameraMethod, postfix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(AfterCameraUpdate)));
             stream = gameObject.AddComponent<StreamCapture>();
+            diagnosticCapture = gameObject.AddComponent<DiagnosticCapture>();
+            diagnosticCapture.Configure(frameHold,
+                () => enabled && director.IsEnabled && settings.DiagnosticVideo.Value && ScenicTrace.Enabled &&
+                    Player.m_localPlayer && ZNet.instance && activeWorld == ZNet.instance,
+                () => settings.FFmpegPath.Value, BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
             output = new StreamRecovery(stream, frameHold, BuildStreamOptions, FindAudioListener, message => Logger.LogInfo(message));
             MethodInfo? listenerMethod = AccessTools.Method(typeof(GameCamera), "UpdateListner", Type.EmptyTypes);
             if (listenerMethod != null && ListenerField != null)
@@ -279,7 +287,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 (usableIdlePicture || idle.HasUsableScenicPicture) && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
                 localActivities, usablePlayerPicture, idleSceneAvailable, idle.RecoveryExpired,
                 coverage.Mode == CoverageMode.Scenic && idle.HasUsableScenicPicture,
-                coverage.Mode == CoverageMode.Creature && usableIdlePicture, idle.DestinationSubjectShown, idle.DestinationSubjectUnavailable, idle.DestinationSubjectSatisfied);
+                coverage.Mode == CoverageMode.Creature && usableIdlePicture, idle.DestinationSubjectShown, idle.DestinationSubjectUnavailable, idle.DestinationSubjectSatisfied,
+                coverage.Mode == CoverageMode.Scenic && idle.ContentExhausted,
+                recentPicture && frameHold.HasRecentLiveFrame && presentedRelatedPlayerView &&
+                    presentedPlayerId == CurrentTarget()?.Identity.Id);
             idle.SetDestinationSubject(automatic?.ScenicInterest);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
@@ -413,7 +424,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         creatureAdmission.Reset();
         if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
         idle.SetDestinationSubject(automatic?.ScenicInterest);
-        coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false;
+        coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false; presentedRelatedPlayerView = false;
         localActivities.Clear();
         nextCreatureRefresh = 0;
         creatureSearchPlayerId = null;
@@ -551,6 +562,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             return;
         }
         if (!parked) observer.Release();
+        diagnosticCapture?.StopCapture();
+        presentedRelatedPlayerView = false;
         CameraSpatialScene.Shared.Reset();
         ScenicFoliageScene.Shared.Reset();
         PlaceSurvey.Shared.Reset();
@@ -718,7 +731,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             plugin.rig.PresentationConfirmed = plugin.presentedFrame >= Time.frameCount - 1 &&
                 plugin.frameHold.HasRecentLiveFrame && plugin.presentedMode == plugin.coverage.Mode &&
                 plugin.presentedRevision == plugin.coverage.Revision &&
-                (plugin.coverage.Mode == CoverageMode.Player ? plugin.presentedPlayerUsable &&
+                (plugin.coverage.Mode == CoverageMode.Player ? (plugin.presentedPlayerUsable || plugin.presentedRelatedPlayerView) &&
                     plugin.presentedPlayerId == plugin.coverage.SubjectId : plugin.presentedIdleUsable &&
                     (plugin.coverage.Mode != CoverageMode.Scenic || plugin.presentedScenicPlan == scenicPlan?.Id));
             plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
@@ -747,9 +760,16 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 plugin.rig.MarkUnavailable(plugin.probe.Active ? "probe " + plugin.probe.State :
                     plugin.observer.Active && plugin.observer.Phase != ObserverPhase.Watching ? "observer " + plugin.observer.Phase :
                     "awaiting " + plugin.coverage.Mode.ToString().ToLowerInvariant() + " coverage");
-            if (plugin.cameraReady && playerTarget != null) plugin.playerShots.Presented(playerTarget, continuousPlayer);
+            bool relatedView = plugin.cameraReady && playerTarget != null && plugin.rig.ComplementaryActive &&
+                plugin.rig.StoryContinuityReady && plugin.rig.LastPictureUsable;
+            if (plugin.cameraReady && playerTarget != null)
+            {
+                if (relatedView) relatedView = plugin.playerShots.ValidatePreparedReturn(playerTarget);
+                else if (plugin.rig.DisplayedPlayerUsable) plugin.playerShots.Presented(playerTarget, continuousPlayer);
+            }
             plugin.presentedPlayerId = plugin.cameraReady && plugin.coverage.Mode == CoverageMode.Player ? plugin.coverage.SubjectId : null;
-            plugin.presentedPlayerUsable = plugin.presentedPlayerId != null && plugin.rig.LastPictureUsable;
+            plugin.presentedPlayerUsable = plugin.presentedPlayerId != null && plugin.rig.LastPictureUsable && plugin.rig.DisplayedPlayerUsable;
+            plugin.presentedRelatedPlayerView = plugin.presentedPlayerId != null && relatedView;
             plugin.presentedMode = plugin.coverage.Mode;
             plugin.presentedRevision = plugin.coverage.Revision;
             plugin.presentedScenicPlan = scenicPlan != null && plugin.rig.IsProcedural
@@ -779,6 +799,26 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         if (!context.HasValue) { pictureMonitor.Suspend(); return; }
         pictureMonitor.SetContext(context.Value);
         pictureMonitor.Offer(texture, generation, renderFrame);
+    }
+
+    private DiagnosticPictureContext DescribeDiagnosticPicture()
+    {
+        // Called synchronously with the clean source render. FrameHold retains
+        // this context with the texture, so a held image cannot acquire a new
+        // target/shot identity from later camera updates or async callbacks.
+        Vector3 position = rig.Position ?? Vector3.zero;
+        Vector3 euler = rig.Rotation.eulerAngles;
+        bool scenic = presentedMode == CoverageMode.Scenic;
+        long shot = scenic ? presentedScenicPlan : rig.PresentedActorShotId;
+        RenderedPictureContext? picture = rig.PictureContext;
+        string intent = scenic ? idle.Plan?.Id == shot ?
+            idle.Plan.FeatureKind + " / " + idle.Plan.Role + (idle.Plan.IsPictureOnly ? " / settled picture" : " / moving route") :
+            "Retained previous scenic view" : rig.CurrentPlayerScene?.ActionPhase.Phase.ToString() ?? "";
+        return new DiagnosticPictureContext(probe.Active ? "Probe" : presentedMode.ToString(),
+            shot, presentedRevision, cameraReady && rig.LastPictureUsable,
+            rig.PictureReason, position.x, position.y, position.z,
+            euler.x, euler.y, euler.z, rig.FieldOfView, rig.PerspectiveDescription,
+            picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1, intent);
     }
 
     private void ToggleStream()
@@ -1051,7 +1091,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + ScenicTrace.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {
@@ -1178,7 +1218,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1266,6 +1306,14 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         else if (args.Length != 1 && !(args.Length == 2 && args[1].Equals("status", StringComparison.OrdinalIgnoreCase)))
                         { context?.AddString("broadcast trace on|off|status"); return; }
                         context?.AddString(ScenicTrace.Status); return;
+                    case "capture":
+                        if (args.Length == 2 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase))
+                        { plugin.settings.DiagnosticVideo.Value = false; plugin.diagnosticCapture?.StopCapture(); }
+                        else if (args.Length == 2 && args[1].Equals("on", StringComparison.OrdinalIgnoreCase))
+                        { plugin.settings.DiagnosticVideo.Value = true; ScenicTrace.Start(); plugin.diagnosticCapture?.Retry(); }
+                        else if (args.Length != 1 && !(args.Length == 2 && args[1].Equals("status", StringComparison.OrdinalIgnoreCase)))
+                        { context?.AddString("broadcast capture on|off|status"); return; }
+                        context?.AddString(plugin.diagnosticCapture?.Status ?? "Footage capture unavailable"); return;
                     case "diagnostics": context?.AddString(plugin.Diagnostics()); return;
                     case "destinations": context?.AddString(plugin.remote.InterestDiagnostics()); return;
                     case "status": break;

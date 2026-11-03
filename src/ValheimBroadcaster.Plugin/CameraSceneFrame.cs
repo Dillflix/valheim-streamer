@@ -28,6 +28,8 @@ internal sealed class CameraSceneFrame
     // Encounter evidence is separate from group bounds and the clamped aim
     // interest: a distant animal must not shrink all players to tiny figures.
     internal EncounterKind Encounter;
+    internal Character? EncounterActor;
+    internal ActionPhaseCue ActionPhase;
     internal Vector3 EncounterFocus, EncounterDirection;
     internal float EncounterConfidence, EncounterDistance, EncounterTargetRadius, EncounterTargetHeight;
     internal int EncounterOpponentCount, EncounterPlayerCount;

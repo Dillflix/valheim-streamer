@@ -67,6 +67,16 @@ internal sealed class PlayerShotReadiness
         Diagnostics = "Player shot: awaiting acquisition";
     }
 
+    internal bool ValidatePreparedReturn(TargetRoster.Target target)
+    {
+        if (!CanContinue(target) || !Live(target.LoadedPlayer)) return false;
+        Vector3 point = target.LoadedPlayer!.transform.position;
+        if (!PositionReady(point, true) || !continuity.ValidatePreparedReturn(target.Identity.Id, bindingId,
+            new AutonomyPosition(point.x, point.y, point.z), Time.realtimeSinceStartup)) return false;
+        Diagnostics = "Player scene retained for a bounded complementary view; return camera validated, no player-footage credit";
+        return true;
+    }
+
     internal static bool PositionReady(Vector3 point, bool continuing)
     {
         if (!continuing) return IdleShots.Ready(point);

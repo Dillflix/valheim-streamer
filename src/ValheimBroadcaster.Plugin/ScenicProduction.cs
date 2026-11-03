@@ -10,6 +10,8 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class ScenicProduction
 {
     private readonly ScenicDirector director = new ScenicDirector();
+    private readonly ScenicPictureAvailability pictures = new ScenicPictureAvailability();
+    private readonly ScenicVisibility pictureVisibility = new ScenicVisibility("first-picture");
     private readonly DestinationSubjectCoverage destinationSubject = new DestinationSubjectCoverage();
     private readonly ScenicFeatureSurvey destinationSurvey = new ScenicFeatureSurvey();
     private readonly List<ScenicFeature> destinationFeatures = new List<ScenicFeature>(32);
@@ -21,7 +23,8 @@ internal sealed class ScenicProduction
     internal string DestinationSubjectStatus => destinationSubject.Site == null ? "No nominated destination subject" :
         destinationSubject.Site.Name + " / " + destinationSubject.Site.Id + "; destination subject footage " +
         destinationSubject.ShownSeconds.ToString("F1") + "/15s; establishing " + destinationSubject.EstablishedSeconds.ToString("F1") +
-        "/6s; " + destinationSubject.CoverageScope + "; " +
+        "/6s; " + (destinationSubject.RequiresNpc ? "NPC detail " + destinationSubject.NpcSeconds.ToString("F1") + "/4s; " : "") +
+        destinationSubject.CoverageScope + "; " +
         (destinationSubject.Satisfied ? "local subject sequence fulfilled" : destinationSubject.Unavailable ?
         "subject not covered within local search budget; landscape fallback" : "seeking readable coverage of the destination subject");
     private ScenicFeatureSurvey survey = new ScenicFeatureSurvey();
@@ -34,6 +37,9 @@ internal sealed class ScenicProduction
     private readonly ScenicShotReadiness liveSceneReadiness = new ScenicShotReadiness();
     private readonly ScenicRecoveryPolicy recovery = new ScenicRecoveryPolicy();
     private ScenicShotPlan? lastPresentedPlan;
+    private bool usingIndependentPicture;
+    private long motionPlanId;
+    private float lastMotionProgress;
     private Vector3 lastPresentedFocus;
     private Vector3 lastAdmittedFocus;
     internal readonly ScenicVisibility Visibility = new ScenicVisibility("live");
@@ -54,7 +60,9 @@ internal sealed class ScenicProduction
     private bool hasSettings, plannedComposition, plannedNative;
     private float plannedFov;
     internal bool HasRegion { get; private set; }
-    internal ScenicShotPlan? Plan => director.Current;
+    internal ScenicShotPlan? Plan => usingIndependentPicture ? pictures.Current : director.Current;
+    internal bool ContentExhausted => pictures.ContentExhausted;
+    private double ShownSeconds => usingIndependentPicture ? pictures.ShownSeconds : director.ElapsedSeconds;
     internal bool Searching => HasRegion && (!survey.Complete || searching);
     internal bool NeedsReplacement => forceReplacement || director.Current == null || director.NeedsReplacement;
     internal bool RecoveryExhausted { get; private set; }
@@ -75,7 +83,8 @@ internal sealed class ScenicProduction
     internal int RejectedViews { get; private set; }
     internal string Diagnostics => $"Scenic director: {Reason}; {director.Reason}; " +
         $"feature {Plan?.FeatureKind.ToString() ?? "none"}/{Plan?.FeatureId ?? "none"}; role {Plan?.Role.ToString() ?? "none"}; " +
-        $"shot {Plan?.Id ?? 0}; progress {director.Progress:P0}; shown {director.ElapsedSeconds:F1}/{Plan?.DurationSeconds ?? 0:F1}s; " +
+        $"shot {Plan?.Id ?? 0}; progress {(Plan?.IsPictureOnly == true ? 0 : director.Progress):P0}; shown {ShownSeconds:F1}/{Plan?.DurationSeconds ?? 0:F1}s; " +
+        $"independent picture {Plan?.IsPictureOnly == true}; settled coverage {pictures.TotalPictureSeconds:F1}s; content exhausted {ContentExhausted}; " +
         $"lens {Plan?.FieldOfView ?? 0:F0}; blocked {director.BlockedSeconds:F1}s; staged {director.Prepared?.Id ?? 0}; " +
         $"search {Searching}, routes {attempts}, accepted {accepted}, rejected {RejectedViews}; last rejection {lastRejection}; " +
         $"recovery exhausted {RecoveryExhausted}{RecoveryStatus}; {spatial.Diagnostics}; {survey.Diagnostics}; " +
@@ -110,10 +119,11 @@ internal sealed class ScenicProduction
     internal void Clear()
     {
         destinationSubject.Reset(); destinationSurvey.Reset(); destinationFeatures.Clear(); nextDestinationSurvey = 0;
-        director.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
+        director.Reset(); pictures.Reset(); pictureVisibility.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
         refreshingSurvey = false; surveyRefreshAt = 0;
         readiness.Reset(); liveSceneReadiness.Reset(); recovery.Reset(); testingKey = null;
         lastPresentedPlan = null; lastPresentedFocus = lastAdmittedFocus = default; Visibility.Reset(); planningVisibility.Reset();
+        usingIndependentPicture = false; motionPlanId = 0; lastMotionProgress = 0;
         HasRegion = searching = planning = trimmed = elevated = forceReplacement = RecoveryExhausted = hasSettings = revalidating = deadlineHandled = false;
         HasUsablePicture = false;
         testing = best = null; attempts = accepted = sweep = RejectedViews = 0;
@@ -137,6 +147,7 @@ internal sealed class ScenicProduction
     }
     internal float Propose(float dt, BroadcastSettings settings, bool held)
     {
+        if (usingIndependentPicture) return proposed = 0;
         proposed = (float)director.Propose(Mathf.Max(0, dt),
             settings.DynamicShots.Value && !held && settings.ShotMotion.Value > 0,
             Mathf.Clamp(settings.ShotMotion.Value, 0, 1.5f));
@@ -163,17 +174,41 @@ internal sealed class ScenicProduction
             lastPresentedPlan = shown;
             lastPresentedFocus = actualFocus!.Value;
             liveSceneReadiness.Presented(shown.Id, lastPresentedFocus);
+            if (!shown.IsPictureOnly)
+            {
+                // A requested cut can still be rendering the old independent
+                // picture. Release that lease only after the actual route ID
+                // is shown, and reset fallback dwell only for forward motion.
+                if (!usingIndependentPicture && pictures.Current != null) pictures.ClearCurrent();
+                if (!held && progress > .01f && (motionPlanId != shown.Id || progress > lastMotionProgress + .00001f))
+                    pictures.MotionPresented();
+                motionPlanId = shown.Id; lastMotionProgress = progress;
+            }
         }
+        if (shown?.IsPictureOnly == true)
+            director.ObserveSitePicture(shown, Time.unscaledTime, live && validFocus, readable, held);
+        pictures.Observe(planId, Time.unscaledTime, live && readable && validFocus, held,
+            shown != null && !shown.IsPictureOnly && NeedsReplacement);
         // Missing/stale output must advance failure time for the newly selected
         // plan, but can never credit another plan's progress or readiness.
         if (planId != Plan.Id) { live = readable = blocked = false; progress = (float)director.Progress; }
         if (live && validFocus)
         { lastAdmittedFocus = actualFocus!.Value; readiness.Presented(Plan.Id, lastAdmittedFocus); }
         bool requested = director.NeedsReplacement;
-        director.Observe(Plan.Id, Time.unscaledTime, Mathf.Clamp01(progress), live, readable, blocked, held);
+        ScenicShotPlan? route = director.Current;
+        if (route != null)
+            director.Observe(route.Id, Time.unscaledTime, planId == route.Id ? Mathf.Clamp01(progress) : (float)director.Progress,
+                live && planId == route.Id, readable && planId == route.Id, blocked && planId == route.Id, held);
         if (live && readable && !NeedsReplacement) RecoveryExhausted = false;
         if (blocked || !readable) { lastRejection = reason; Reason = reason; }
-        if (!requested && director.NeedsReplacement) retryAt = 0;
+        if (!requested && director.NeedsReplacement)
+        {
+            retryAt = 0;
+            // A graph route can pass preflight repeatedly yet never supply
+            // valid moving output. That live failure is also evidence of
+            // exhausted local motion; successful restaging cannot conceal it.
+            if (route != null && (planId != route.Id || !live || !readable || blocked)) pictures.RouteUnavailable();
+        }
         return !requested && director.NeedsReplacement;
     }
 
@@ -241,7 +276,7 @@ internal sealed class ScenicProduction
         }
         RefreshEnvironment();
         // Preparing never advances the current camera or earns presentation time.
-        if (allowActivate && director.Prepared != null && (!held || Plan == null) &&
+        if (allowActivate && director.Prepared != null && (!held || Plan == null) && pictures.CanYield(Time.unscaledTime) &&
             (NeedsReplacement || director.ShouldPrefetch && Time.unscaledTime - preparedAt > 4f))
         {
             ScenicShotPlan staged = director.TakePrepared()!;
@@ -271,12 +306,14 @@ internal sealed class ScenicProduction
                 if (!BeginSpatialCandidate(settings, moveCarrier, recovery.Active && allowActivate)) return false;
             }
             if (recovery.Active && allowActivate) spatial.PromoteUrgent();
-            if (!spatial.Step(recovery.Active && allowActivate ? 8 : 4)) return false;
+            bool spatialComplete = spatial.Step(recovery.Active && allowActivate ? 8 : 4);
+            bool admittedPicture = allowActivate && (!held || Plan == null) && TryIndependentPicture(moveCarrier);
+            if (!spatialComplete) return admittedPicture;
             planning = false; testing = spatial.Plan;
             if (testing == null)
             {
                 RejectedViews++; lastRejection = spatial.Reason; RememberFailure();
-                return false;
+                return admittedPicture;
             }
             if (!director.CanOffer(testing))
             { RejectedViews++; lastRejection = "Measured route repeats completed coverage"; testing = null; RememberFailure(); return false; }
@@ -344,6 +381,7 @@ internal sealed class ScenicProduction
     {
         ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.SelectSpatial(subjects, CurrentFeatureIndex(), sweep, attempts++);
         ScenicFeature feature = subjects[candidate.FeatureIndex];
+        if (!director.CanDevelopSubject(feature)) return false;
         ScenicShotRole preferred = destinationSubject.Prioritize && destinationSubject.Meaningful(feature) &&
             destinationSubject.EstablishedSeconds < DestinationSubjectCoverage.ContextSeconds ? ScenicShotRole.Establish : director.PreferredRole(feature);
         ScenicShotRole role = ScenicCandidateSchedule.Role(feature, preferred, candidate.RoleIndex);
@@ -365,6 +403,35 @@ internal sealed class ScenicProduction
         if (subjectRetry.Count >= 128) subjectRetry.Clear();
         subjectRetry[testingKey] = Time.unscaledTime + 8f;
     }
+    private bool TryIndependentPicture(bool moveCarrier)
+    {
+        if (!spatial.HasPictureCandidate) return false;
+        bool protectCurrent = HasUsablePicture && (pictures.Current != null || !NeedsReplacement);
+        if (!pictures.WantsCandidate(protectCurrent)) return false;
+        ScenicShotPlan? candidate = spatial.TakePictureCandidate(++nextId, out long epoch, out float observedAt);
+        if (candidate == null || epoch != CameraSpatialScene.Shared.Epoch || Time.unscaledTime - observedAt > .5f) return false;
+        // The spatial node is a proposal. Certify exactly the same fixed pose
+        // the execution rig will render, including actual surface, near-plane,
+        // loaded support, carrier range, foliage and any typed subject checks.
+        Camera? camera = Camera.main;
+        float aspect = camera ? camera.aspect : Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
+        float nearClip = camera ? camera.nearClipPlane : .3f;
+        ScenicShotSample sample = candidate.Sample(0);
+        Vector3 position = FromCore(sample.CameraPosition), focus = FromCore(sample.AimPosition);
+        var pose = new ScenicPose(position, focus, ScenicVisibility.Compose(position, focus,
+            sample.ScreenX, sample.ScreenY, candidate.FieldOfView, aspect), candidate.FieldOfView, 0);
+        if (!ScenicPoseValidation.Check(pose, candidate, pictureVisibility, aspect, nearClip, false, moveCarrier,
+            out _, out _, out _)) return false;
+        if (!director.CanDevelopSubject(candidate.Feature!)) return false;
+        if (!pictures.TryOffer(candidate, epoch, CameraSpatialScene.Shared.Epoch, observedAt,
+            Time.unscaledTime, protectCurrent)) return false;
+        usingIndependentPicture = true;
+        readiness.Reset(); proposed = 0;
+        if (director.Current != null) director.RequestReplacement("Developing a new cinematic route while a measured picture remains available");
+        Reason = "Independent readable " + candidate.FeatureKind + " picture; preparing cinematic movement";
+        ScenicTrace.Event("picture-admitted", Reason, candidate.Id);
+        return true;
+    }
     private void CaptureSubjects()
     {
         subjects.Clear();
@@ -381,7 +448,7 @@ internal sealed class ScenicProduction
             if (subjects.Count >= 32) break;
             // Prefer persistent, measured building identities over the old
             // greedy piece clusters when a place survey supplies structures.
-            if (places && feature.Kind == ScenicFeatureKind.Structure) continue;
+            if (places && feature.Kind == ScenicFeatureKind.Structure && feature.SubjectKind == ScenicSubjectKind.Environment) continue;
             subjects.Add(feature);
         }
         // Keep real landmark pieces even when an unrelated player place exists
@@ -407,8 +474,8 @@ internal sealed class ScenicProduction
     }
     private float SubjectPriority(ScenicFeature feature)
     {
-        float priority = feature.Confidence + (float)destinationSubject.Priority(feature);
-        if (Plan != null && feature.ParentId == Plan.FeatureId && director.ElapsedSeconds >= 2) priority += .35f;
+        float priority = feature.Confidence + (float)destinationSubject.Priority(feature) + (float)director.SubjectPriority(feature);
+        if (Plan != null && feature.ParentId == Plan.FeatureId && ShownSeconds >= 2) priority += .35f;
         if (!feature.IsPartial && (feature.ScopeLabel == "Settlement" || feature.ScopeLabel == "District")) priority += .1f;
         return priority;
     }
@@ -416,7 +483,7 @@ internal sealed class ScenicProduction
     {
         if (destinationSubject.Prioritize)
         {
-            if (Plan != null && destinationSubject.EstablishedSeconds >= DestinationSubjectCoverage.ContextSeconds && director.ElapsedSeconds >= 2)
+            if (Plan != null && destinationSubject.EstablishedSeconds >= DestinationSubjectCoverage.ContextSeconds && ShownSeconds >= 2)
                 for (int i = 0; i < subjects.Count; i++)
                     if (subjects[i].ParentId == Plan.FeatureId && destinationSubject.Matches(subjects[i])) return i;
             // Pin one meaningful observed structure ahead of unrelated scenery
@@ -428,7 +495,7 @@ internal sealed class ScenicProduction
         // A shown establishing view of a settlement should develop into its
         // districts/buildings. Give a child the first spatial-search budget;
         // the final editorial score still compares only validated routes.
-        if (Plan != null && director.ElapsedSeconds >= 2)
+        if (Plan != null && ShownSeconds >= 2)
             for (int i = 0; i < subjects.Count; i++)
                 if (subjects[i].ParentId == Plan.FeatureId) return i;
         for (int i = 0; i < subjects.Count; i++)
@@ -461,15 +528,18 @@ internal sealed class ScenicProduction
         { best = null; retryAt = 0; Reason = "Observed geometry changed; replan the prepared route"; return false; }
         if (best == null)
         {
-            RecoveryExhausted = recovery.Expired || NeedsReplacement;
-            Reason = "No fully readable moving route; " + lastRejection;
+            pictures.SearchFinished(false);
+            RecoveryExhausted = !HasUsablePicture && (recovery.Expired || NeedsReplacement);
+            Reason = HasUsablePicture ? "Retaining a readable picture while developing fresh local coverage; " + lastRejection :
+                "No fully readable moving route; " + lastRejection;
             retryAt = Time.unscaledTime + 3f;
             return false;
         }
         ScenicShotPlan selected = best; best = null;
+        pictures.SearchFinished(true);
         director.Stage(selected); preparedAt = bestValidatedAt; preparedEpoch = bestEpoch;
         Reason = "Prepared " + selected.FeatureKind + " / " + selected.Role;
-        if (allowActivate && NeedsReplacement && (!held || Plan == null) && Time.unscaledTime - preparedAt <= 6f)
+        if (allowActivate && NeedsReplacement && (!held || Plan == null) && pictures.CanYield(Time.unscaledTime) && Time.unscaledTime - preparedAt <= 6f)
             return Activate(director.TakePrepared()!, preparedEpoch);
         return false;
     }
@@ -480,6 +550,7 @@ internal sealed class ScenicProduction
         if (!director.CanOffer(selected))
         { retryAt = 0; Reason = "Prepared view already covered; planning a fresh feature"; return false; }
         director.Accept(selected, Time.unscaledTime); readiness.Reset();
+        usingIndependentPicture = false;
         // Acceptance is only a proposed cut. Only rendered readable output may
         // renew the on-air recovery budget or clear its exhausted state.
         RecoveryExhausted = recovery.Expired; forceReplacement = false; proposed = 0;

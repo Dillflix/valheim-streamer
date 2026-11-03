@@ -33,6 +33,10 @@ namespace ValheimBroadcaster.Core
         public long Id { get; }
         public ScenicShotStyle Style { get; }
         public bool IsDirected { get; }
+        /// <summary>A single independently measured live composition. It does
+        /// not claim a connected movement route or earn cinematic episode
+        /// credit; the availability policy owns its bounded presentation.</summary>
+        public bool IsPictureOnly { get; }
         /// <summary>The route engine is latched at preparation so a live
         /// setting change cannot replace the geometry beneath a displayed shot.</summary>
         public bool UseNativeSpline { get; } = true;
@@ -112,6 +116,24 @@ namespace ValheimBroadcaster.Core
             AutonomyPosition? cameraControl = null, bool useNativeSpline = true) =>
             new ScenicShotPlan(id, feature, role, cameraStart, cameraEnd, aimStart, aimEnd,
                 fieldOfView, screenX, screenY, cameraControl, useNativeSpline);
+
+        public static ScenicShotPlan Picture(long id, ScenicFeature feature, ScenicShotRole role,
+            AutonomyPosition camera, AutonomyPosition aim, float fieldOfView, float screenX = 0, float screenY = -.08f) =>
+            new ScenicShotPlan(id, feature, role, camera, aim, fieldOfView, screenX, screenY);
+
+        private ScenicShotPlan(long id, ScenicFeature feature, ScenicShotRole role,
+            AutonomyPosition camera, AutonomyPosition aim, float fov, float x, float y)
+        {
+            if (id <= 0 || feature == null || !Enum.IsDefined(typeof(ScenicShotRole), role) ||
+                !Finite(fov) || fov < 30 || fov > 110 || !Finite(x) || !Finite(y) || Math.Abs(x) > .2 || Math.Abs(y) > .2 ||
+                camera.Distance(aim) < 2 || camera.Distance(aim) > 180 || camera.HorizontalDistance(aim) < .75)
+                throw new ArgumentOutOfRangeException(nameof(camera), "A picture requires a finite, separated, deliberately composed subject.");
+            Id = id; IsDirected = IsPictureOnly = true; Feature = feature; FeatureId = feature.Id;
+            FeatureKind = feature.Kind; Role = role; UseNativeSpline = false;
+            FieldOfView = fov; screenX = x; screenY = y; DurationSeconds = ScenicPictureAvailability.PreferredPictureSeconds;
+            cameraStart = cameraEnd = cameraControl = camera; start = end = aim;
+            Style = ScenicShotStyle.Lateral;
+        }
 
         /// <summary>A finite route through measured viewpoints. Points and aims
         /// are copied, so planning buffers cannot alter an on-air trajectory.
@@ -209,6 +231,7 @@ namespace ValheimBroadcaster.Core
         /// receive complete pose/corridor validation before presentation.</summary>
         public ScenicShotPlan Slice(double startFraction, double endFraction)
         {
+            if (IsPictureOnly) throw new InvalidOperationException("A single picture has no movement interval to slice.");
             if (!IsDirected) throw new InvalidOperationException("Only directed routes can be restricted.");
             if (double.IsNaN(startFraction) || double.IsInfinity(startFraction) || startFraction < 0 || startFraction >= 1)
                 throw new ArgumentOutOfRangeException(nameof(startFraction));
@@ -249,6 +272,8 @@ namespace ValheimBroadcaster.Core
             if (!Finite(metres) || metres < 0 || metres > 64)
                 throw new ArgumentOutOfRangeException(nameof(metres));
             if (metres == 0) return this;
+            if (IsPictureOnly)
+                return Picture(Id, Feature!, Role, Raised(cameraStart, metres), start, FieldOfView, screenX, screenY);
             if (IsSpatial)
             {
                 var body = new AutonomyPosition[WaypointCount];
@@ -271,6 +296,8 @@ namespace ValheimBroadcaster.Core
             double ease = ScenicMotionProfile.Progress(t);
             if (IsDirected)
             {
+                if (IsPictureOnly)
+                    return new ScenicShotSample(cameraStart, start, screenX, screenY, "Settled composition while cinematic movement is prepared");
                 // Runtime strength alters the caller's progress clock, never
                 // the geometry which passed acquisition validation.
                 double u = dynamic && strength > 0 ? ease : 0;

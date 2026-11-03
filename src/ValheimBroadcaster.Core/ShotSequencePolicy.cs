@@ -30,7 +30,7 @@ namespace ValheimBroadcaster.Core
         private bool initialized, lastUsable, wasEnabled, interruptionReset;
         private Episode episode, pending;
         private ShotSceneKind kind;
-        private long revision;
+        private long revision, phaseRevision = -1;
         public double BeatAge { get; private set; }
         public double SequenceAge { get; private set; }
         public long Revision => revision;
@@ -41,7 +41,7 @@ namespace ValheimBroadcaster.Core
         /// live rendered picture fulfilled the current cue's role and resolved
         /// scale. A candidate solve or rejected cut is not presentation.</param>
         public ShotSequenceCue Update(double now, double dt, ShotSituation scene,
-            bool usableFootage, bool enabled, bool requestedIntentPresented = true)
+            bool usableFootage, bool enabled, bool requestedIntentPresented = true, ActionPhaseCue? actionPhase = null)
         {
             if (!Finite(now) || now < 0 || !Finite(dt) || dt < 0 || lastNow >= 0 && now < lastNow)
             { Reset(); throw new ArgumentOutOfRangeException(nameof(now)); }
@@ -93,13 +93,22 @@ namespace ValheimBroadcaster.Core
                 shown = 0;
             }
 
+            if (actionPhase.HasValue && actionPhase.Value.Revision != phaseRevision)
+            {
+                ActionPhaseCue phase = actionPhase.Value;
+                phaseRevision = phase.Revision;
+                if (usableFootage && phase.Phase == ObservedActionPhase.Aftermath && Cue.Beat != ShotSequenceBeat.Aftermath)
+                { Begin(ShotSequenceBeat.Aftermath, scene, phase.Reason); shown = 0; }
+                else if (usableFootage && phase.Phase == ObservedActionPhase.Arrival && Cue.Beat != ShotSequenceBeat.Reestablish)
+                { Begin(ShotSequenceBeat.Reestablish, scene, phase.Reason); shown = 0; }
+            }
             BeatAge += shown; SequenceAge += shown;
             attemptedAge = usableFootage && !requestedIntentPresented ? attemptedAge + elapsed : 0;
             // Constrained geometry can make a requested close view impossible.
             // Abandon it after a bounded attempt without pretending it was shown.
             if (attemptedAge >= 12 && Cue.Beat != ShotSequenceBeat.Settle)
                 Begin(ShotSequenceBeat.Settle, scene, "Requested beat unavailable; sustaining a readable contextual view");
-            else Advance(scene);
+            else if (!actionPhase.HasValue || !actionPhase.Value.ProtectMoment) Advance(scene);
             return Cue;
         }
 
@@ -176,7 +185,7 @@ namespace ValheimBroadcaster.Core
         public void Reset()
         {
             initialized = lastUsable = wasEnabled = interruptionReset = false;
-            lastNow = -1; BeatAge = SequenceAge = pendingAge = attemptedAge = unusableAge = 0;
+            lastNow = -1; phaseRevision = -1; BeatAge = SequenceAge = pendingAge = attemptedAge = unusableAge = 0;
             episode = pending = Episode.Unknown; revision++;
             Cue = new ShotSequenceCue(ShotSequenceBeat.Establish, ShotRole.Establish, ShotScale.Wide,
                 revision, .55f, "Awaiting an observed scene");

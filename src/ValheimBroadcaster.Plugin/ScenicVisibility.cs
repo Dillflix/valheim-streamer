@@ -353,6 +353,23 @@ internal sealed class ScenicVisibility
             -Mathf.Atan(2 * screenX * tangent * aspect) * Mathf.Rad2Deg, 0);
     }
 
+    // Pixel-independent subject samples share the exact live foliage projection.
+    // Physical rays are owned by the caller so only the identified NPC's own
+    // colliders may be ignored, never a broad camp bounding box.
+    internal bool SubjectPointVisible(Vector3 camera, Quaternion rotation, Vector3 point, float fov, float aspect, float nearClip)
+    {
+        Vector3 local = Quaternion.Inverse(rotation) * (point - camera);
+        if (!ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip).CenterInFrame) return false;
+        Refresh(camera); RefreshActive();
+        if (ScenicObservationPolicy.Coverage(Vector3.Distance(camera, origin), coveredRadius) != ScenicCoverageGap.None) return false;
+        Vector3 delta = point - camera;
+        if (delta.sqrMagnitude < .25f) return false;
+        Ray ray = new Ray(camera, delta.normalized);
+        for (int i = 0; i < activeCount; i++)
+            if (activeBounds[i].IntersectRay(ray, out float distance) && distance < delta.magnitude - .15f) return false;
+        return true;
+    }
+
     private bool FocusClear(Vector3 camera, Vector3 focus, Bounds? subjectBounds)
     {
         Vector3 delta = focus - camera;

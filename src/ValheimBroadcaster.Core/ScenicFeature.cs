@@ -3,6 +3,7 @@ using System;
 namespace ValheimBroadcaster.Core
 {
     public enum ScenicFeatureKind { Landscape, Ridge, Coastline, Clearing, Rock, Structure }
+    public enum ScenicSubjectKind { Environment, SiteContext, Npc }
     public enum ScenicShotRole { Establish, Traverse, Reveal, Detail }
 
     /// <summary>A measured environmental subject. Geometry and classification
@@ -19,10 +20,13 @@ namespace ValheimBroadcaster.Core
         public string? ParentId { get; }
         public string? ScopeLabel { get; }
         public bool IsPartial { get; }
+        public ScenicSubjectKind SubjectKind { get; }
+        public string? SubjectIdentity { get; }
 
         public ScenicFeature(string id, ScenicFeatureKind kind, AutonomyPosition center,
             AutonomyPosition direction, float radius, float height, float confidence,
-            string? parentId = null, string? scopeLabel = null, bool isPartial = false)
+            string? parentId = null, string? scopeLabel = null, bool isPartial = false,
+            ScenicSubjectKind subjectKind = ScenicSubjectKind.Environment, string? subjectIdentity = null)
         {
             if (string.IsNullOrWhiteSpace(id) || id.Length > 160) throw new ArgumentOutOfRangeException(nameof(id));
             if (!Enum.IsDefined(typeof(ScenicFeatureKind), kind)) throw new ArgumentOutOfRangeException(nameof(kind));
@@ -33,6 +37,11 @@ namespace ValheimBroadcaster.Core
             if (parentId != null && (string.IsNullOrWhiteSpace(parentId) || parentId.Length > 160 || parentId == id) ||
                 scopeLabel != null && (string.IsNullOrWhiteSpace(scopeLabel) || scopeLabel.Length > 64))
                 throw new ArgumentOutOfRangeException(nameof(parentId));
+            if (!Enum.IsDefined(typeof(ScenicSubjectKind), subjectKind) ||
+                subjectKind != ScenicSubjectKind.Environment && string.IsNullOrWhiteSpace(subjectIdentity) ||
+                subjectIdentity != null && subjectIdentity.Length > 64)
+                throw new ArgumentOutOfRangeException(nameof(subjectIdentity));
+            SubjectKind = subjectKind; SubjectIdentity = subjectIdentity;
             Id = id; Kind = kind; Center = center; Radius = radius; Height = height; Confidence = confidence;
             ParentId = parentId; ScopeLabel = scopeLabel; IsPartial = isPartial;
             Direction = new AutonomyPosition((float)(direction.X / length), 0, (float)(direction.Z / length));

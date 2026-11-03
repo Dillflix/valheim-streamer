@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.34 synchronized capture and editorial coverage
+
+Built directly on 0.8.33 (`3a3f425dd1e70e521cff09e8aee3b807bea75320`). The change adds independently admitted Scenic pictures, local trader/context coverage, observed action phases, bounded opponent/quarry perspectives and paired diagnostic video/frame timelines. Client/server protocol behavior remains unchanged; no new companion deployment is required. Use the [capture instructions and runtime acceptance matrix](EDITORIAL-CAPTURE.md) to collect comparable footage and verify the picture, actual presentation credit, fallback duration, NPC framing, action timing, return continuity, resource bounds and unchanged RTMP audio.
+
+Valheim runtime visual quality, GPU/readback overhead, Sandboxie capture behavior and long-run broadcast performance remain **not run here**. Pure policies, encoder fixtures and real-assembly compilation are separate evidence and do not establish those outcomes.
+
+Local validation: **876/876 Core cases**, **64/64 native camera-math cases**, **91 diagnostic recording/real-FFmpeg checks**, and **5 footage-review tests** passed. The generated review page's JavaScript also passed syntax checking. Client and companion compile with warnings treated as errors against matching real Valheim/BepInEx/Jötunn references. Local SDK command-line startup is affected by this build environment's process metadata, so direct SDK compiler validation was used locally; the repository CI performs the normal project builds, Windows/Linux media tests and artifact staging. Encoder fixtures verify sampled-video timing, frame-map/decoded-count agreement, storage bounds and failure isolation; they do not execute Unity readback.
+
 ## 0.8.33 destination variety and purposeful structure coverage
 
 Built directly on 0.8.32 (`c6ab74ca94f0de2f4618aaec3e924486adffe3f6`). Fixes unconditional structural preference, sampled-zone-centre coastline loss, and destination purpose being discarded at arrival. Optional interest-v2 metadata preserves legacy endpoints and observer admission protocol3. Local validation passes **828/828 Core cases**, **64/64 native camera mathematics cases**, and client/server compilation against matching real Valheim assemblies with warnings treated as errors. Regression cases cover highly imbalanced catalogues, bounded completed/attempt history, biome/source/landscape balancing, uncredited proximity, player preemption, dry coast sampling, v1/v2 packets, and subject-specific footage. See [destination runtime checks](WORLD-DESTINATIONS.md) for validation with real coastlines, ruins, camps and sprawling player construction. Visual results, live handshake fallback and production indexing cost remain untested here.

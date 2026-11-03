@@ -10,6 +10,7 @@ namespace ValheimBroadcaster.Core
     {
         public const double BlockedLimitSeconds = 2;
         private const int MaximumHistory = 24;
+        private readonly ScenicSiteSequence siteSequence = new ScenicSiteSequence();
         private readonly List<ShownShot> history = new List<ShownShot>(MaximumHistory);
         // The loaded-region survey exposes at most 32 subjects. A separate
         // bounded ledger keeps each subject's complete three-shot episode even
@@ -81,6 +82,7 @@ namespace ValheimBroadcaster.Core
             Time(at); Time(displayedProgress);
             if (displayedProgress > 1) throw new ArgumentOutOfRangeException(nameof(displayedProgress));
             if (Current == null || Current.Id != planId || at <= lastObservation) return;
+            siteSequence.Observe(at, Current.Feature, Current.Role, livePicture && readable, held);
             double gap = lastObservation >= 0 ? at - lastObservation : 0;
             double dt = gap <= .25 ? gap : 0;
             // Low frame rate must not suspend recovery deadlines indefinitely.
@@ -142,11 +144,23 @@ namespace ValheimBroadcaster.Core
             replacementCause = cause; Reason = reason;
         }
 
+        /// <summary>Independent live pictures can establish site context, but
+        /// cannot consume a moving-route episode or its progress clock.</summary>
+        public void ObserveSitePicture(ScenicShotPlan plan, double at, bool live, bool readable, bool held)
+        {
+            if (plan == null || !plan.IsPictureOnly) throw new ArgumentException("Expected an independent picture lease.", nameof(plan));
+            siteSequence.Observe(at, plan.Feature, plan.Role, live && readable, held);
+        }
+
+        public double SubjectPriority(ScenicFeature feature) => siteSequence.Priority(feature);
+        public bool CanDevelopSubject(ScenicFeature feature) => siteSequence.CanDevelop(feature);
+
         /// <summary>Advance a short feature sequence only from shown footage.
         /// A failed candidate or a staged shot does not consume a sequence beat.</summary>
         public ScenicShotRole PreferredRole(ScenicFeature feature)
         {
             if (feature == null) throw new ArgumentNullException(nameof(feature));
+            if (feature.SubjectKind == ScenicSubjectKind.Npc) return ScenicShotRole.Detail;
             int count = RecentCount(feature.Id);
             if (count == 0) return ScenicShotRole.Establish;
             if (count == 1) return feature.Kind == ScenicFeatureKind.Ridge || feature.Kind == ScenicFeatureKind.Clearing
@@ -162,6 +176,7 @@ namespace ValheimBroadcaster.Core
         public bool CanOffer(ScenicShotPlan plan)
         {
             CheckPlan(plan);
+            if (!siteSequence.CanDevelop(plan.Feature!)) return false;
             if (!episodes.TryGetValue(plan.FeatureId, out List<ShownShot>? shots)) return true;
             int recent = 0;
             foreach (ShownShot shown in shots)
@@ -182,7 +197,7 @@ namespace ValheimBroadcaster.Core
             CheckPlan(plan);
             if (double.IsNaN(quality) || double.IsInfinity(quality) || quality < 0 || quality > 1)
                 throw new ArgumentOutOfRangeException(nameof(quality));
-            double score = quality + plan.Feature!.Confidence * .08 + Math.Min(.1, plan.VisualChange * .2);
+            double score = siteSequence.Priority(plan.Feature!) + quality + plan.Feature!.Confidence * .08 + Math.Min(.1, plan.VisualChange * .2);
             int sameFeature = RecentCount(plan.FeatureId);
             foreach (ShownShot shown in history)
             {
@@ -262,11 +277,12 @@ namespace ValheimBroadcaster.Core
             Current = Prepared = null; Progress = ElapsedSeconds = BlockedSeconds = 0;
             lastObservation = -1; now = badPictureSeconds = missingPictureSeconds = 0;
             recorded = false; replacementCause = ReplacementCause.None;
-            history.Clear(); episodes.Clear(); Reason = "Awaiting a measured scenic subject";
+            history.Clear(); episodes.Clear(); siteSequence.Reset(); Reason = "Awaiting a measured scenic subject";
         }
         private static void CheckPlan(ScenicShotPlan plan)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
+            if (plan.IsPictureOnly) throw new ArgumentException("Independent picture leases are not cinematic routes.", nameof(plan));
             if (!plan.IsDirected) throw new ArgumentException("Dedicated scenic direction requires an immutable directed plan.", nameof(plan));
         }
         private static void Time(double value)

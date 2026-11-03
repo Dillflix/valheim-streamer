@@ -17,6 +17,8 @@ internal static class ScenicTrace
     private static float nextPicture, nextWarning;
     private static bool lastUsable, lastOnAir;
     internal static bool Enabled => writer != null && writer.Error == null;
+    internal static string SessionId => writer?.SessionId ?? "";
+    internal static long Sequence => sequence;
     internal static string Status => writer == null ? "Scenic trace: disabled" :
         $"Scenic trace: {writer.Written} records, {writer.Pending} queued, {writer.Dropped} dropped; " +
         (writer.Error == null ? writer.DirectoryPath : "I/O stopped: " + writer.Error);

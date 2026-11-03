@@ -13,26 +13,32 @@ internal sealed class CameraRig
     // Wildlife is discretionary. Its candidate solve must not replace the
     // current player's trajectories or the scenic view before admission.
     private readonly CinemachineShotRig creatureCamera = new CinemachineShotRig();
+    private readonly PlayerComplementaryCamera complementary = new PlayerComplementaryCamera();
     private readonly ScenicCameraRig scenicCamera = new ScenicCameraRig();
-    private bool proceduralActive, scenicActive, creatureActive;
-    private CinemachineShotRig ActorCamera => creatureActive ? creatureCamera : shotCamera;
+    private bool proceduralActive, scenicActive, creatureActive, complementaryActive, presentationConfirmed, editorialHold;
+    internal bool ComplementaryActive => complementaryActive;
+    internal bool StoryContinuityReady { get; private set; }
+    internal bool DisplayedPlayerUsable => !scenicActive && !creatureActive && !complementaryActive && LastPictureUsable;
+    internal string PerspectiveDescription => complementaryActive ? complementary.Description : scenicActive ? "Scenic" : creatureActive ? "Creature" : "Player primary";
+    internal long PresentedActorShotId => proceduralActive && !scenicActive ? ActorCamera.PresentedShotId : -1;
+    private CinemachineShotRig ActorCamera => complementaryActive ? complementary.Rig : creatureActive ? creatureCamera : shotCamera;
     private string? presentationNotice;
     private string legacyMode = "awaiting coverage";
     internal string Diagnostics => presentationNotice != null ? "Camera: " + presentationNotice :
-        scenicActive ? scenicCamera.Diagnostics : proceduralActive ? ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
+        scenicActive ? scenicCamera.Diagnostics : proceduralActive ? (complementaryActive ? complementary.Description + "; " : "") + ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
     internal bool LastPictureUsable { get; private set; }
     internal bool IsProcedural => proceduralActive;
     internal string PictureReason => scenicActive ? scenicCamera.LastFailure : proceduralActive ? ActorCamera.PictureReason : LastFailure;
     internal float FieldOfView => camera ? camera.fieldOfView : 75f;
     internal Quaternion Rotation => camera ? camera.transform.rotation : Quaternion.identity;
-    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive && !scenicActive && !creatureActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
+    internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive && !scenicActive && !creatureActive && !complementaryActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
     internal RemoteObserverClient? RemoteContext { set => shotCamera.RemoteContext = value; }
     internal CameraSceneFrame? CurrentPlayerScene => proceduralActive && !scenicActive && !creatureActive ? shotCamera.CurrentPlayerScene : null;
     internal string? CurrentPlayerId => proceduralActive && !scenicActive && !creatureActive ? shotCamera.CurrentPlayerId : null;
     internal float PlayerSceneObservedAt => proceduralActive && !scenicActive && !creatureActive ? shotCamera.PlayerSceneObservedAt : -1;
-    internal bool PresentationConfirmed { set { shotCamera.PresentationConfirmed = value; creatureCamera.PresentationConfirmed = value; } }
-    internal bool EditorialHold { set { shotCamera.EditorialHold = value; creatureCamera.EditorialHold = value; } }
-    internal RenderedPictureMonitor? PictureMonitor { set { shotCamera.PictureMonitor = value; creatureCamera.PictureMonitor = value; scenicCamera.PictureMonitor = value; } }
+    internal bool PresentationConfirmed { set { presentationConfirmed = value; } }
+    internal bool EditorialHold { set { editorialHold = value; shotCamera.EditorialHold = value; creatureCamera.EditorialHold = value; } }
+    internal RenderedPictureMonitor? PictureMonitor { set { shotCamera.PictureMonitor = value; creatureCamera.PictureMonitor = value; complementary.Rig.PictureMonitor = value; scenicCamera.PictureMonitor = value; } }
     internal RenderedPictureContext? PictureContext => scenicActive && LastPictureUsable ? scenicCamera.PictureContext :
         proceduralActive && LastPictureUsable ? ActorCamera.BuildPictureContext() : null;
     internal bool ScenicMovementAccepted => scenicActive && scenicCamera.MovementAccepted;
@@ -58,7 +64,7 @@ internal sealed class CameraRig
     internal Vector3? Position => camera ? camera.transform.position : (Vector3?)null;
     internal string LastFailure { get; private set; } = "none";
     private bool Unready(string reason)
-    { LastFailure = reason; LastPictureUsable = false; presentationNotice = "unavailable: " + reason; return false; }
+    { LastFailure = reason; LastPictureUsable = StoryContinuityReady = false; complementary.Reset(); complementaryActive = false; presentationNotice = "unavailable: " + reason; return false; }
     internal void MarkUnavailable(string reason) => Unready(reason);
 
     // Call at a bounded discovery cadence while coverage is not Creature. This
@@ -84,7 +90,7 @@ internal sealed class CameraRig
 
     internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false, Character? creatureTarget = null, ScenicShotPlan? scenicPlan = null, float scenicProgress = 0, ScenicVisibility? scenicVisibility = null)
     {
-        presentationNotice = null; LastPictureUsable = false;
+        presentationNotice = null; LastPictureUsable = StoryContinuityReady = false;
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
         if (!next) next = gameCamera.GetComponentInChildren<Camera>();
@@ -110,6 +116,7 @@ internal sealed class CameraRig
         if (settings.ProceduralPlayers.Value && playerTarget == null && !creatureTarget && scenicPlan?.IsDirected == true)
         {
             if (!scenicActive) { shotCamera.Reset(); scenicCamera.Reset(); }
+            complementary.Reset(); complementaryActive = false;
             scenicActive = proceduralActive = true; creatureActive = false;
             if (!scenicCamera.TrySolve(scenicPlan, scenicProgress, scenicVisibility, camera.aspect, camera.nearClipPlane,
                 continuousPlayer, moveCarrier, out Vector3 scenicPosition, out Quaternion scenicRotation, out float scenicFov))
@@ -125,22 +132,34 @@ internal sealed class CameraRig
         {
             proceduralActive = true;
             creatureActive = input.Value.Kind == CinematicShotKind.Creature;
-            CinemachineShotRig actorCamera = ActorCamera;
+            bool previouslyComplementary = complementaryActive;
+            if (creatureActive) { complementary.Reset(); complementaryActive = false; }
+            CinemachineShotRig actorCamera = creatureActive ? creatureCamera : shotCamera;
+            actorCamera.PresentationConfirmed = presentationConfirmed && !previouslyComplementary;
             actorCamera.RenderingCamera = camera;
             actorCamera.NearClipPlane = camera.nearClipPlane;
             actorCamera.Aspect = camera.aspect;
             if (!actorCamera.TrySolve(input.Value, settings, dt, continuousPlayer, moveCarrier,
                     out Vector3 position, out Quaternion rotation, out float fov))
                 return Unready(actorCamera.LastFailure);
+            StoryContinuityReady = !creatureActive && actorCamera.LastPictureUsable;
+            if (!creatureActive)
+            {
+                complementaryActive = complementary.TrySelect(shotCamera.CurrentPlayerScene, shotCamera.CurrentPlayerId ?? "", camera, settings, dt,
+                    continuousPlayer, moveCarrier, editorialHold, presentationConfirmed, StoryContinuityReady, position,
+                    out Vector3 alternatePosition, out Quaternion alternateRotation, out float alternateFov);
+                if (complementaryActive)
+                { position = alternatePosition; rotation = alternateRotation; fov = alternateFov; }
+            }
             camera.transform.SetPositionAndRotation(position, rotation);
             camera.fieldOfView = fov;
             if (skyCamera) skyCamera.fieldOfView = fov;
-            LastPictureUsable = actorCamera.LastPictureUsable;
+            LastPictureUsable = ActorCamera.LastPictureUsable;
             LastFailure = "none";
             hasPose = false;
             return true;
         }
-        if (proceduralActive) { shotCamera.Reset(); creatureCamera.Reset(); proceduralActive = creatureActive = false; }
+        if (proceduralActive) { complementary.Reset(); complementaryActive = false; shotCamera.Reset(); creatureCamera.Reset(); proceduralActive = creatureActive = false; }
         legacyMode = input.HasValue ? input.Value.Kind.ToString().ToLowerInvariant() + " framing" : "probe framing";
         float radians = azimuth * Mathf.Deg2Rad;
         Vector3 offset = new Vector3(Mathf.Sin(radians) * settings.Distance.Value,
@@ -205,7 +224,7 @@ internal sealed class CameraRig
     }
 
     internal void ResetPose()
-    { hasPose = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
+    { hasPose = false; complementary.Reset(); complementaryActive = StoryContinuityReady = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
 
     internal void Restore()
     {
@@ -217,6 +236,7 @@ internal sealed class CameraRig
 
     private void RestoreCamera()
     {
+        complementary.Dispose(); complementaryActive = StoryContinuityReady = false;
         shotCamera.Dispose(); creatureCamera.Dispose(); scenicCamera.Dispose(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "inactive";
         if (camera)
         {

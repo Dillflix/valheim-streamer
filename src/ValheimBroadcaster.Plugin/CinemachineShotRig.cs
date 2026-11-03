@@ -102,6 +102,9 @@ internal sealed class CinemachineShotRig : IDisposable
     internal float NearClipPlane { get; set; } = 0.3f;
     internal float Aspect { get; set; } = 16f / 9f;
     internal Camera? RenderingCamera { get; set; }
+    internal float? InitialHeading { get; set; }
+    internal int PictureNamespace { get; set; }
+    internal long PresentedShotId => lastSucceeded ? pictureRevision : -1;
     internal RemoteObserverClient? RemoteContext { get; set; }
     internal IReadOnlyList<string> VisiblePlayerIds => visiblePlayers;
     internal bool LastPictureUsable { get; private set; }
@@ -220,7 +223,7 @@ internal sealed class CinemachineShotRig : IDisposable
             }
             actor = subject; actorId = id; subjectId = shot.StableId;
             world = ZNet.instance; revision = shot.Revision; interior = inside;
-            previousFocus = focus; heading = approvedHeading = settings.Azimuth.Value;
+            previousFocus = focus; heading = approvedHeading = InitialHeading ?? settings.Azimuth.Value;
             scenicClock.Reset(shot.Progress); scenicProgress = scenicClock.Progress;
             scenicStrength = Mathf.Max(0.01f, settings.ShotMotion.Value); scenicSampleAt = -1;
         }
@@ -272,7 +275,8 @@ internal sealed class CinemachineShotRig : IDisposable
         ShotSituation observedSituation = Situation(context);
         sequenceCue = sequence.Update(now, step, observedSituation, priorPresented,
             DynamicEnabled(settings) && settings.ShotSequences.Value,
-            lastCuePresented && shownCueRevision == sequence.Cue.Revision);
+            lastCuePresented && shownCueRevision == sequence.Cue.Revision,
+            input.Kind == CinematicShotKind.Player ? context.ActionPhase : (ActionPhaseCue?)null);
         Vector3 actionDirection = NativeEncounterFraming.Active(context) ? context.EncounterDirection : context.HasInterest ? context.InterestFocus - focus :
             context.Velocity.sqrMagnitude >= 1 ? context.Velocity : context.FacingDirection;
         float actionConfidence = NativeEncounterFraming.Active(context) ? context.EncounterConfidence : context.HasInterest ? context.InterestConfidence :
@@ -349,7 +353,7 @@ internal sealed class CinemachineShotRig : IDisposable
         ShotSituation situation = Situation(context);
         int choice = DirectedActorSelection(settings)
             ? director.Select(now, step, editorialScores, selectionEligibility, context.Activity, velocity.magnitude,
-                confined, space, priorPresented, readable, situation, requestedRole, settings.NativeClearShot.Value ? clearShot : null)
+                confined, space, priorPresented, readable, situation, requestedRole, settings.NativeClearShot.Value ? clearShot : null, context.ActionPhase.ProtectMoment)
             : stableSelection.Select(now, editorialScores, selectionEligibility, readable, settings.NativeClearShot.Value ? clearShot : null);
         if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
             input.Kind == CinematicShotKind.Creature ? "Creature has no currently readable supported camera" :
@@ -367,7 +371,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 for (int i = 0; i < Count; i++) Evaluate(i, NeutralMotion(), context, focus, settings, dt, continuous, moveCarrier);
                 choice = DirectedActorSelection(settings)
                     ? director.Select(now, 0, scores, eligible, context.Activity, velocity.magnitude, confined, space, false, readable, situation, requestedRole,
-                        settings.NativeClearShot.Value ? clearShot : null)
+                        settings.NativeClearShot.Value ? clearShot : null, context.ActionPhase.ProtectMoment)
                     : stableSelection.Select(now, scores, eligible, readable, settings.NativeClearShot.Value ? clearShot : null);
                 if (choice < 0) return HoldValidPose(context, focus, now, continuous, moveCarrier,
                     input.Kind == CinematicShotKind.Creature ? "Creature alternate cameras are not currently readable and supported" :
@@ -604,7 +608,7 @@ internal sealed class CinemachineShotRig : IDisposable
             $"{(IsScenic ? input.ScenicPlan!.Style + " / " + scenicSample.Phase : DynamicEnabled(settings) ? director.Motion(MotionStrength(settings)).Family : "stable")}; " +
             (IsScenic ? $"path progress {scenicProgress:P0}; quality {lastView.Score:F2}; " :
                 $"age {director.ShotAge:F1}/{director.DesiredSeconds:F0}s; quality {lastView.Score:F2}; ") +
-            $"sequence {sequenceCue.Beat} / {sequence.BeatAge:F1}s; scale {candidate.Scale}; future {longevity.Evidence(choice, now).Reason}; " +
+            $"phase {context.ActionPhase.Phase}: {context.ActionPhase.Reason}; sequence {sequenceCue.Beat} / {sequence.BeatAge:F1}s; scale {candidate.Scale}; future {longevity.Evidence(choice, now).Reason}; " +
             $"space {space:F2}; {(motionBlocked ? "motion held for readability/clearance" : transition)}; role {director.Intent.Role}; environment {context.Environment}; locomotion {context.Locomotion}; " +
             $"readable {LastPictureUsable}; recovery search {(recoverySearch ? "expanded" : "normal")}; {lastView.Picture(IsScenic).Reason}; " +
             $"trajectory {(candidate.PassBy ? "world-fixed pass-by" : candidate.Observational ? "native screen/depth body" : IsScenic ? "authored world path" : candidate.TrajectoryState.Mode.ToString())}; anchor lag {(IsScenic || candidate.Observational || candidate.PassBy ? 0 : candidate.TrajectoryState.Lag):F1}m / speed {lastAnchorVelocity.magnitude:F1}m/s; " +
@@ -1580,7 +1584,7 @@ internal sealed class CinemachineShotRig : IDisposable
         // Player and wildlife solves have independent lifetimes. Namespace
         // their candidate identities so equal local epoch/revision counters
         // cannot reuse the other rig's rendered-pixel feedback.
-        int pictureCandidate = choice + (input.Kind == CinematicShotKind.Creature ? Count : 0);
+        int pictureCandidate = PictureNamespace * Count * 2 + choice + (input.Kind == CinematicShotKind.Creature ? Count : 0);
         PictureContext = new RenderedPictureContext(new RenderedPictureKey(pictureEpoch, pictureRevision, pictureCandidate),
             region, hasPrimary, Time.frameCount, now);
     }

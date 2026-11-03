@@ -36,6 +36,20 @@ internal sealed class ScenicSpatialPlanner
     private bool moveCarrier, native, graphSearching;
     private CameraQueryPriority priority;
     private int seedIndex, nextGraphAt;
+    private ScenicPose? pictureCandidate;
+    private float pictureCandidateAt, pictureCandidateQuality;
+    internal bool HasPictureCandidate => pictureCandidate.HasValue;
+
+    // A point is independently useful even when every corridor leaving it is
+    // blocked. Expose it as soon as its own support, framing and foliage are
+    // measured, while retaining the in-progress graph and route deadline.
+    internal ScenicShotPlan? TakePictureCandidate(long pictureId, out long observedEpoch, out float observedAt)
+    {
+        observedEpoch = epoch; observedAt = pictureCandidateAt;
+        if (!pictureCandidate.HasValue || feature == null) return null;
+        ScenicPose pose = pictureCandidate.Value; pictureCandidate = null; pictureCandidateQuality = 0;
+        return ScenicShotPlan.Picture(pictureId, feature, role, ToCore(pose.Position), ToCore(pose.Focus), fov, screenX, screenY);
+    }
 
     internal bool Complete { get; private set; }
     internal ScenicShotPlan? Plan { get; private set; }
@@ -94,6 +108,7 @@ internal sealed class ScenicSpatialPlanner
         desiredDistance = Mathf.Clamp(source.Radius * 1.3f + 8f, 12f, 42f);
         desiredHeight = role == ScenicShotRole.Establish ? Mathf.Clamp(source.Height * .22f + 4f, 4f, 16f) :
             role == ScenicShotRole.Reveal ? 3f : role == ScenicShotRole.Detail ? 2f : 4f;
+        if (source.SubjectKind == ScenicSubjectKind.Npc) desiredHeight = ScenicNpcComposition.Elevation(source.Height);
         seedDirection = lastCamera.HasValue ? Vector3.ProjectOnPlane(lastCamera.Value - focus, Vector3.up) : FromCore(source.Direction);
         if (seedDirection.sqrMagnitude < .01f) seedDirection = FromCore(source.Direction);
         seedDirection.Normalize(); nextGraphAt = 4;
@@ -176,6 +191,8 @@ internal sealed class ScenicSpatialPlanner
 
     private float FramingDistance(Vector3 outward)
     {
+        if (feature!.SubjectKind == ScenicSubjectKind.Npc)
+            return ScenicNpcComposition.Distance(feature.Height, feature.Radius, fov, aspect, role == ScenicShotRole.Detail);
         Vector3 size = subject!.Value.extents, right = Vector3.Cross(Vector3.up, outward);
         float halfWidth = Mathf.Abs(right.x) * size.x + Mathf.Abs(right.z) * size.z;
         float halfDepth = Mathf.Abs(outward.x) * size.x + Mathf.Abs(outward.z) * size.z;
@@ -225,6 +242,8 @@ internal sealed class ScenicSpatialPlanner
             }
             if (!Framing(probe.Pose, out float framing)) return Reject("Measured subject extent does not make a readable composition at this viewpoint");
             probe.Quality = Mathf.Clamp01(picture.Score * .8f + framing * .2f);
+            if (!pictureCandidate.HasValue || probe.Quality > pictureCandidateQuality || Time.unscaledTime - pictureCandidateAt > .5f)
+            { pictureCandidate = probe.Pose; pictureCandidateAt = Time.unscaledTime; pictureCandidateQuality = probe.Quality; }
             probe.Clearance = observed.Clearance; probe.ObservedAt = observed.ObservedAt; probe.WaitingAt = -1;
             if (probe.Parent < 0) { Add(probe); return true; }
             probe.Stage = 1;
@@ -413,6 +432,7 @@ internal sealed class ScenicSpatialPlanner
         search.Reset(); fallbackSearch.Reset(); fallbackRoute = null; bodyRoute.Clear(); aimRoute.Clear();
         Plan = null; Complete = graphSearching = false; Score = 0; Attempts = Rejected = seedIndex = nextGraphAt = 0;
         subject = null; precedingCamera = null; Reason = "Awaiting a spatial scenic subject";
+        pictureCandidate = null; pictureCandidateAt = pictureCandidateQuality = 0;
     }
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     private static AutonomyPosition ToCore(Vector3 value) => new AutonomyPosition(value.x, value.y, value.z);

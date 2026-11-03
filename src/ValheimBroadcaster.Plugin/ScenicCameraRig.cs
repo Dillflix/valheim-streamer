@@ -48,7 +48,7 @@ internal sealed class ScenicCameraRig : IDisposable
         bool changed = !ReferenceEquals(plan, shot);
         if (!ReferenceEquals(preparedPlan, shot))
         {
-            if (!shot.IsDirected || !path.Prepare(shot, 1))
+            if (!shot.IsDirected || !shot.IsPictureOnly && !path.Prepare(shot, 1))
                 return Reject(ScenicRejectionKind.InvalidPlan, "Cannot prepare directed scenic native route");
             solver.Reset(); preparedPlan = shot;
         }
@@ -99,7 +99,7 @@ internal sealed class ScenicCameraRig : IDisposable
             default, false, Time.frameCount, Time.unscaledTime);
         RenderedPictureFeedback pixels = PictureMonitor != null
             ? PictureMonitor.Feedback(pictureContext.Key, Time.unscaledTime) : RenderedPictureFeedback.Unavailable("pixel monitor unavailable");
-        Diagnostics = "Directed scenery: " + shown.FeatureKind + " / " + shown.Role +
+        Diagnostics = (shown.IsPictureOnly ? "Independent scenic picture: " : "Directed scenery: ") + shown.FeatureKind + " / " + shown.Role +
             "; plan " + shown.Id + (shown.Id == shot.Id ? "" : "; awaiting cut " + shot.Id) + "; progress " + accepted.Progress.ToString("P0") +
             "; duration " + shown.DurationSeconds.ToString("F1") + "s; fixed lens " + fov.ToString("F0") +
             "; " + (MovementAccepted ? "developing " + (shot.UseNativeSpline ? "native spline" : "authored route") :

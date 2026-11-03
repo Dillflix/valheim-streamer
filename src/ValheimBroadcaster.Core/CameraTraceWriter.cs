@@ -25,6 +25,7 @@ public sealed class CameraTraceWriter : IDisposable
     public int Pending => Volatile.Read(ref pending);
     public string? Error => Volatile.Read(ref error);
     public string DirectoryPath => directory;
+    public string SessionId => session;
 
     public CameraTraceWriter(string directory, string header, long fileBytes = FileBytes)
     {

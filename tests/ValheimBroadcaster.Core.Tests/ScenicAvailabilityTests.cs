@@ -12,6 +12,47 @@ internal static class ScenicAvailabilityTests
         yield return ("Recovered scenic availability clears the unavailable deadline", RecoveredDeadline);
         yield return ("Useful live footage overrides stale unavailable evidence", UsefulIsAvailable);
         yield return ("Scenic travel distinguishes missing picture from missing world and ordinary rotation", TravelCause);
+        yield return ("Exhausted local coverage can seek fresh content with a live picture", FreshContent);
+        yield return ("Editorial exhaustion preserves hold and ready-player priority", ContentControls);
+        yield return ("Editorial exhaustion cannot invent a picture or bypass destination constraints", ContentLimits);
+    }
+    private static void FreshContent()
+    {
+        var director = New(); director.RegionSeconds = 120;
+        director.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Regions, new AutonomyPosition(0, 0, 0), null, true,
+            idleSceneAvailable: true, scenicContentExhausted: true);
+        Check(director.PendingTravel?.TargetId == "next", "Finite settled coverage never allows a fresh destination");
+        Check(director.PendingTravel?.Reason == "Local scenic coverage exhausted; seeking fresh subject",
+            "A readable scene was mislabeled as picture/loading failure");
+    }
+    private static void ContentControls()
+    {
+        var held = New(); held.RegionSeconds = 120; held.SetHolding(true);
+        held.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Regions, new AutonomyPosition(0, 0, 0), null, true,
+            scenicContentExhausted: true);
+        Check(held.PendingTravel == null, "Content novelty overrides an operator hold");
+        var player = New();
+        var players = new[] { new AutonomyPlayer("player", "Player", new AutonomyPosition(0, 0, 0), 100, true) };
+        player.Tick(0, 0, players, Regions, new AutonomyPosition(0, 0, 0), "player", true,
+            scenicContentExhausted: true);
+        Check(player.State == AutonomyState.Following && player.PendingTravel == null,
+            "Scenic novelty preempted a ready player");
+    }
+    private static void ContentLimits()
+    {
+        var unavailable = New(); unavailable.RegionSeconds = 120;
+        unavailable.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Regions, new AutonomyPosition(0, 0, 0), null, false,
+            idleSceneAvailable: true, scenicContentExhausted: true);
+        Check(unavailable.PendingTravel == null, "Content flag bypassed actual missing-picture recovery");
+        var noDestinations = New(); noDestinations.RegionSeconds = 120;
+        noDestinations.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Array.Empty<ScenicRegion>(),
+            new AutonomyPosition(0, 0, 0), null, true, scenicContentExhausted: true);
+        Check(noDestinations.PendingTravel == null && noDestinations.State == AutonomyState.Scenic &&
+            noDestinations.Reason.Contains("Retaining the readable scenic view"), "No destination discarded the live picture");
+        var constrained = New(); constrained.RegionSeconds = 120; constrained.MinimumScenicTravelDistance = 600;
+        constrained.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Regions, new AutonomyPosition(0, 0, 0), null, true,
+            scenicContentExhausted: true);
+        Check(constrained.PendingTravel == null, "Content novelty bypassed minimum distance");
     }
     private static void TravelCause()
     {

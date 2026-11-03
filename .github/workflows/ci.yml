@@ -19,11 +19,15 @@ jobs:
           dotnet-version: '8.0.427'
       - name: Test director logic
         run: dotnet run --project tests/ValheimBroadcaster.Core.Tests/ValheimBroadcaster.Core.Tests.csproj --configuration Release
+      - name: Test synchronized footage review
+        run: python3 -m unittest discover -s tests/footage-review -v
       - name: Build and exercise standalone evidence replay
         run: |
           dotnet publish tools/ValheimBroadcaster.Replay --configuration Release -warnaserror --output replay-artifacts
           dotnet replay-artifacts/ValheimBroadcaster.Replay.dll tests/fixtures/scenic-evidence/competing-deadlines.jsonl
           cp docs/SCENIC-EVIDENCE.md replay-artifacts/README.md
+          cp docs/EDITORIAL-CAPTURE.md replay-artifacts/EDITORIAL-CAPTURE.md
+          cp tools/review-footage.py replay-artifacts/review-footage.py
       - name: Upload standalone replay tool
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -64,6 +68,9 @@ jobs:
       - name: Test buffers and real RTMP audio/video loopback
         timeout-minutes: 3
         run: dotnet run --project tests/ValheimBroadcaster.Streaming.Tests --configuration Release -warnaserror
+      - name: Test diagnostic footage encoding, frame mapping and retention
+        timeout-minutes: 3
+        run: dotnet run --project tests/ValheimBroadcaster.DiagnosticCapture.Tests --configuration Release -warnaserror
 
   plugin:
     needs: [core, streaming]

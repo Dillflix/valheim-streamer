@@ -11,6 +11,7 @@ internal sealed class ScenicFeatureSurvey
 {
     private const int Side = 7, CellCount = Side * Side, MaximumFeatures = 32, MaximumObjects = 96;
     private const float Spacing = 12f, ObjectRadius = 8f;
+    private readonly LocalScenicSiteSubjects siteSubjects = new LocalScenicSiteSubjects();
     private readonly Cell[] cells = new Cell[CellCount];
     private readonly Collider[] overlaps = new Collider[96], waterOverlaps = new Collider[16];
     private readonly RaycastHit[] groundHits = new RaycastHit[8];
@@ -25,7 +26,7 @@ internal sealed class ScenicFeatureSurvey
     internal bool Complete { get; private set; }
     internal IReadOnlyList<ScenicFeature> Features => features;
     internal string Diagnostics => $"Scenic survey: {nextCell}/{CellCount} terrain cells; {features.Count} features; " +
-        $"{unavailable} unavailable cells; {truncated} incomplete object queries; loaded geometry only";
+        $"{unavailable} unavailable cells; {truncated} incomplete object queries; {siteSubjects.Diagnostics}; loaded geometry only";
 
     private struct Cell
     {
@@ -88,6 +89,7 @@ internal sealed class ScenicFeatureSurvey
         }
         if (!Finite(nearest) || !IdleShots.Ready(ground)) { unavailable++; return; }
         Cell cell = new Cell { Valid = true, Ground = ground };
+        siteSubjects.ObserveNearby(ground + Vector3.up * 3f);
         int count = Physics.OverlapSphereNonAlloc(ground + Vector3.up * 3f, ObjectRadius, overlaps,
             objectsMask, QueryTriggerInteraction.Ignore);
         cell.ObjectsComplete = count < overlaps.Length;
@@ -208,6 +210,7 @@ internal sealed class ScenicFeatureSurvey
                 Add(ScenicFeatureKind.Landscape, focus, xRelief < zRelief ? Vector3.right : Vector3.forward,
                     18f, Mathf.Clamp(relief, 2f, 24f), .28f + Mathf.Clamp01(relief / 12f) * .2f);
         }
+        siteSubjects.Append(features, origin, MaximumFeatures);
         features.Sort((a, b) => { int score = b.Confidence.CompareTo(a.Confidence); return score != 0 ? score : StringComparer.Ordinal.Compare(a.Id, b.Id); });
     }
 
@@ -255,6 +258,7 @@ internal sealed class ScenicFeatureSurvey
     private static Vector3 FromCore(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);
     internal void Reset()
     {
+        siteSubjects.Reset();
         Array.Clear(cells, 0, cells.Length); seenObjects.Clear(); seenTrees.Clear(); objects.Clear(); features.Clear();
         world = null; origin = default; nextCell = unavailable = truncated = 0; Complete = false; hasWaterPlane = false; waterPlane = 0;
     }

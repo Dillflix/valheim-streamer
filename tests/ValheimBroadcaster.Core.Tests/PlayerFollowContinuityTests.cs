@@ -11,6 +11,30 @@ internal static class PlayerFollowContinuityTests
         yield return ("Continuation rejects horizontal and vertical relocation", Discontinuity);
         yield return ("Readiness probes cannot keep unpresented footage alive", PresentationExpiry);
         yield return ("Invalid presentation evidence clears continuation", InvalidEvidence);
+        yield return ("Related views retain only a bounded already-presented player binding", RelatedView);
+    }
+
+    private static void RelatedView()
+    {
+        var c = new PlayerFollowContinuity();
+        Check(!c.ValidatePreparedReturn("player", "character:1", Start, 10));
+        c.Presented("player", "character:1", Start, 10);
+        for (int i = 1; i <= 8; i++)
+        {
+            double now = 10 + i * .5;
+            Check(c.ValidatePreparedReturn("player", "character:1", Start, now));
+            Check(c.CanContinue("player", "character:1", Start, now));
+        }
+        Check(!c.ValidatePreparedReturn("player", "character:1", Start, 14.01));
+        Check(!c.CanContinue("player", "character:1", Start, 14.01));
+        c.Presented("player", "character:1", Start, 15);
+        Check(!c.ValidatePreparedReturn("player", "respawn", Start, 15.1));
+        Check(!c.ValidatePreparedReturn("player", "character:1", new AutonomyPosition(1000, 30, 40), 15.1));
+        Check(!c.ValidatePreparedReturn("player", "character:1", Start, 16.01));
+        c.Presented("player", "character:1", Start, 20);
+        Check(c.ValidatePreparedReturn("player", "character:1", Start, 20.5));
+        c.Presented("player", "character:1", Start, 21);
+        Check(c.CanContinue("player", "character:1", Start, 21.5));
     }
 
     private static readonly AutonomyPosition Start = new AutonomyPosition(20, 30, 40);

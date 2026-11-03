@@ -24,6 +24,7 @@ internal sealed class PlayerSceneContext
     private readonly List<CompanionObservation> companions = new List<CompanionObservation>(64);
     private readonly List<string> stale = new List<string>();
     private readonly List<Observation> opponents = new List<Observation>();
+    private readonly ActionPhasePolicy actionPhases = new ActionPhasePolicy();
     private readonly EncounterPolicy encounters = new EncounterPolicy();
     private readonly List<EncounterObservation> encounterObservations = new List<EncounterObservation>(64);
     private readonly List<Character> encounterActors = new List<Character>(64);
@@ -69,7 +70,7 @@ internal sealed class PlayerSceneContext
         {
             Reset(); frame.SceneId = ++nextSceneId;
         }
-        if (changedPrimary) { rangedAim.Reset(); encounters.Reset(); ClearEncounter(); }
+        if (changedPrimary) { actionPhases.Reset(); frame.ActionPhase = actionPhases.Cue; rangedAim.Reset(); encounters.Reset(); ClearEncounter(); }
         if (changedPrimary || primaryActor == null)
         { primaryActor = player; primaryId = primary.Identity.Id; primaryCharacter = characterId; world = ZNet.instance; surveyAt = -1; sampledFrame = -1; }
         if (sampledFrame == Time.frameCount) return frame;
@@ -208,6 +209,11 @@ internal sealed class PlayerSceneContext
         if (desired != pendingActivity) { pendingActivity = desired; activitySince = now; }
         if (desired == frame.Activity || now - activitySince >= (desired == CinematicActivity.Combat ? .5f : 1.5f)) frame.Activity = desired;
         frame.Confidence = desired == frame.Activity ? confidence : Mathf.Min(.4f, confidence);
+        frame.ActionPhase = actionPhases.Observe(now, new ActionPhaseEvidence(frame.SceneId, true,
+            IsDrawingRanged(player), player.InAttack(), primaryObservation.DamageUntil > now,
+            planarVelocity.magnitude > 1.2f, work, frame.DoorwayTransition, frame.Encounter,
+            Mathf.Max(.8f,
+                Mathf.Max(frame.Confidence, frame.EncounterConfidence))));
         int players = 0;
         foreach (CameraSceneSubject subject in frame.Subjects) if (subject.Player) players++;
         string place = $"; {frame.Environment} {frame.EnvironmentConfidence:F2}; {frame.Locomotion}; scene {frame.SceneId}";
@@ -361,6 +367,7 @@ internal sealed class PlayerSceneContext
             Character.InInterior(encounterActor!.transform.position) != frame.Interior ||
             Vector3.Distance(frame.PrimaryFocus, Focus(encounterActor)) > 96)
         { ClearEncounter(); return; }
+        frame.EncounterActor = encounterActor;
         frame.EncounterFocus = Focus(encounterActor!);
         Vector3 delta = frame.EncounterFocus - frame.PrimaryFocus;
         frame.EncounterDistance = delta.magnitude; frame.EncounterDirection = delta.sqrMagnitude > .01f ? delta.normalized : Vector3.zero;
@@ -373,7 +380,7 @@ internal sealed class PlayerSceneContext
 
     private void ClearEncounter()
     {
-        encounterActor = null; frame.Encounter = EncounterKind.None; frame.EncounterTargetId = ""; frame.EncounterEvidence = "none";
+        encounterActor = null; frame.EncounterActor = null; frame.Encounter = EncounterKind.None; frame.EncounterTargetId = ""; frame.EncounterEvidence = "none";
         frame.EncounterConfidence = frame.EncounterDistance = frame.EncounterTargetRadius = frame.EncounterTargetHeight = 0;
         frame.EncounterOpponentCount = frame.EncounterPlayerCount = 0;
         frame.EncounterFocus = frame.PrimaryFocus; frame.EncounterDirection = Vector3.zero;
@@ -550,6 +557,7 @@ internal sealed class PlayerSceneContext
 
     internal void Reset()
     {
+        actionPhases.Reset(); frame.ActionPhase = actionPhases.Cue;
         grouping.Reset(); encounters.Reset(); encounterObservations.Clear(); encounterActors.Clear(); ClearEncounter(); rangedAim.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
         rooms.Reset(); locomotion.Reset(); frame.SceneId = 0;
         frame.Environment = ShotEnvironment.Unknown; frame.Locomotion = ShotLocomotion.Stationary;

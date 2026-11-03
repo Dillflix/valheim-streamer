@@ -40,6 +40,11 @@ namespace ValheimBroadcaster.Core
             // Keep the proposed route inside that measured footprint. This is
             // only a candidate: the full route still needs actual geometry and
             // foliage validation, including elevations and native curve bends.
+            if (feature.SubjectKind == ScenicSubjectKind.Npc)
+            {
+                distance = ScenicNpcComposition.Distance(feature.Height, feature.Radius, fov, 16f / 9f, role == ScenicShotRole.Detail);
+                height = ScenicNpcComposition.Elevation(feature.Height);
+            }
             bool clearing = feature.Kind == ScenicFeatureKind.Clearing;
             if (clearing)
             {

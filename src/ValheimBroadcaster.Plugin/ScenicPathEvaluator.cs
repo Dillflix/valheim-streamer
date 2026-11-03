@@ -34,6 +34,17 @@ internal sealed class ScenicPoseSolver : IDisposable
 
     internal ScenicPose Solve(ScenicSplinePath path, ScenicShotPlan plan, float progress, float aspect, float nearClip)
     {
+        // Independent first-picture admission owns one measured composition,
+        // not a zero-length spline. It uses the same authored aim and the same
+        // final pose validation as a developed route on every rendered frame.
+        if (plan.IsPictureOnly)
+        {
+            ScenicShotSample picture = plan.Sample(0);
+            Vector3 picturePosition = FromCore(picture.CameraPosition), pictureFocus = FromCore(picture.AimPosition);
+            return new ScenicPose(picturePosition, pictureFocus,
+                ScenicVisibility.Compose(picturePosition, pictureFocus, picture.ScreenX, picture.ScreenY,
+                    plan.FieldOfView, aspect), plan.FieldOfView, 0);
+        }
         ScenicShotSample sample = path.Sample(progress);
         Vector3 expected = FromCore(sample.CameraPosition), focus = FromCore(sample.AimPosition);
         if (!plan.UseNativeSpline)
@@ -127,6 +138,8 @@ internal static class ScenicPoseValidation
         ScenicVisibility.Result view = visibility.Evaluate(pose.Position, pose.Rotation, pose.Focus,
             pose.FieldOfView, aspect, nearClip, subject);
         score = view.Score;
+        if (feature != null && !LocalScenicSiteSubjects.Validate(feature, pose, visibility, aspect, nearClip, out string subjectReason))
+            return Reject(ScenicRejectionKind.Focus, subjectReason, out kind, out reason);
         if (!view.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, view.Reason, out kind, out reason);
         if (!view.SurveyComplete) return Reject(ScenicRejectionKind.SurveyIncomplete, view.Reason, out kind, out reason);
         if (!view.FocusVisible) return Reject(ScenicRejectionKind.Focus, "Scenic feature is outside the frame or hidden", out kind, out reason);

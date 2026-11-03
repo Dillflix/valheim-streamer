@@ -21,6 +21,10 @@ internal sealed class FrameHold
     private float testAt = -1;
     internal Action<RenderTexture, long, int>? ObserveLiveFrame;
     internal Action? PictureUnavailable;
+    internal Func<DiagnosticPictureContext>? DescribePicture;
+    private DiagnosticPictureContext sourceContext;
+    private int sourceFrame = -1;
+    private float sourceTime;
     internal long Generation => program.Generation;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
     internal string LastFailure { get; set; } = "none";
@@ -77,6 +81,9 @@ internal sealed class FrameHold
                     if (!frame.Create()) throw new InvalidOperationException("Camera frame allocation failed.");
                 }
                 Blit(source, frame!);
+                try { sourceContext = DescribePicture?.Invoke() ?? default; }
+                catch { sourceContext = new DiagnosticPictureContext("Unknown", 0, 0, false, "Diagnostic context unavailable"); }
+                sourceFrame = Time.frameCount; sourceTime = now;
                 continuity.Captured(now);
             }
             if (mode == FramePresentation.Hold && (!frame || captureFailed)) mode = FramePresentation.Slate;
@@ -137,6 +144,15 @@ internal sealed class FrameHold
     {
         SynchronizeBoundary();
         return program.AcceptReadback(stamp, Time.unscaledTime, active(), hardFailure());
+    }
+
+    internal DiagnosticPictureContext DiagnosticContext(ProgramFrameStamp stamp, out int frameId, out float at)
+    {
+        if (stamp.Presentation != FramePresentation.Slate)
+        { frameId = sourceFrame; at = sourceTime; return sourceContext; }
+        frameId = -1; at = (float)stamp.CopiedAt;
+        // A slate has no world picture to attribute to the last camera subject.
+        return new DiagnosticPictureContext("Recovery", 0, 0, false, LastFailure);
     }
 
     internal bool IsGenerationCurrent(long generation)

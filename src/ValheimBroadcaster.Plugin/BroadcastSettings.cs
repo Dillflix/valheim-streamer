@@ -19,6 +19,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<string> FFmpegPath, RtmpUrl;
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
     internal readonly ConfigEntry<bool> FlipVertical, AutomaticOrientation;
+    internal readonly ConfigEntry<bool> DiagnosticVideo;
     internal readonly ConfigEntry<VideoEncoderKind> VideoEncoder;
     internal readonly ConfigEntry<int> NvencGpu;
     internal readonly ConfigEntry<bool> AutoStream, RetryStream, Automation, ScenicTravel, Unattended;
@@ -38,6 +39,7 @@ internal sealed class BroadcastSettings
         MaximumRegionDistance = config.Bind("Automation", "MaximumRegionDistance", 10000f, Range("Maximum distance of an autonomous scenic transfer, in metres. Player acquisition is not constrained by this limit.", 256f, 20000f));
         Unattended = config.Bind("Unattended", "Enabled", false, "Opt in to reconnecting the same server/character after unexpected loss of an authorized observer session. First join is manual; credentials stay in memory. Explicit off/logout cancels recovery. Keeps the game running in the background.");
         FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
+        DiagnosticVideo = config.Bind("Diagnostics", "VideoCapture", true, "Record bounded local 640x360/12fps clean-program diagnostic video and synchronized frame metadata while broadcasting and trace capture is enabled. Uses a separate low-cost FFmpeg encoder; no audio or upload. Can be disabled with broadcast capture off.");
         VideoEncoder = config.Bind("Streaming", "VideoEncoder", VideoEncoderKind.libx264, "H.264 encoder: libx264 for CPU or h264_nvenc for NVIDIA GPU. Requires encoder support in the actual FFmpeg executable and a compatible driver.");
         NvencGpu = config.Bind("Streaming", "NvencGpu", -1, "NVIDIA encoder device index, or -1 for automatic selection.");
         AutoStream = config.Bind("Streaming", "AutoStart", false, "Start publishing automatically after an authorized observer camera becomes active. Explicit stream off suppresses auto-start until manually started again.");
