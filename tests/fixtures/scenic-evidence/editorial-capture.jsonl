@@ -1,0 +1,5 @@
+{"schema":1,"kind":"header","time":0,"version":"0.8.34","utc":"synthetic-editorial-fixture","source":"Synthetic recorder compatibility example, not user runtime evidence"}
+{"schema":1,"kind":"video-sample","time":10,"seq":1,"sourceFrame":100,"sourceTime":10,"presentation":"Live","traceSession":"synthetic","mode":"Scenic","shot":2}
+{"schema":1,"kind":"budget","time":11.5,"seq":2,"operation":"step","started":10,"waitingAt":11.2,"urgent":true,"expired":true}
+{"schema":1,"kind":"video-sample","time":11.5,"seq":3,"sourceFrame":110,"sourceTime":11.5,"presentation":"Live","traceSession":"synthetic","mode":"Player","shot":3}
+{"schema":1,"kind":"budget","time":11.5,"seq":4,"operation":"wait","started":10,"waitingAt":11.2,"urgent":true,"expired":false}

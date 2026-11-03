@@ -25,6 +25,7 @@ jobs:
         run: |
           dotnet publish tools/ValheimBroadcaster.Replay --configuration Release -warnaserror --output replay-artifacts
           dotnet replay-artifacts/ValheimBroadcaster.Replay.dll tests/fixtures/scenic-evidence/competing-deadlines.jsonl
+          dotnet replay-artifacts/ValheimBroadcaster.Replay.dll tests/fixtures/scenic-evidence/editorial-capture.jsonl
           cp docs/SCENIC-EVIDENCE.md replay-artifacts/README.md
           cp docs/EDITORIAL-CAPTURE.md replay-artifacts/EDITORIAL-CAPTURE.md
           cp tools/review-footage.py replay-artifacts/review-footage.py

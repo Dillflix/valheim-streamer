@@ -1,5 +1,7 @@
 # Scenic evidence capture and replay — 0.8.31
 
+0.8.34 adds synchronized local footage and a frame/trace review tool. See [EDITORIAL-CAPTURE.md](EDITORIAL-CAPTURE.md). Its replay artifact also accepts 0.8.34 trace headers and the interleaved video-sample records; the replayed coverage/deadline policies remain the same. The video viewer and policy replay answer different questions: recorded pictures versus recorded policy decisions.
+
 ## 0.8.30 runtime failure and 0.8.31 repair
 
 0.8.31 is built directly on 0.8.30 (`419433fdb76317cd4851792570080cb170d45802`), with observer protocol 3 and server behavior unchanged. No server update is required.
