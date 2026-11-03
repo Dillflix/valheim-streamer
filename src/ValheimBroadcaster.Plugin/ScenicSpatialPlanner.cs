@@ -211,6 +211,7 @@ internal sealed class ScenicSpatialPlanner
             if (!observed.Known) return Wait(probe, observed.Reason);
             if (!observed.Clear) return Reject(observed.Reason);
             ScenicVisibility.Result picture = visibility.Evaluate(probe.Position, probe.Pose.Rotation, focus, fov, aspect, nearClip, subject);
+            if (!picture.CameraClear) return Reject(picture.Reason);
             if (!picture.SurveyComplete) return Wait(probe, picture.Reason);
             if (!picture.CameraClear || !picture.FocusVisible ||
                 !PictureQuality.Scenic(picture.CameraClear, picture.FocusVisible, picture.Score, picture.ForegroundOcclusion, true).Readable)
@@ -245,6 +246,7 @@ internal sealed class ScenicSpatialPlanner
         {
             ScenicPose pose = MakePose(Vector3.Lerp(parent.Position, probe.Position, probe.ViewSample / (float)samples));
             ScenicVisibility.Result view = visibility.Evaluate(pose.Position, pose.Rotation, focus, fov, aspect, nearClip, subject);
+            if (!view.CameraClear) return Reject(view.Reason);
             if (!view.SurveyComplete) { probe.ViewSample--; return Wait(probe, view.Reason); }
             if (!view.CameraClear || !view.FocusVisible ||
                 !PictureQuality.Scenic(view.CameraClear, view.FocusVisible, view.Score, view.ForegroundOcclusion, true).Readable || !Framing(pose, out _))
@@ -408,7 +410,7 @@ internal sealed class ScenicSpatialPlanner
     internal void Reset()
     {
         feature = null; current = null; nodes.Clear(); edges.Clear(); poses.Clear(); frontier.Clear(); considered.Clear();
-        search.Reset(); fallbackSearch.Reset(); fallbackRoute = null; visibility.Reset(); bodyRoute.Clear(); aimRoute.Clear();
+        search.Reset(); fallbackSearch.Reset(); fallbackRoute = null; bodyRoute.Clear(); aimRoute.Clear();
         Plan = null; Complete = graphSearching = false; Score = 0; Attempts = Rejected = seedIndex = nextGraphAt = 0;
         subject = null; precedingCamera = null; Reason = "Awaiting a spatial scenic subject";
     }

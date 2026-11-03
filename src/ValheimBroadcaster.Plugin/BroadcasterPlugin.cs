@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.29";
+    public const string PluginVersion = "0.8.30";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -248,7 +248,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             bool idleSceneAvailable = idle.HasUsableScenicPicture ||
                 currentIdlePresentation && recentPicture && frameHold.HasRecentLiveFrame &&
                 coverage.Mode != CoverageMode.Scenic ||
-                coverage.Mode == CoverageMode.Scenic && idle.Searching && idle.SceneReady && !idle.RecoveryExhausted;
+                // Geometry availability is independent of cinematic search success.
+                // The separate RecoveryExpired input already reports missing output.
+                coverage.Mode == CoverageMode.Scenic && idle.SceneReady;
             bool usablePlayerPicture = recentPicture && frameHold.HasRecentLiveFrame && presentedPlayerUsable &&
                 presentedMode == CoverageMode.Player && presentedPlayerId == CurrentTarget()?.Identity.Id;
             RecordVisibleCoverage(recentPicture);
@@ -546,6 +548,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         }
         if (!parked) observer.Release();
         CameraSpatialScene.Shared.Reset();
+        ScenicFoliageScene.Shared.Reset();
         PlaceSurvey.Shared.Reset();
         frameHold.Reset();
         output?.Suspend();

@@ -48,7 +48,7 @@ internal sealed class CinemachineShotRig : IDisposable
     private readonly PlayerSceneContext scene = new PlayerSceneContext();
     private readonly CreatureSceneContext creatureScene = new CreatureSceneContext();
     private readonly CameraSceneFrame scenicScene = new CameraSceneFrame();
-    private readonly ScenicVisibility ownedLandscapeVisibility = new ScenicVisibility();
+    private readonly ScenicVisibility ownedLandscapeVisibility = new ScenicVisibility("fallback-live");
     private ScenicVisibility LandscapeVisibility => input.ScenicVisibility ?? ownedLandscapeVisibility;
     private CinematicShotInput input;
     private ScenicShotSample scenicSample;
@@ -306,7 +306,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 { modeChanged = true; pictureRevision++; PictureContext = default; }
             }
         }
-        if (IsScenic) LandscapeVisibility.Refresh(focus); else visibility.Refresh(focus);
+        if (!IsScenic) visibility.Refresh(focus);
         int selected = modeChanged ? previousChoice : DirectedActorSelection(settings) ? director.SelectedIndex : stableSelection.SelectedIndex;
         if (selected != motionChoice)
         {

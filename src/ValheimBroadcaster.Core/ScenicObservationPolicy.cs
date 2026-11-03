@@ -2,7 +2,7 @@ using System;
 
 namespace ValheimBroadcaster.Core;
 
-public enum ScenicSurveyRefresh { Initial, Throttled, Reused, Recentered, Expired, ClockReset }
+public enum ScenicSurveyRefresh { Initial, Throttled, Reused, Recentered, Expired, ClockReset, CatalogueChanged }
 [Flags]
 public enum ScenicCoverageGap { None = 0, RetainedRadius = 1, DetailRadius = 2 }
 
@@ -23,6 +23,22 @@ public static class ScenicObservationPolicy
         if (age < SurveyLifetime && displacement <= ReuseDistance &&
             displacement + ForegroundRange < coveredRadius) return ScenicSurveyRefresh.Reused;
         return age >= SurveyLifetime ? ScenicSurveyRefresh.Expired : ScenicSurveyRefresh.Recentered;
+    }
+
+    // Discovery is throttled once per scene. Projecting already discovered
+    // renderers around another camera position has no wall-clock throttle.
+    public static bool CatalogueDue(float now, float refreshedAt) =>
+        float.IsNegativeInfinity(refreshedAt) || now < refreshedAt || now - refreshedAt >= SurveyThrottle;
+
+    public static ScenicSurveyRefresh LocalRefresh(float now, float refreshedAt, float displacement,
+        float coveredRadius, bool catalogueChanged)
+    {
+        if (float.IsNegativeInfinity(refreshedAt)) return ScenicSurveyRefresh.Initial;
+        if (now < refreshedAt) return ScenicSurveyRefresh.ClockReset;
+        if (catalogueChanged) return ScenicSurveyRefresh.CatalogueChanged;
+        if (now - refreshedAt >= SurveyLifetime) return ScenicSurveyRefresh.Expired;
+        return displacement <= ReuseDistance && Coverage(displacement, coveredRadius) == ScenicCoverageGap.None
+            ? ScenicSurveyRefresh.Reused : ScenicSurveyRefresh.Recentered;
     }
 
     public static bool NeedsRefresh(ScenicSurveyRefresh action) =>

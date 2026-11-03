@@ -11,6 +11,18 @@ internal static class ScenicAvailabilityTests
         yield return ("Actual scene loss still authorizes bounded scenic recovery", SceneLoss);
         yield return ("Recovered scenic availability clears the unavailable deadline", RecoveredDeadline);
         yield return ("Useful live footage overrides stale unavailable evidence", UsefulIsAvailable);
+        yield return ("Scenic travel distinguishes missing picture from missing world and ordinary rotation", TravelCause);
+    }
+    private static void TravelCause()
+    {
+        var picture = New();
+        picture.Tick(0, 1, Array.Empty<AutonomyPlayer>(), Regions, new AutonomyPosition(0, 0, 0), null, false,
+            idleSceneAvailable: true, idleSearchExpired: true);
+        Check(picture.PendingTravel?.Reason == "Scenic picture-recovery budget exhausted", "Loaded scene was mislabeled as missing geometry");
+        var world = New(); Tick(world, 0, false, false); Tick(world, 11, false, false);
+        Check(world.PendingTravel?.Reason == "Scenic scene-readiness deadline exhausted", "Missing scene was mislabeled as a composition failure");
+        var ordinary = New(); Tick(ordinary, 0, true, true); Tick(ordinary, 1, true, true);
+        Check(ordinary.PendingTravel?.Reason == "Scenic footage dwell completed", "Normal scenic rotation was mislabeled as recovery");
     }
     private static readonly ScenicRegion[] Regions = {
         new ScenicRegion("origin", "Origin", new AutonomyPosition(0, 0, 0)),

@@ -24,7 +24,7 @@ internal sealed class ScenicProduction
     private Vector3 lastAdmittedFocus;
     internal readonly ScenicVisibility Visibility = new ScenicVisibility("live");
     // Candidate surveys must never recenter the live camera's foliage cache.
-    private readonly ScenicVisibility planningVisibility = new ScenicVisibility("live");
+    private readonly ScenicVisibility planningVisibility = new ScenicVisibility("preflight");
     private Vector3 origin;
     private long nextId;
     private long bestEpoch, preparedEpoch;
@@ -70,7 +70,7 @@ internal sealed class ScenicProduction
     internal void SetRegion(Vector3 value)
     {
         Clear(); origin = value; HasRegion = TargetRoster.Finite(value);
-        if (HasRegion) survey.Begin(value);
+        if (HasRegion) { ScenicFoliageScene.Shared.SetRegion(value); survey.Begin(value); }
         if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("region"), "origin", value));
     }
     internal void Clear()

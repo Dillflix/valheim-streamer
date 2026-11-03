@@ -11,7 +11,7 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class ScenicVisibility
 {
     private const int Capacity = 512;
-    private const float SurveyRadius = 110f, ForegroundRange = ScenicObservationPolicy.ForegroundRange, DetailRadius = ScenicObservationPolicy.DetailRadius;
+    private const float SurveyRadius = ScenicObservationPolicy.DetailRadius, ForegroundRange = ScenicObservationPolicy.ForegroundRange, DetailRadius = ScenicObservationPolicy.DetailRadius;
     private const int DetailBudget = 1024;
     private readonly string owner;
     private long surveyNumber;
@@ -23,9 +23,8 @@ internal sealed class ScenicVisibility
     internal string QueryStage = "unspecified";
     internal ScenicVisibility(string owner = "unspecified") { this.owner = owner; }
     private readonly List<Entry> foliage = new List<Entry>(Capacity);
-    private readonly ScenicFoliageGeometry geometry = new ScenicFoliageGeometry();
+    private long catalogueRevision = -1;
     private readonly List<float> distances = new List<float>(Capacity);
-    private readonly HashSet<int> groups = new HashSet<int>();
     private Vector3 origin;
     private float refreshedAt = float.NegativeInfinity, coveredRadius;
     private int furthest;
@@ -58,19 +57,23 @@ internal sealed class ScenicVisibility
     internal void Reset()
     {
         ScenicTrace.Event(owner, "Survey reset", QueryId);
-        foliage.Clear(); distances.Clear(); groups.Clear(); refreshedAt = float.NegativeInfinity;
+        foliage.Clear(); distances.Clear(); refreshedAt = float.NegativeInfinity;
         coveredRadius = 0; furthest = 0; furthestDistance = 0;
-        geometry.Reset(); checkedFrame = -1; activeCount = 0;
+        catalogueRevision = -1; checkedFrame = -1; activeCount = 0;
     }
 
     internal void Refresh(Vector3 surveyOrigin)
     {
         float now = Time.unscaledTime;
         float displacement = Vector3.Distance(surveyOrigin, origin);
-        refreshAction = ScenicObservationPolicy.Refresh(now, refreshedAt, displacement, coveredRadius);
+        ScenicFoliageScene scene = ScenicFoliageScene.Shared;
+        scene.Ensure(surveyOrigin);
+        bool catalogueChanged = catalogueRevision != scene.Revision;
+        refreshAction = ScenicObservationPolicy.LocalRefresh(now, refreshedAt, displacement, coveredRadius, catalogueChanged);
         if (ScenicTrace.Enabled)
         {
             CameraTraceRecord row = ScenicTrace.Row("refresh").Field("owner", owner).Field("query", QueryId)
+                .Field("policy", "local-v2").Field("catalogueChanged", catalogueChanged).Field("catalogueRevision", scene.Revision)
                 .Field("stage", QueryStage).Field("survey", surveyNumber).Field("refreshedAt", refreshedAt)
                 .Field("distance", displacement).Field("radius", coveredRadius).Field("action", refreshAction.ToString());
             ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(row, "camera", surveyOrigin), "origin", origin));
@@ -79,39 +82,19 @@ internal sealed class ScenicVisibility
         surveyNumber++; omitted = candidates = detailed = coarseCount = 0;
         nearestOmitted = default; nearestOmittedDistance = float.PositiveInfinity;
         long surveyStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-        origin = surveyOrigin; refreshedAt = now; coveredRadius = SurveyRadius;
-        foliage.Clear(); distances.Clear(); groups.Clear(); furthest = 0; furthestDistance = 0;
-        geometry.BeginSurvey(); detailRemaining = DetailBudget; checkedFrame = -1;
+        origin = surveyOrigin; refreshedAt = now; catalogueRevision = scene.Revision;
+        coveredRadius = Mathf.Min(SurveyRadius, scene.CoverageAt(surveyOrigin));
+        foliage.Clear(); distances.Clear(); furthest = 0; furthestDistance = 0;
+        detailRemaining = DetailBudget; checkedFrame = -1;
         obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
-        // Scene-wide enumeration is deliberately outside the per-frame evaluator.
-        // Only active renderers are returned. No prefab assets are inspected.
-        foreach (Renderer renderer in UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+        // The scene owns discovery. This is a cheap local projection of its
+        // retained renderers, including every coarse bound touching the detailed
+        // foreground neighborhood. Distant renderers cannot consume its budget.
+        foreach (Renderer renderer in scene.Renderers)
         {
-            if (!renderer || !renderer.enabled || renderer.bounds.SqrDistance(origin) > 112f * 112f ||
-                renderer.GetComponentInParent<Character>() || !Vegetation(renderer.transform)) continue;
-            LODGroup? group = renderer.GetComponentInParent<LODGroup>();
-            if (group)
-            {
-                if (!groups.Add(group.GetInstanceID())) continue;
-                LOD[] levels = group.GetLODs();
-                // Higher LODs describe the same canopy; retain the detailed level
-                // once rather than filling the cache with duplicate tree bounds.
-                bool detailed = false;
-                if (levels.Length > 0)
-                {
-                    foreach (Renderer detail in levels[0].renderers)
-                        if (detail && detail.enabled && detail.gameObject.activeInHierarchy)
-                        { Add(detail); detailed = true; }
-                }
-                if (!detailed)
-                {
-                    // An empty/inactive first LOD must not hide a visible lower
-                    // LOD from the survey. Let other renderers in this group in.
-                    groups.Remove(group.GetInstanceID());
-                    Add(renderer);
-                }
-            }
-            else Add(renderer);
+            if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
+            Bounds bounds = renderer.bounds; bounds.Expand(.4f);
+            if (bounds.SqrDistance(origin) < SurveyRadius * SurveyRadius) Add(renderer);
         }
         surveyMilliseconds = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - surveyStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
         if (ScenicTrace.Enabled)
@@ -126,7 +109,7 @@ internal sealed class ScenicVisibility
         }
     }
 
-    private static bool Vegetation(Transform transform)
+    internal static bool Vegetation(Transform transform)
     {
         // Trees, bushes and leaf meshes have different collider arrangements.
         // An LODGroup alone is not vegetation: buildings and rocks use it too.
@@ -151,7 +134,7 @@ internal sealed class ScenicVisibility
         // remain a bounded discovery envelope and are refined after recentering.
         if (coarse.SqrDistance(origin) <= DetailRadius * DetailRadius && detailRemaining > 0)
         {
-            Bounds[]? cells = geometry.Get(renderer);
+            Bounds[]? cells = ScenicFoliageScene.Shared.Geometry(renderer);
             if (cells != null && cells.Length <= detailRemaining)
             {
                 detailRemaining -= cells.Length; detailed++;
@@ -215,9 +198,9 @@ internal sealed class ScenicVisibility
         Vector3 local = Quaternion.Inverse(rotation) * (focus - camera);
         ShotProjection.Result projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
         bool focusVisible = projected.CenterInFrame && FocusClear(camera, focus, subjectBounds);
-        // A far coarse canopy is discovery evidence, not proof that a queried
-        // camera lies inside leaves. Hold the same candidate until the bounded
-        // survey can recenter and inspect its own local foreground.
+        // A projection is usable only inside its measured local coverage. The
+        // projection can recenter immediately from scene-owned observations;
+        // missing catalogue/retention evidence remains unknown.
         float displacement = Vector3.Distance(camera, origin);
         ScenicCoverageGap gap = ScenicObservationPolicy.Coverage(displacement, coveredRadius);
         bool complete = gap == ScenicCoverageGap.None;

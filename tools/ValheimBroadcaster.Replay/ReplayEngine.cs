@@ -44,8 +44,9 @@ public sealed class ReplayEngine
             string kind = row.GetProperty("kind").GetString()!;
             if (kind == "header")
             {
-                compatible = row.GetProperty("version").GetString() == "0.8.29";
-                if (!compatible) Bad("Replay requires the matching 0.8.29 policy; do not silently replay another build");
+                string? version = row.GetProperty("version").GetString();
+                compatible = version == "0.8.29" || version == "0.8.30";
+                if (!compatible) Bad("Replay supports captured 0.8.29 and 0.8.30 policies; do not silently replay another build");
                 string current = row.GetProperty("utc").GetString()!;
                 if (session != current) { previousSequence = 0; session = current; }
                 return;
@@ -60,8 +61,10 @@ public sealed class ReplayEngine
             if (kind == "refresh")
             {
                 JsonElement at = row.GetProperty("refreshedAt");
-                var result = ScenicObservationPolicy.Refresh(now, at.ValueKind == JsonValueKind.Null ? float.NegativeInfinity : at.GetSingle(),
-                    Number(row, "distance"), Number(row, "radius"));
+                float refreshed = at.ValueKind == JsonValueKind.Null ? float.NegativeInfinity : at.GetSingle();
+                var result = row.TryGetProperty("policy", out JsonElement policy) && policy.GetString() == "local-v2"
+                    ? ScenicObservationPolicy.LocalRefresh(now, refreshed, Number(row, "distance"), Number(row, "radius"), row.GetProperty("catalogueChanged").GetBoolean())
+                    : ScenicObservationPolicy.Refresh(now, refreshed, Number(row, "distance"), Number(row, "radius"));
                 Compare(result.ToString() == row.GetProperty("action").GetString(), seq, "refresh");
                 Count(refresh, row.GetProperty("owner").GetString() + ": " + result);
             }

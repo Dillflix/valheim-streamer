@@ -1,6 +1,31 @@
-# Scenic evidence capture and replay — 0.8.29
+# Scenic evidence capture and replay — 0.8.30
 
-This is an evidence build based directly on 0.8.28 (`da0c7ed99884c34dc418d95dae39778091001ea6`). It preserves observer protocol 3 and existing camera admission, survey lifetime, path selection and travel policies. A server update is not required. It does not claim to repair the reported Scenic blackout or complete the persistent regional observation architecture.
+0.8.30 is built directly on 0.8.29 (`24552cbef081c867d43164d64a207784ec748018`). Observer protocol 3 is unchanged; a server update is not required. The recorder remains automatic. This build repairs a reproduced observation-scheduling defect; it does not claim complete Scenic runtime acceptance or a finished general spatial planner.
+
+## What the three supplied captures established
+
+| Capture session | Decisions replayed without divergence | Incomplete foliage observations | Candidate deadline expirations |
+| --- | ---: | ---: | ---: |
+| 01:33 session, supplied segment 4 | 1,876 | 341 | 3 |
+| 01:47 session, supplied segment 1 | 2,403 | 487 | 5 |
+| 01:51 session, all seven segments | 45,125 | 6,278 | 24 |
+
+Times above identify UTC-stamped capture filenames. All supplied files parsed with no internal sequence gaps or writer-reported drops. The first two are partial sessions; only the seven-segment set supports analysis of its complete retained sequence.
+
+Every incomplete result in these files coincided with the old refresh throttle. A camera request could move beyond the detailed neighborhood while a 0.5-second timer forbade recentering. Urgent candidate searches expired after 1.5 seconds, often after inspecting just a few seeds or canopy elevations. In the seven-segment set, 403 queries also exceeded the retained radius around the *previous* centre; even its smallest newly measured retained radius was 52.79 m. These are not examples of omitted geometry within the six-metre foreground at a freshly centred query.
+
+The long capture also contains real foliage/collision/framing rejections and five waits for actual scene acquisition. It does not establish that every proposed route would become readable after the timing repair. One ordinary trip began with usable footage, followed by three recovery-driven relocations. The picture samples show approximately 64 seconds from loss of usable Scenic output to its return. The old ten-second missing-picture counter reset at each region, so its maximum alone concealed the longer sequence.
+
+## What changed
+
+- `ScenicFoliageScene` owns a bounded renderer catalogue and mesh-refinement cache across candidates. Discovery has one scene-level refresh clock. Region, world/scene epoch and stop invalidate the appropriate observations.
+- Per-camera queries project the existing catalogue into a 16 m detailed neighborhood immediately. Candidate changes and canopy lifts no longer trigger a separate half-second discovery wait. Far renderers cannot consume the local foreground budget. Catalogue/local overflow still reduces certified coverage; unknown space never becomes clear by default.
+- Mesh reads are bounded across all owners per frame. The catalogue retains at most 8,192 renderers inside a 220 m regional envelope; local projection retains at most 512 renderers and 1,024 detail cells. Geometry remains conservative bounds, not texture-alpha evidence.
+- Candidate resets preserve discovery; preflight and on-air projections remain independent. A legacy focus-centred refresh no longer moves the scenic camera's neighborhood. Explicit physical overlap is rejected as obstruction instead of waiting for a survey.
+- Geometry availability no longer becomes false merely because picture recovery expired. Travel reasons distinguish footage dwell, missing scene data and exhausted picture recovery. The existing deadlines and safety/visibility thresholds are unchanged.
+- Diagnostics now distinguish `preflight`, `live`, `spatial` and `fallback-live` owners. **0.8.29 labelled both preflight and actual live queries `live`; those older rows alone cannot identify an on-air visibility failure.**
+
+Sixteen reduced timing/distance samples from the three sessions reproduce the old failure and exercise immediate local reprojection. No uploaded logs, world coordinates, or full user captures are committed. Local/CI tests verify decisions and builds, not rendered cinematography. Please capture another sequence on 0.8.30 to verify actual shot availability and cost.
 
 ## Capture a failure
 
@@ -29,7 +54,7 @@ From a source checkout with the .NET 8 SDK:
 dotnet run --project tools/ValheimBroadcaster.Replay -- "path-to-extracted-capture-folder"
 ```
 
-Use the replay artifact from the same build as the capture. Files are read chronologically by their generated filenames. Each rotated file includes its build/schema header. Replay evaluates the actual Core policy used by the plugin, comparing recorded refresh, coverage and deadline decisions. It reports missing/duplicate records, malformed/truncated tails and mismatches rather than treating missing observations as clear space. Exit 0 means at least one decision replayed without malformed records or divergence; it does not mean the camera behaved well. The report distinguishes coverage-radius loss, detail-radius loss, throttled refresh, expired unknown waits and expired overall search budgets.
+The 0.8.30 replay artifact supports both 0.8.29 legacy refresh decisions and 0.8.30 local-projection decisions. Use the corresponding policy-aware replay build for later versions. Files are read chronologically by their generated filenames. Each rotated file includes its build/schema header. Replay evaluates the actual Core policy used by the plugin, comparing recorded refresh, coverage and deadline decisions. It reports missing/duplicate records, malformed/truncated tails and mismatches rather than treating missing observations as clear space. Exit 0 means at least one decision replayed without malformed records or divergence; it does not mean the camera behaved well. The report distinguishes coverage-radius loss, detail-radius loss, throttled refresh, expired unknown waits and expired overall search budgets.
 
 The committed `tests/fixtures/scenic-evidence/competing-deadlines.jsonl` is a **synthetic** tool smoke fixture. It is not a recording from the user's game and establishes no runtime cause.
 
@@ -39,4 +64,4 @@ An incomplete survey is missing evidence. With these records we can identify whe
 
 Replay covers the extracted **coverage and deadline policies**, not the entire planner or its Unity adapters. It does not reproduce physics, scene/network loading, foliage alpha pixels, native camera rendering or video. Recorded poses support investigation but there is no in-game pose-replay command in this version. The trace contains summary geometry and the limiting omitted bounds, not a full scene mesh.
 
-Persistent scene-owned spatial observations, first-picture admission independent of a complete translation route, purposeful pan/tilt/short-route alternatives and cause-specific relocation remain follow-up implementation work. We need a runtime capture to reproduce the demonstrated failure before changing those policies again. The legacy `No connected readable movement` message now names a camera-route deadline, counts measured viewpoints/corridors and retains the preceding observation reason; it never meant that players or creatures had to move.
+Scene-owned foliage discovery is now implemented. Independent first-picture admission, purposeful pan/tilt/short-route alternatives, full planner/Unity replay and further cause-specific recovery remain separate follow-up work; they are not claimed complete by this repair.

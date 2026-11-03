@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.30 observation scheduling repair
+
+Based directly on 0.8.29 (`24552cbef081c867d43164d64a207784ec748018`). All three supplied capture sets replay without decision divergence. They demonstrate detailed-neighborhood misses behind the half-second survey throttle, repeated candidate deadline exhaustion, and a long sequence of recovery-driven region changes. They also contain legitimate obstruction and acquisition failures; this is not proof that every rejected route should be accepted. See [SCENIC-EVIDENCE.md](SCENIC-EVIDENCE.md) for measured counts, the timeline and the 0.8.29 owner-label ambiguity.
+
+Local validation: **768/768 core cases**, **57/57 native camera math cases**, and warnings-as-errors client/server compilation against the matching real assemblies. New regressions use reduced real capture inputs for canopy lifts and wide viewpoint changes, verify independent bounded discovery, revision invalidation, unchanged deadlines and truthful travel causes. The replay CLI supports both capture policies. No live Unity session has yet run this new build, so actual latency, local projection cost, foliage correctness, recovery share and cinematography remain runtime acceptance items.
+
+The change introduces scene-owned foliage discovery and immediate local projection; it does not raise timeouts, weaken physical/visibility gates or change observer protocol 3. No server deployment is required.
+
 ## 0.8.29 automatic Scenic evidence
 
 Built directly on 0.8.28 (`da0c7ed99884c34dc418d95dae39778091001ea6`). The supplied 0.8.28 log confirms the correct plugin/protocol loaded, successful observer authorization, RTMP publishing and recurring incomplete foliage surveys. The recordings still show long recovery intervals. Those logs do not identify the underlying coverage/scheduling cause. This build extracts existing coverage/refresh/deadline decisions into replayable Core functions, records their runtime inputs and outputs, and adds a bounded asynchronous JSONL writer plus standalone replay CLI. Camera admission/route/travel behavior and protocol 3 are preserved.

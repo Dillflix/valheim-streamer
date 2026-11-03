@@ -397,7 +397,9 @@ namespace ValheimBroadcaster.Core
             }
             if (!visited.ContainsKey(chosen.Id) && !HasVisitCapacity(now))
             { Reason = "Scenic history is full; waiting for a revisit cooldown before recording another region"; return; }
-            Request(AutonomyTravelKind.Scenic, chosen.Id, chosen.Name, chosen.Position, now);
+            Request(AutonomyTravelKind.Scenic, chosen.Id, chosen.Name, chosen.Position, now,
+                !ready && searchExpired ? "Scenic picture-recovery budget exhausted" :
+                exhausted ? "Scenic scene-readiness deadline exhausted" : "Scenic footage dwell completed");
         }
 
         public void TravelStarted(long requestToken, double now)
