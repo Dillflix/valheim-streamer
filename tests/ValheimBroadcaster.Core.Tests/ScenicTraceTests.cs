@@ -12,6 +12,7 @@ internal static class ScenicTraceTests
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
         yield return ("Replay distinguishes throttled recenter from a capacity-limited survey", SurveyReplay);
+        yield return ("Replay keeps missing picture spans across regional recovery resets", PictureGap);
         yield return ("Replay reproduces competing candidate and unknown-query deadlines", Deadlines);
         yield return ("Replay reports divergence and missing evidence without inventing clear space", DamagedEvidence);
         yield return ("Trace encoding preserves finite numeric inputs across locales and escapes text", Encoding);
@@ -38,6 +39,28 @@ internal static class ScenicTraceTests
         Check(replay.Summary().Any(s => s.Contains("capacity gap even at centre")), "Capacity cause lost in generic unknown classification");
         Check(ScenicObservationPolicy.Coverage(10, 110) == ScenicCoverageGap.DetailRadius, "Exact detail boundary became clear");
         Check(ScenicObservationPolicy.Refresh(9, 10, 0, 110) == ScenicSurveyRefresh.ClockReset, "Clock rollback reuses future evidence");
+    }
+    private static void PictureGap()
+    {
+        var replay = new ReplayEngine(); replay.Read(Header());
+        long sequence = 0;
+        void Picture(double time, bool usable, double localMissing, bool held = false) => replay.Read(
+            Row("picture", time, ++sequence).Field("onAir", true).Field("usable", usable).Field("held", held)
+                .Field("missingSeconds", localMissing).ToString());
+        Picture(60, false, 0); Picture(69, false, 9);
+        replay.Read(Row("travel", 70, ++sequence).ToString());
+        replay.Read(Row("picture", 70.02, ++sequence).Field("onAir", false).Field("held", false).ToString());
+        Picture(78, false, 0); Picture(87, false, 9);
+        replay.Read(Row("travel", 88, ++sequence).ToString());
+        replay.Read(Row("picture", 88.02, ++sequence).Field("onAir", false).Field("held", false).ToString());
+        Picture(96, false, 0); Picture(97, true, 0);
+        Check(replay.Invalid == 0 && replay.MaximumMissingSeconds == 9 && replay.MaximumUnavailableSpan == 37,
+            "Region changes hid the continuous outage.");
+        Picture(100, false, 0); Picture(101, false, 1, true); Picture(200, false, 0);
+        Check(replay.MaximumUnavailableSpan == 37, "A held picture did not end the unavailable interval.");
+        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.31").Field("utc", "another-session").ToString());
+        Picture(250, false, 0);
+        Check(replay.Invalid == 0 && replay.MaximumUnavailableSpan == 37, "Separate recordings were joined into an invented gap.");
     }
     private static void Deadlines()
     {

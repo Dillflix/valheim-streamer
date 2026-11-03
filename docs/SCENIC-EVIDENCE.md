@@ -1,4 +1,24 @@
-# Scenic evidence capture and replay — 0.8.30
+# Scenic evidence capture and replay — 0.8.31
+
+## 0.8.30 runtime failure and 0.8.31 repair
+
+0.8.31 is built directly on 0.8.30 (`419433fdb76317cd4851792570080cb170d45802`), with observer protocol 3 and server behavior unchanged. No server update is required.
+
+The supplied `02:08` UTC session is a **failed 0.8.30 runtime result**. Between the first unavailable picture sample at 60.255 seconds and the first usable picture at 97.402, approximately **37.15 seconds** elapsed. Two recovery relocations occurred. The first two regions had 38 catalogue scans reporting zero coverage, despite retaining only 3,105–4,685 of the 8,192 allowed renderers. Local queries then produced 1,081 incomplete results, twelve unknown-wait expirations and twelve candidate expirations, each with zero accepted viewpoints. The third region reported no omissions and produced a picture approximately one second after arrival. All 4,554 recorded coverage/deadline decisions replay without divergence; that verifies reproduction of the failure decisions, not successful cinematography.
+
+The new catalogue incorrectly represented unavailable bounds as zero coverage for the **entire** region. The same global invalidation also existed at the LOD deduplication limit. The trace's combined omitted count cannot identify individual renderer types, distinguish empty geometry from bad world bounds, or conclusively distinguish those zeroing paths. Renderer retention capacity was not exhausted. The repair covers both paths without labelling unknown nearby geometry clear:
+
+- A renderer with confirmed absent geometry is empty, rather than unknown. Planar leaf meshes remain valid.
+- An unusable world bound can be recovered from valid local renderer or mesh bounds, transformed into world space. Discovery, local projection and live coarse checks consume the same observation.
+- Geometry that remains unknown is localized using its measured LOD envelope. Capacity omissions retain their entire measured extent in a fixed 16-metre uncertainty grid, rather than shrinking a single regional radius. The grid expands uncertainty conservatively; it never drops occupied cells when many omissions accumulate. Truly unlocatable malformed geometry still prevents certification.
+- LOD metadata saturation no longer aborts inspection. Raw renderer inspection continues with bounded deduplication and spatially recorded storage omissions. An empty preferred LOD no longer suppresses the available representation.
+- Capture records separate empty, repaired, unresolved, capacity-omitted and metadata-overflow counts, spatial uncertainty and bounded anonymous raw-bounds samples. Replay also reports the observed unavailable-picture span across regional recovery-clock resets.
+
+The local/native tests exercise these actual bounds-resolution and coverage-map functions, including transformed geometry, planar leaves, near versus far omissions, cell boundaries, regional boundaries, dense omission streams and reset behavior. Synthetic renderer inputs are labelled as such; the old capture does **not** contain the raw bounds necessary to reconstruct its Unity scene. The repair is not a verified in-game result, a complete cinematic acceptance claim, or a completion of independent first-picture admission.
+
+The old catalogue scans took 14.3–37.2 ms each in this capture. The repair does not establish an in-game performance improvement; measure current catalogue/projection cost during runtime validation.
+
+## Previous observation-scheduling repair
 
 0.8.30 is built directly on 0.8.29 (`24552cbef081c867d43164d64a207784ec748018`). Observer protocol 3 is unchanged; a server update is not required. The recorder remains automatic. This build repairs a reproduced observation-scheduling defect; it does not claim complete Scenic runtime acceptance or a finished general spatial planner.
 
@@ -54,7 +74,7 @@ From a source checkout with the .NET 8 SDK:
 dotnet run --project tools/ValheimBroadcaster.Replay -- "path-to-extracted-capture-folder"
 ```
 
-The 0.8.30 replay artifact supports both 0.8.29 legacy refresh decisions and 0.8.30 local-projection decisions. Use the corresponding policy-aware replay build for later versions. Files are read chronologically by their generated filenames. Each rotated file includes its build/schema header. Replay evaluates the actual Core policy used by the plugin, comparing recorded refresh, coverage and deadline decisions. It reports missing/duplicate records, malformed/truncated tails and mismatches rather than treating missing observations as clear space. Exit 0 means at least one decision replayed without malformed records or divergence; it does not mean the camera behaved well. The report distinguishes coverage-radius loss, detail-radius loss, throttled refresh, expired unknown waits and expired overall search budgets.
+The 0.8.31 replay artifact supports 0.8.29 legacy refresh decisions and 0.8.30–0.8.31 local-projection decisions. Use the corresponding policy-aware replay build for later versions. Files are read chronologically by their generated filenames. Each rotated file includes its build/schema header. Replay evaluates the actual Core policy used by the plugin, comparing recorded refresh, coverage and deadline decisions. It reports missing/duplicate records, malformed/truncated tails and mismatches rather than treating missing observations as clear space. Exit 0 means at least one decision replayed without malformed records or divergence; it does not mean the camera behaved well. The report distinguishes coverage-radius loss, detail-radius loss, throttled refresh, expired unknown waits and expired overall search budgets.
 
 The committed `tests/fixtures/scenic-evidence/competing-deadlines.jsonl` is a **synthetic** tool smoke fixture. It is not a recording from the user's game and establishes no runtime cause.
 

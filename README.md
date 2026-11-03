@@ -1,6 +1,6 @@
 # Valheim Broadcaster
 
-**0.8.30:** scene-owned foliage discovery separates expensive scene scans from immediate local camera queries, addressing the survey/deadline starvation reproduced in three 0.8.29 captures. [Evidence and changes](docs/SCENIC-EVIDENCE.md). Automatic capture remains enabled; protocol 3 is unchanged; no server update is required. In-game validation of this build remains pending.
+**0.8.31:** repairs scene-wide foliage coverage collapse in 0.8.30: distinguishes empty renderers, recovers valid transformed local bounds, and localizes unknown/omitted geometry. [Evidence and limits](docs/SCENIC-EVIDENCE.md). Automatic capture remains enabled; protocol 3 is unchanged; no server update is required. In-game validation remains pending.
 
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
 

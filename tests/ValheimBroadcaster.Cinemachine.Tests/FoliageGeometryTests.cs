@@ -8,6 +8,13 @@ internal static class FoliageGeometryTests
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
         yield return ("Tree mesh occupancy preserves open air beneath a wide crown", TrunkAndCrown);
+        yield return ("Empty geometry cannot invalidate a scene or manufacture a camera blocker", EmptyBounds);
+        yield return ("Bad world bounds recover transformed local geometry instead of clearing coverage", RecoverBounds);
+        yield return ("Malformed geometry remains unknown and planar leaves remain measured", UnknownBounds);
+        yield return ("Unknown distant geometry cannot erase coverage near an unrelated camera", LocalUncertainty);
+        yield return ("Coverage omissions retain full extent and boundary uncertainty", UncertaintyExtent);
+        yield return ("Coverage reset removes prior region omissions and unlocatable data fails closed", ResetCoverage);
+        yield return ("Dense omission streams stay bounded and never certify their occupied cells", BoundedCoverage);
         yield return ("Triangle groups preserve geometry crossing spatial cell boundaries", CrossingTriangle);
         yield return ("Dense mesh occupancy remains bounded without omitting triangles", BoundedGeometry);
         yield return ("Malformed and over-budget foliage geometry is rejected before refinement", InvalidGeometry);
@@ -17,6 +24,84 @@ internal static class FoliageGeometryTests
         yield return ("Canopy escape requires complete camera-inside evidence", CanopyEvidence);
         yield return ("Canopy escape rejects excessive lifts instead of clamping inside leaves", CanopyBounded);
         yield return ("Canopy escape ignores distant crowns and unused array entries", CanopyNeighborhood);
+    }
+
+    private static void EmptyBounds()
+    {
+        Bounds bogus = new Bounds(new Vector3(float.NaN, 0, 0), Vector3.one);
+        Check(FoliageGeometryMath.ResolveBounds(bogus, bogus, Matrix4x4.identity, true, out _) ==
+            FoliageGeometryMath.BoundsSource.Empty, "An explicitly empty renderer became unknown geometry.");
+        // The supplied run had 209 or 108 omitted entries well below capacity.
+        // This fixture models verified-empty entries, not a recovered game mesh.
+        var map = new FoliageCoverageMap(); map.Reset(Vector3.zero);
+        for (int i = 0; i < 451; i++)
+            Check(FoliageGeometryMath.ResolveBounds(default, default, Matrix4x4.identity, true, out _) ==
+                FoliageGeometryMath.BoundsSource.Empty, "Empty entry consumed coverage.");
+        Check(map.CoverageAt(Vector3.zero, 16) == 16, "Empty entries erased coverage.");
+    }
+    private static void RecoverBounds()
+    {
+        Bounds local = new Bounds(new Vector3(0, 8, 0), new Vector3(4, 16, 6));
+        Matrix4x4 matrix = Matrix4x4.identity; matrix.m03 = 1000; matrix.m13 = 75; matrix.m23 = 2000;
+        Check(FoliageGeometryMath.ResolveBounds(default, local, matrix, false, out Bounds resolved) ==
+            FoliageGeometryMath.BoundsSource.Local && resolved.center == new Vector3(1000, 83, 2000),
+            "Missing world bounds did not retain transformed local geometry.");
+        Bounds world = new Bounds(new Vector3(20, 20, 20), Vector3.one);
+        Check(FoliageGeometryMath.ResolveBounds(world, local, matrix, false, out resolved) ==
+            FoliageGeometryMath.BoundsSource.World && resolved.center == world.center, "Valid world override was replaced.");
+    }
+    private static void UnknownBounds()
+    {
+        Bounds malformed = new Bounds(new Vector3(float.NaN, 0, 0), Vector3.one);
+        Check(FoliageGeometryMath.ResolveBounds(malformed, default, Matrix4x4.identity, false, out _) ==
+            FoliageGeometryMath.BoundsSource.Unknown, "Unknown geometry became clear.");
+        Matrix4x4 broken = Matrix4x4.identity; broken.m03 = float.PositiveInfinity;
+        Check(FoliageGeometryMath.ResolveBounds(default, new Bounds(Vector3.zero, Vector3.one), broken, false, out _) ==
+            FoliageGeometryMath.BoundsSource.Unknown, "Non-finite transform was admitted.");
+        Bounds leaf = new Bounds(Vector3.zero, new Vector3(4, 0, 5));
+        Check(FoliageGeometryMath.ResolveBounds(leaf, default, Matrix4x4.identity, false, out _) ==
+            FoliageGeometryMath.BoundsSource.World, "Planar foliage was discarded as empty.");
+    }
+    private static void LocalUncertainty()
+    {
+        var map = new FoliageCoverageMap(); map.Reset(Vector3.zero);
+        map.AddUnknown(new Bounds(new Vector3(100, 8, 8), new Vector3(10, 10, 10)));
+        Check(map.CoverageAt(Vector3.zero, 16) == 16, "One distant failure poisoned the whole region.");
+        Check(map.CoverageAt(new Vector3(100, 8, 8), 16) == 0, "Unknown space was advertised as clear.");
+        Check(map.CoverageAt(new Vector3(220, 0, 0), 16) == 0, "Unsurveyed regional boundary became clear.");
+        Check(map.CoverageAt(new Vector3(215, 0, 0), 16) == 5, "Regional boundary did not limit coverage.");
+    }
+    private static void UncertaintyExtent()
+    {
+        var map = new FoliageCoverageMap(); map.Reset(Vector3.zero);
+        map.AddUnknown(new Bounds(new Vector3(30, 0, 0), new Vector3(60, 4, 4)));
+        Check(map.CoverageAt(Vector3.zero, 16) == 0, "Only omission centre was retained; its nearby extent was lost.");
+        map.Reset(Vector3.zero);
+        map.AddUnknown(new Bounds(new Vector3(16, 8, 8), new Vector3(.1f, 4, 4)));
+        Check(map.CoverageAt(new Vector3(15.9f, 8, 8), 16) == 0 &&
+            map.CoverageAt(new Vector3(16.1f, 8, 8), 16) == 0, "Cell-boundary extent was clipped.");
+        Check(map.CoverageAt(new Vector3(-7, 8, 8), 16) == 7, "Clearance to the unknown cell is wrong.");
+    }
+    private static void ResetCoverage()
+    {
+        var map = new FoliageCoverageMap(); map.Reset(Vector3.zero); map.Invalidate();
+        Check(map.CoverageAt(new Vector3(60, 8, 8), 16) == 0, "Unlocatable geometry was silently ignored.");
+        map.Reset(new Vector3(1000, 70, 2000));
+        Check(map.UnknownCells == 0 && !map.Unbounded && map.CoverageAt(new Vector3(1000, 70, 2000), 16) == 16,
+            "Old scene contaminated new region.");
+        map.AddUnknown(new Bounds(new Vector3(float.NaN, 0, 0), Vector3.one));
+        Check(map.Unbounded, "Malformed uncertainty was dropped.");
+    }
+    private static void BoundedCoverage()
+    {
+        var map = new FoliageCoverageMap(); map.Reset(Vector3.zero);
+        for (int i = 0; i < 20000; i++)
+            map.AddUnknown(new Bounds(new Vector3(50 + i % 80, 8, 8), Vector3.one));
+        Check(map.UnknownCells <= 28 * 28 * 28 && map.CoverageAt(Vector3.zero, 16) == 16,
+            "Dense omissions became global coverage loss.");
+        for (int i = 50; i < 130; i++) Check(map.CoverageAt(new Vector3(i, 8, 8), 16) == 0, "An omitted bound became clear.");
+        map.AddUnknown(new Bounds(new Vector3(10000, 0, 0), Vector3.one));
+        Check(map.CoverageAt(Vector3.zero, 16) == 16, "Out-of-region object poisoned local coverage.");
     }
 
     private static void TrunkAndCrown()

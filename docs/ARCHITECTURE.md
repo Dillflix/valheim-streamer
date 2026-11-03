@@ -1,5 +1,8 @@
 # Architecture
 
+The 0.8.31 scenic foliage catalogue separates absent renderer geometry, recoverable world-bound failures and unresolved geometry. Recovered local bounds are transformed consistently for candidate/preflight/live use. Bounded spatial uncertainty cells retain omitted extents; a far omission cannot invalidate an unrelated local camera query. Truly unlocatable geometry remains unknown. LOD deduplication saturation continues raw discovery instead of aborting the scene. See [capture evidence and limitations](SCENIC-EVIDENCE.md).
+
+
 ## Shared spatial architecture (0.8.28)
 
 Built directly on 0.8.27 (`025fe85`). Shared read-only scene observations and a local place hierarchy feed two different planners. Scenic constructs immutable multiwaypoint camera/aim trajectories from measured clear viewpoints and connected corridors. Player/Creature use a receding horizon to guide existing orbital tracking with bounded corrections. The final native solve and actual presentation remain the only authority for on-air output. Unknown geometry is never assumed free.

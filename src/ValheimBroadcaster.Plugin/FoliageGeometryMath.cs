@@ -82,7 +82,25 @@ internal static class FoliageGeometryMath
             Math.Abs(x.y) + Math.Abs(y.y) + Math.Abs(z.y), Math.Abs(x.z) + Math.Abs(y.z) + Math.Abs(z.z));
         return new Bounds(matrix.MultiplyPoint3x4(local.center), extent * 2f);
     }
+    // Empty renderers, missing world bounds and malformed geometry are different
+    // observations. Never turn one renderer's missing bounds into a scene-wide
+    // absence of evidence. A local fallback is transformed, not used as world space.
+    internal enum BoundsSource { Empty, World, Local, Unknown }
+    internal static BoundsSource ResolveBounds(Bounds world, Bounds local, Matrix4x4 matrix,
+        bool empty, out Bounds resolved)
+    {
+        resolved = default;
+        if (empty) return BoundsSource.Empty;
+        if (Valid(world)) { resolved = world; return BoundsSource.World; }
+        if (Valid(local))
+        {
+            Bounds transformed = Transform(local, matrix);
+            if (Valid(transformed)) { resolved = transformed; return BoundsSource.Local; }
+        }
+        return BoundsSource.Unknown;
+    }
     internal static bool Valid(Bounds bounds) => Finite(bounds.center) && Finite(bounds.extents) &&
+        Finite(bounds.min) && Finite(bounds.max) &&
         bounds.extents.x >= 0 && bounds.extents.y >= 0 && bounds.extents.z >= 0 && bounds.size.sqrMagnitude > .000001f;
     private static int Cell(float value, float min, float size) => size <= .000001f ? 0 :
         Math.Max(0, Math.Min(3, (int)((value - min) * 4f / size)));

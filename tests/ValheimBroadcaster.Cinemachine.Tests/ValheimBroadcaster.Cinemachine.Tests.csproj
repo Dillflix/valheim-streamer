@@ -11,6 +11,7 @@
     <Compile Include="../../src/ValheimBroadcaster.Plugin/NativeObservationalCamera.cs" Link="NativeObservationalCamera.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/NativeFreeLookProfiles.cs" Link="NativeFreeLookProfiles.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/FoliageGeometryMath.cs" Link="FoliageGeometryMath.cs" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/FoliageCoverageMap.cs" Link="FoliageCoverageMap.cs" />
     <Reference Include="ValheimBroadcaster.Cinemachine"><HintPath>$(CinemachineAssemblyPath)</HintPath><Private>true</Private></Reference>
     <Reference Include="$(ValheimManagedDir)/UnityEngine.CoreModule.dll;$(ValheimManagedDir)/Unity.Mathematics.dll;$(ValheimManagedDir)/Unity.Collections.dll"><Private>true</Private></Reference>
   </ItemGroup>

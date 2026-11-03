@@ -29,6 +29,9 @@ public sealed class ReplayEngine
     public int MissingPictures { get; private set; }
     public int LivePictures { get; private set; }
     public double MaximumMissingSeconds { get; private set; }
+    public double MaximumUnavailableSpan { get; private set; }
+    private double? unavailableSince;
+    private bool scenicTravel;
     public List<string> Problems { get; } = new List<string>();
 
     public void Read(string line)
@@ -45,10 +48,10 @@ public sealed class ReplayEngine
             if (kind == "header")
             {
                 string? version = row.GetProperty("version").GetString();
-                compatible = version == "0.8.29" || version == "0.8.30";
-                if (!compatible) Bad("Replay supports captured 0.8.29 and 0.8.30 policies; do not silently replay another build");
+                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31";
+                if (!compatible) Bad("Replay supports captured 0.8.29 through 0.8.31 policies; do not silently replay another build");
                 string current = row.GetProperty("utc").GetString()!;
-                if (session != current) { previousSequence = 0; session = current; }
+                if (session != current) { previousSequence = 0; session = current; unavailableSince = null; scenicTravel = false; }
                 return;
             }
             if (!compatible) { Bad("Observation without a compatible file header"); return; }
@@ -84,8 +87,19 @@ public sealed class ReplayEngine
                 if (result) { if (wait) WaitExpirations++; else SearchExpirations++; }
             }
             else if (kind == "event") Count(reasons, row.GetProperty("owner").GetString() + ": " + row.GetProperty("reason").GetString());
-            else if (kind == "picture" && row.GetProperty("onAir").GetBoolean())
+            else if (kind == "travel") scenicTravel = true;
+            else if (kind == "picture")
             {
+                if (!row.GetProperty("onAir").GetBoolean())
+                { if (!scenicTravel || row.GetProperty("held").GetBoolean()) unavailableSince = null; return; }
+                scenicTravel = false;
+                // The local recovery clock resets on travel. Keep the observed
+                // output gap across those resets so repeated black trips are not
+                // misleadingly summarized as one short local search.
+                if (unavailableSince.HasValue)
+                    MaximumUnavailableSpan = Math.Max(MaximumUnavailableSpan, now - unavailableSince.Value);
+                if (row.GetProperty("usable").GetBoolean() || row.GetProperty("held").GetBoolean()) unavailableSince = null;
+                else if (!unavailableSince.HasValue) unavailableSince = now;
                 if (row.GetProperty("usable").GetBoolean()) LivePictures++; else MissingPictures++;
                 MaximumMissingSeconds = Math.Max(MaximumMissingSeconds, Number(row, "missingSeconds"));
             }
@@ -113,6 +127,7 @@ public sealed class ReplayEngine
         yield return $"Sequence gaps {Missing}; writer-reported drops {Dropped} (may overlap). Rotation can omit earlier history.";
         yield return $"Deadline outcomes: search expired {SearchExpirations}; unknown-query expired {WaitExpirations}.";
         yield return $"Picture samples: live {LivePictures}; unavailable {MissingPictures}; longest recorded missing interval {MaximumMissingSeconds.ToString("F2", CultureInfo.InvariantCulture)}s.";
+        yield return $"Longest observed Scenic recovery span including requested travel: {MaximumUnavailableSpan.ToString("F2", CultureInfo.InvariantCulture)}s (sampled evidence, not frame-exact video).";
         foreach (var pair in refresh.OrderByDescending(p => p.Value)) yield return $"Refresh {pair.Key}: {pair.Value}";
         foreach (var pair in coverage.OrderByDescending(p => p.Value)) yield return $"Coverage {pair.Key}: {pair.Value}";
         foreach (var pair in reasons.OrderByDescending(p => p.Value).Take(15)) yield return $"Evidence {pair.Value}: {pair.Key}";

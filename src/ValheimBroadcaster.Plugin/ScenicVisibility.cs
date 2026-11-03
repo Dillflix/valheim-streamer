@@ -38,10 +38,11 @@ internal sealed class ScenicVisibility
 
     private readonly struct Entry
     {
-        internal readonly Renderer Renderer;
+        internal readonly ScenicFoliageScene.Observation Observation;
+        internal Renderer Renderer => Observation.Renderer;
         internal readonly Bounds[]? Local;
-        internal Entry(Renderer renderer, Bounds[]? local)
-        { Renderer = renderer; Local = local; }
+        internal Entry(ScenicFoliageScene.Observation observation, Bounds[]? local)
+        { Observation = observation; Local = local; }
     }
 
     internal readonly struct Result
@@ -90,11 +91,14 @@ internal sealed class ScenicVisibility
         // The scene owns discovery. This is a cheap local projection of its
         // retained renderers, including every coarse bound touching the detailed
         // foreground neighborhood. Distant renderers cannot consume its budget.
-        foreach (Renderer renderer in scene.Renderers)
+        foreach (ScenicFoliageScene.Observation observation in scene.Renderers)
         {
+            Renderer renderer = observation.Renderer;
             if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
-            Bounds bounds = renderer.bounds; bounds.Expand(.4f);
-            if (bounds.SqrDistance(origin) < SurveyRadius * SurveyRadius) Add(renderer);
+            if (!observation.TryBounds(out Bounds bounds))
+            { coveredRadius = observation.LimitUnknownCoverage(origin, coveredRadius); continue; }
+            Bounds expanded = bounds; expanded.Expand(.4f);
+            if (expanded.SqrDistance(origin) < SurveyRadius * SurveyRadius) Add(observation, bounds);
         }
         surveyMilliseconds = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - surveyStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
         if (ScenicTrace.Enabled)
@@ -127,9 +131,9 @@ internal sealed class ScenicVisibility
         return transform.GetComponentInParent<TreeBase>() || transform.GetComponentInParent<TreeLog>();
     }
 
-    private void Add(Renderer renderer)
+    private void Add(ScenicFoliageScene.Observation observation, Bounds coarse)
     {
-        Bounds coarse = renderer.bounds;
+        Renderer renderer = observation.Renderer;
         // Only the camera's local foreground needs fine geometry. Far bounds
         // remain a bounded discovery envelope and are refined after recentering.
         if (coarse.SqrDistance(origin) <= DetailRadius * DetailRadius && detailRemaining > 0)
@@ -138,11 +142,11 @@ internal sealed class ScenicVisibility
             if (cells != null && cells.Length <= detailRemaining)
             {
                 detailRemaining -= cells.Length; detailed++;
-                Add(new Entry(renderer, cells), coarse);
+                Add(new Entry(observation, cells), coarse);
                 return;
             }
         }
-        coarseCount++; Add(new Entry(renderer, null), coarse);
+        coarseCount++; Add(new Entry(observation, null), coarse);
     }
 
     private void Add(Entry entry, Bounds bounds)
@@ -161,7 +165,8 @@ internal sealed class ScenicVisibility
         // Keep the nearest bounds. Retain a conservative coverage radius so a
         // truncated cache never silently declares an unexamined position clear.
         if (distance >= furthestDistance) { Omit(bounds, distance); return; }
-        Bounds evicted = foliage[furthest].Renderer.bounds; evicted.Expand(.4f);
+        if (!foliage[furthest].Observation.TryBounds(out Bounds evicted)) { coveredRadius = 0; evicted = default; }
+        evicted.Expand(.4f);
         Omit(evicted, furthestDistance);
         foliage[furthest] = entry; distances[furthest] = distance;
         furthestDistance = 0;
@@ -259,7 +264,9 @@ internal sealed class ScenicVisibility
         {
             Entry entry = foliage[i]; Renderer renderer = entry.Renderer;
             if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
-            if (entry.Local == null) AddActive(renderer.bounds);
+            if (!entry.Observation.TryBounds(out Bounds observed))
+            { coveredRadius = entry.Observation.LimitUnknownCoverage(origin, coveredRadius); continue; }
+            if (entry.Local == null) AddActive(observed);
             else
             {
                 Matrix4x4 matrix = renderer.localToWorldMatrix;

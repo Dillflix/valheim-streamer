@@ -1,5 +1,14 @@
 # Validation and runtime test record
 
+## 0.8.31 foliage catalogue repair
+
+The supplied 0.8.30 capture fails: approximately 37.15 seconds without a usable picture across two recovery relocations; 1,081 incomplete foliage results and twelve empty candidate searches. See [the recorded evidence and repair limits](SCENIC-EVIDENCE.md). Do not count the preceding policy-replay match as a successful runtime outcome.
+
+0.8.31 must be checked in the same dense forest: catalogue empty/repaired/unresolved counts, unknown cells, local survey radius, accepted viewpoints, time to the first picture, recovery share and scan cost. A distant missing/empty renderer must not zero unrelated camera coverage. A genuinely unresolved nearby volume must remain blocked. Verify thin foliage and actual visible leaves remain detected, preferred-LOD fallback does not omit trees, and stop/travel/rejoin cannot retain a previous region's uncertainty. Existing terrain, water, near-plane, focus and full-route checks remain active. Automatic capture includes anonymous bounded renderer-bounds examples; no repeated console commands are needed.
+
+Local build/math/policy validation is distinct from Unity rendering and client gameplay; no game session is available on the build host. Server protocol and behavior are unchanged and no server installation is required.
+
+
 ## 0.8.30 observation scheduling repair
 
 Based directly on 0.8.29 (`24552cbef081c867d43164d64a207784ec748018`). All three supplied capture sets replay without decision divergence. They demonstrate detailed-neighborhood misses behind the half-second survey throttle, repeated candidate deadline exhaustion, and a long sequence of recovery-driven region changes. They also contain legitimate obstruction and acquisition failures; this is not proof that every rejected route should be accepted. See [SCENIC-EVIDENCE.md](SCENIC-EVIDENCE.md) for measured counts, the timeline and the 0.8.29 owner-label ambiguity.
