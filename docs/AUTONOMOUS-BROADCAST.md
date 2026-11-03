@@ -66,6 +66,8 @@ The acquisition budget defaults to 65 seconds, including native travel; arriving
 
 ## Autonomous scenery
 
+0.8.32 optionally augments this generated-region feed with server-indexed construction and placed landmarks, plus persistent destination feedback. See [world destinations](WORLD-DESTINATIONS.md) for the matching-client/companion upgrade, `WorldInterestEnabled`, `broadcast destinations`, limits and testing.
+
 With no usable player shot, local scenic paths continue to vary. When the region dwell expires, the director can acquire another generated scenic region rather than indefinitely repeating paths around one survey origin. Player acquisition takes priority over scenic programming.
 
 The companion's catalog contains dry-land centers with an already-generated 3×3 zone neighborhood. It does not generate a new server zone or awaken creatures to supply a destination. Bounded catalog pages rotate; the client maintains a bounded cache and tracks recent region use. The default destination distance is 256–10000 metres from the current region, with 120 seconds of usable region coverage and a 30-minute revisit interval. A separate ten-second unready-region interval can prompt a new search when no usable local shot exists. Failed destinations receive a cooldown.

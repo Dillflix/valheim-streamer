@@ -8,7 +8,7 @@ using ValheimBroadcaster.Core;
 namespace ValheimBroadcaster.Plugin;
 
 // The role is selected BEFORE joining and stays pinned until the world connection ends.
-internal sealed class RemoteObserverClient
+internal sealed partial class RemoteObserverClient
 {
     private static RemoteObserverClient? instance;
     private readonly Func<bool> configured;
@@ -129,6 +129,7 @@ internal sealed class RemoteObserverClient
         client.activitySupported = client.activityUnavailable = client.activityRejected = false;
         client.events.Reset(); client.eventProbeAt = -1; client.nextEvents = 0;
         client.eventsSupported = client.eventsUnavailable = client.eventsRejected = false;
+        client.ResetInterests();
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
         if (client.requested)
         {
@@ -137,6 +138,7 @@ internal sealed class RemoteObserverClient
             __0.m_rpc.Register<ZPackage>(ObserverContextProtocol.Reply, client.ContextReply);
             __0.m_rpc.Register<ZPackage>(ObserverActivityProtocol.Reply, client.ActivityReply);
             __0.m_rpc.Register<ZPackage>(ObserverEventProtocol.Reply, client.EventReply);
+            __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Reply, client.InterestReply);
         }
     }
     private static bool RequestBeforeAdmission(ZRpc __0)
@@ -318,6 +320,7 @@ internal sealed class RemoteObserverClient
         TickContext(Time.realtimeSinceStartup);
         TickActivity(Time.realtimeSinceStartup);
         TickEvents(Time.realtimeSinceStartup);
+        TickInterests(Time.realtimeSinceStartup);
     }
     internal void Spawned() { spawned = true; Status = "Read-only observer connection active"; }
     internal void Fail(string reason, bool terminal = true)
@@ -326,11 +329,13 @@ internal sealed class RemoteObserverClient
         failed = true; Approved = false; TerminalFailure = terminal; discovery.Reset(); context.Reset(); contextUnavailable = true;
         activity.Reset(); activityUnavailable = true; Status = reason; log(reason);
         events.Reset(); eventsUnavailable = true;
+        ResetInterests();
         if (world && world == ZNet.instance && server != null && world.GetPeers().Contains(server)) world.Disconnect(server);
         // Do not unpin input/network restrictions inside a still-loaded world.
     }
     internal void Close()
     {
+        ResetInterests();
         if (Isolated) Fail("Observer plugin stopped; disconnecting read-only session");
     }
     private static bool BeforeRespawn()

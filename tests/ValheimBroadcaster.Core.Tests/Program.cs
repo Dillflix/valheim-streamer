@@ -69,6 +69,7 @@ internal static class Program
         }.Concat(AutonomousDirectorTests.Cases)
             .Concat(ObserverAdmissionTests.Cases())
             .Concat(ObserverDiscoveryTests.Cases())
+            .Concat(WorldInterestTests.Cases())
             .Concat(ConnectionRecoveryTests.Cases())
             .Concat(CameraReachabilityTests.Cases())
             .Concat(PlayerFollowContinuityTests.Cases())

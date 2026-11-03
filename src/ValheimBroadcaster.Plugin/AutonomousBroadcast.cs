@@ -20,6 +20,14 @@ internal sealed class AutonomousBroadcast
     private readonly List<AutonomyPlayer> players = new List<AutonomyPlayer>(64);
     private readonly List<PlayerActivityEvidence> activity = new List<PlayerActivityEvidence>(128);
     private readonly List<ScenicRegion> regions = new List<ScenicRegion>(1024);
+    private readonly List<ScenicRegion> generatedRegions = new List<ScenicRegion>(1024);
+    private readonly Dictionary<string, WorldInterestSite> interestSites = new Dictionary<string, WorldInterestSite>(StringComparer.Ordinal);
+    private readonly DestinationFeedbackLedger destinationHistory = new DestinationFeedbackLedger();
+    private readonly DestinationVisit destinationVisit = new DestinationVisit();
+    private long interestTravelToken;
+    private string? interestTravelId;
+    private double nextDestinations;
+    private string destinationFeedback = "none";
     private readonly List<ScenicRegion> route = new List<ScenicRegion>(32);
     private long sequence = -1, worldId;
     private bool? requested;
@@ -49,6 +57,7 @@ internal sealed class AutonomousBroadcast
         "\nRegion: " + (policy.CurrentRegionName ?? "initial area") + " / " + (policy.CurrentRegionId ?? "unknown") +
         "; known " + regions.Count + "; recent " + policy.VisitedRegionCount + "; completed travel " + policy.CompletedTravels + "; failed " + policy.FailedTravels +
         "\nLast travel failure: " + (policy.LastFailure ?? "none") + "; protected returns " + recoveries + "/3" +
+        "\nDestination feedback: " + destinationFeedback + "; visit footage " + destinationVisit.FootageSeconds.ToString("F1") + "s" +
         "\nSolo route: " + policy.RouteTestResult + "; marked " + route.Count;
 
     internal AutonomousBroadcast(BroadcastSettings settings, RemoteObserverClient remote, ObserverController observer, PlayerShotReadiness playerShots,
@@ -66,16 +75,19 @@ internal sealed class AutonomousBroadcast
     internal void EndSession()
     {
         targetDiagnostics = lastTravelReason = "none";
+        ResetDestinations();
         policy.Reset(); players.Clear(); regions.Clear(); route.Clear(); sequence = -1; worldId = 0;
         paused = recovering = false; recoveries = 0; stableSince = -1; reconnectReason = null;
     }
     internal void Enable(bool enabled)
     {
+        destinationVisit.Reset(); interestTravelId = null;
         requested = enabled; paused = false; recovering = false; reconnectReason = null;
         policy.SetEnabled(enabled); policy.SetPaused(false);
     }
     internal void PauseForManual()
     {
+        destinationVisit.Reset(); interestTravelId = null;
         paused = true; recovering = false; reconnectReason = null;
         policy.SetPaused(true);
     }
@@ -94,7 +106,7 @@ internal sealed class AutonomousBroadcast
     }
 
     internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true,
-        bool? idleSceneAvailable = null, bool idleSearchExpired = false)
+        bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool scenicPicture = false, bool creaturePicture = false)
     {
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
@@ -104,14 +116,23 @@ internal sealed class AutonomousBroadcast
         if (snapshot != null && worldId != snapshot.WorldId)
         {
             if (worldId != 0) { policy.Reset(); route.Clear(); policy.SetEnabled(true); }
-            worldId = snapshot.WorldId; sequence = -1;
+            ResetDestinations(); worldId = snapshot.WorldId; sequence = -1;
         }
         if (snapshot != null && snapshot.Sequence != sequence)
         {
-            sequence = snapshot.Sequence; regions.Clear();
+            sequence = snapshot.Sequence; generatedRegions.Clear(); nextDestinations = 0;
             foreach (ObserverRegion region in snapshot.Regions)
-                regions.Add(new ScenicRegion(region.Id, string.IsNullOrWhiteSpace(region.Name) ? region.Id : region.Name, Convert(region.Position)));
+                generatedRegions.Add(new ScenicRegion(region.Id, string.IsNullOrWhiteSpace(region.Name) ? region.Id : region.Name, Convert(region.Position)));
         }
+        if (now >= nextDestinations)
+        {
+            nextDestinations = now + 1; interestSites.Clear();
+            IReadOnlyList<WorldInterestSite> sites = remote.WorldInterests;
+            foreach (WorldInterestSite site in sites) interestSites[site.Id] = site;
+            regions.Clear();
+            regions.AddRange(WorldDestinationPlanner.Merge(remote.DiscoveryFresh ? generatedRegions : Array.Empty<ScenicRegion>(), sites, destinationHistory, now));
+        }
+        bool justArrived = false;
         policy.DwellSeconds = settings.Dwell.Value;
         policy.AcquisitionSeconds = settings.AcquireSeconds.Value;
         policy.RegionSeconds = settings.RegionSeconds.Value;
@@ -124,11 +145,18 @@ internal sealed class AutonomousBroadcast
         {
             if (observer.Phase == ObserverPhase.Watching)
             {
+                if (interestTravelId != null && interestTravelToken == policy.ActiveTravel.Token)
+                { destinationVisit.Begin(interestTravelId); interestTravelId = null; justArrived = true; }
                 policy.TravelCompleted(policy.ActiveTravel.Token, true, now);
                 resetShot();
             }
             else if (observer.Phase == ObserverPhase.Suspended)
+            {
+                if (interestTravelId != null && interestTravelToken == policy.ActiveTravel.Token)
+                    ReportDestination(interestTravelId, DestinationOutcome.TravelFailed, 0, now);
+                interestTravelId = null;
                 policy.TravelCompleted(policy.ActiveTravel.Token, false, now, observer.Status);
+            }
         }
         if (recovering && observer.Phase == ObserverPhase.Parked)
         {
@@ -203,10 +231,23 @@ internal sealed class AutonomousBroadcast
             PlayerActivityEvidence? merged = PlayerActivitySelection.Merge(local, observed, now);
             if (merged != null) activity.Add(merged);
         }
-        IReadOnlyList<ScenicRegion> destinations = remote.DiscoveryFresh && settings.ScenicTravel.Value ? regions : Array.Empty<ScenicRegion>();
+        IReadOnlyList<ScenicRegion> destinations = settings.ScenicTravel.Value ? regions : Array.Empty<ScenicRegion>();
         policy.Tick(now, dt, players, destinations, Convert(Player.m_localPlayer.transform.position),
             presentedId, idleReady, observer.Phase == ObserverPhase.Travelling,
             wildlifeCutaway && observer.Phase == ObserverPhase.Watching, activity, usablePlayerFootage, idleSceneAvailable, idleSearchExpired);
+        if (destinationVisit.Id != null && !justArrived)
+        {
+            // A player/creature takeover or operator interruption is not a failed destination.
+            if (presentedId != null || wildlifeCutaway || creaturePicture || policy.RouteTestActive ||
+                policy.State != AutonomyState.Scenic && policy.State != AutonomyState.Waiting && policy.PendingTravel?.Kind != AutonomyTravelKind.Scenic)
+                destinationVisit.Reset();
+            else if (observer.Phase == ObserverPhase.Watching)
+            {
+                DestinationOutcome? outcome = destinationVisit.Observe(dt, scenicPicture,
+                    idleSearchExpired || policy.PendingTravel?.Kind == AutonomyTravelKind.Scenic);
+                if (outcome.HasValue) ReportDestination(destinationVisit.Id, outcome.Value, destinationVisit.FootageSeconds, now);
+            }
+        }
         targetDiagnostics = "none";
         foreach (AutonomyPlayer player in players)
             if (player.Id == policy.TargetId)
@@ -218,9 +259,12 @@ internal sealed class AutonomousBroadcast
             }
         AutonomyTravelRequest? request = policy.PendingTravel;
         if (request == null || observer.Phase != ObserverPhase.Watching) return;
-        lastTravelReason = request.Reason;
+        destinationVisit.Reset();
+        interestTravelId = request.Kind == AutonomyTravelKind.Scenic && interestSites.ContainsKey(request.TargetId) ? request.TargetId : null;
+        interestTravelToken = request.Token;
+        lastTravelReason = request.Reason + (interestTravelId == null ? "" : "; server interest " + interestTravelId);
         if (ScenicTrace.Enabled && request.Kind == AutonomyTravelKind.Scenic)
-            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("travel").Field("reason", request.Reason)
+            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("travel").Field("reason", lastTravelReason).Field("interest", interestTravelId ?? "").Field("id", request.TargetId)
                 .Field("sceneAvailable", idleSceneAvailable ?? idleReady).Field("usablePicture", idleReady)
                 .Field("searchExpired", idleSearchExpired).Field("readyDwell", policy.ReadyDwellSeconds),
                 "destination", new Vector3(request.Position.X, request.Position.Y, request.Position.Z)));
@@ -228,14 +272,36 @@ internal sealed class AutonomousBroadcast
         {
             observer.TravelTo(new Vector3(request.Position.X, request.Position.Y, request.Position.Z));
             if (observer.Phase != ObserverPhase.Travelling)
+            {
+                if (interestTravelId != null) ReportDestination(interestTravelId, DestinationOutcome.TravelFailed, 0, now);
+                interestTravelId = null;
                 policy.TravelCompleted(request.Token, false, now, observer.Status);
+            }
             else
             {
                 policy.TravelStarted(request.Token, now);
-                log("Automatic " + request.Kind + " travel to " + request.Name + ". Reason: " + request.Reason);
+                log("Automatic " + request.Kind + " travel to " + request.Name + ". Reason: " + lastTravelReason);
             }
         }
-        catch (InvalidOperationException error) { policy.TravelCompleted(request.Token, false, now, error.Message); }
+        catch (InvalidOperationException error)
+        {
+            if (interestTravelId != null) ReportDestination(interestTravelId, DestinationOutcome.TravelFailed, 0, now);
+            interestTravelId = null;
+            policy.TravelCompleted(request.Token, false, now, error.Message);
+        }
+    }
+
+    private void ResetDestinations()
+    {
+        generatedRegions.Clear(); interestSites.Clear(); destinationHistory.Clear(); destinationVisit.Reset();
+        interestTravelId = null; interestTravelToken = 0; nextDestinations = 0; destinationFeedback = "none";
+    }
+    private void ReportDestination(string id, DestinationOutcome outcome, float footage, double now)
+    {
+        destinationHistory.Record(id, outcome, now); nextDestinations = 0;
+        remote.ReportDestination(id, outcome, footage);
+        destinationFeedback = id + " / " + outcome;
+        log("Destination feedback: " + destinationFeedback + "; usable scenic footage " + footage.ToString("F1") + "s.");
     }
 
     internal string AddRoutePoint(Vector3 position)

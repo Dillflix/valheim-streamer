@@ -1,5 +1,10 @@
 # Validation and runtime test record
 
+## 0.8.32 server-guided destinations
+
+Built directly on 0.8.31 (`182f1520016165f26f780e5ad32bef1f55ad4f73`). Adds optional protocol-1 interest metadata/feedback alongside unchanged observer admission protocol 3. Local SDK-compiler validation: **791/791 Core cases and 64/64 native camera math cases pass**; client and companion compile against the real Valheim 1.0.21 / Unity 6000.0.75f1 / BepInEx 5.4.23.2 / Jötunn 2.30.2 references with warnings treated as errors. New cases exercise bounded wire parsing, atomic/deletion-aware pages, source freshness, small/sprawling/vertical construction clusters, deterministic IDs, fallback/ranking constraints, world-specific persisted cooldowns and actual-footage visit outcomes. Use the [destination runtime procedure](WORLD-DESTINATIONS.md#inspect-and-test) for solo discovery, base/landmark arrival, feedback, restart, deletion, interruption and older-companion fallback. No production-host installation, Unity runtime performance or resulting visual footage has been validated here.
+
+
 ## 0.8.31 foliage catalogue repair
 
 The supplied 0.8.30 capture fails: approximately 37.15 seconds without a usable picture across two recovery relocations; 1,081 incomplete foliage results and twelve empty candidate searches. See [the recorded evidence and repair limits](SCENIC-EVIDENCE.md). Do not count the preceding policy-replay match as a successful runtime outcome.

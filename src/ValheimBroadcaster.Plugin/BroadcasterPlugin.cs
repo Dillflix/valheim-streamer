@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.31";
+    public const string PluginVersion = "0.8.32";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -277,7 +277,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
                 (usableIdlePicture || idle.HasUsableScenicPicture) && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
-                localActivities, usablePlayerPicture, idleSceneAvailable, idle.RecoveryExpired);
+                localActivities, usablePlayerPicture, idleSceneAvailable, idle.RecoveryExpired,
+                coverage.Mode == CoverageMode.Scenic && idle.HasUsableScenicPicture,
+                coverage.Mode == CoverageMode.Creature && usableIdlePicture);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
             if (automatic?.ControlsSelection == true && automatic.TargetId != null) director.Select(automatic.TargetId);
@@ -1047,7 +1049,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + ScenicTrace.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + ScenicTrace.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {
@@ -1174,7 +1176,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|trace on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1263,6 +1265,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         { context?.AddString("broadcast trace on|off|status"); return; }
                         context?.AddString(ScenicTrace.Status); return;
                     case "diagnostics": context?.AddString(plugin.Diagnostics()); return;
+                    case "destinations": context?.AddString(plugin.remote.InterestDiagnostics()); return;
                     case "status": break;
                     default: context?.AddString(Help); return;
                 }

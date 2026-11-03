@@ -50,8 +50,14 @@ namespace ValheimBroadcaster.Core
         public string Id { get; }
         public string Name { get; }
         public AutonomyPosition Position { get; }
-        public ScenicRegion(string id, string name, AutonomyPosition position)
-        { Id = AutonomousDirector.Label(id, nameof(id)); Name = AutonomousDirector.Label(name, nameof(name)); Position = position; }
+        public float Preference { get; }
+        public double AvailableAfter { get; }
+        public ScenicRegion(string id, string name, AutonomyPosition position, float preference = 0, double availableAfter = 0)
+        {
+            Id = AutonomousDirector.Label(id, nameof(id)); Name = AutonomousDirector.Label(name, nameof(name)); Position = position;
+            WorldInterestProtocol.Number(preference, 100); AutonomousDirector.Time(availableAfter, nameof(availableAfter));
+            Preference = preference; AvailableAfter = availableAfter;
+        }
     }
 
     public enum AutonomyState { Disabled, Following, Acquiring, Scenic, Travelling, Waiting, Paused, RouteTest, WildlifeCutaway }
@@ -382,17 +388,18 @@ namespace ValheimBroadcaster.Core
             foreach (ScenicRegion region in regions)
             {
                 double distance = currentPosition.HorizontalDistance(region.Position);
-                if (region.Id == CurrentRegionId || distance < MinimumScenicTravelDistance || distance > MaximumScenicTravelDistance || Blocked("s:" + region.Id, now)) continue;
+                if (region.Id == CurrentRegionId || now < region.AvailableAfter || distance < MinimumScenicTravelDistance || distance > MaximumScenicTravelDistance || Blocked("s:" + region.Id, now)) continue;
                 bool seen = visited.TryGetValue(region.Id, out double lastVisit);
                 if (seen && now - lastVisit < RevisitSeconds) continue;
                 double rank = seen ? lastVisit : double.NegativeInfinity;
-                if (chosen == null || rank < oldest || rank == oldest && (distance < nearestChoice ||
-                    distance == nearestChoice && StringComparer.Ordinal.Compare(region.Id, chosen.Id) < 0))
+                if (chosen == null || region.Preference > chosen.Preference || region.Preference == chosen.Preference &&
+                    (rank < oldest || rank == oldest && (distance < nearestChoice ||
+                    distance == nearestChoice && StringComparer.Ordinal.Compare(region.Id, chosen.Id) < 0)))
                 { chosen = region; oldest = rank; nearestChoice = distance; }
             }
             if (chosen == null)
             {
-                Reason = regions.Count == 0 ? "Waiting for generated scenic destinations from the server" : "No fresh generated region available; revisit/failure cooldowns remain active";
+                Reason = regions.Count == 0 ? "Waiting for scenic destinations from the server" : "No fresh scenic destination available; distance, revisit and feedback cooldowns remain active";
                 return;
             }
             if (!visited.ContainsKey(chosen.Id) && !HasVisitCapacity(now))
