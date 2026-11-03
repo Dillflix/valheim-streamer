@@ -58,7 +58,7 @@ internal static class ScenicTrace
     }
     internal static void Incomplete(string owner, ScenicCoverageGap gap, float distance, float radius, int omitted)
     {
-        if (Time.unscaledTime < nextWarning) return;
+        if (!Enabled || Time.unscaledTime < nextWarning) return;
         nextWarning = Time.unscaledTime + 15;
         log?.Invoke($"Scenic survey evidence: {owner}; missing {gap}; camera/survey distance {distance:F1}m; " +
             $"retained radius {radius:F1}m; omitted {omitted}. Details are captured automatically. {Status}");
