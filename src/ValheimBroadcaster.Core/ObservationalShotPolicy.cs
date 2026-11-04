@@ -30,8 +30,8 @@ namespace ValheimBroadcaster.Core
             if ((int)role < 0 || (int)role > (int)ShotRole.Landscape || (int)scale < 0 || (int)scale > (int)ShotScale.Medium)
                 throw new ArgumentOutOfRangeException(nameof(role));
             return scene.Kind != ShotSceneKind.Scenic && !grouped && !recovery && scale != ShotScale.Medium &&
-                (scene.Encounter == EncounterKind.None || scene.EncounterConfidence < .6f) &&
-                scene.Confidence >= .6f && scene.Space >= (continuing ? .3f : .45f) && scene.Opponents == 0 &&
+                !scene.RequiresEncounterFocus &&
+                scene.Confidence >= .6f && scene.Space >= (continuing ? .3f : .45f) && (scene.Opponents == 0 || scene.ContextualPresence) &&
                 (scene.Environment == ShotEnvironment.Open || scene.Environment == ShotEnvironment.Sheltered) &&
                 (scene.Locomotion == ShotLocomotion.Stationary || scene.Locomotion == ShotLocomotion.Walk || scene.Locomotion == ShotLocomotion.Run) &&
                 scene.Activity != CinematicActivity.Combat && (role == ShotRole.Establish || role == ShotRole.Tracking);

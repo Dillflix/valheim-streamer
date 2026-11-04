@@ -30,7 +30,8 @@ namespace ValheimBroadcaster.Core
         /// physically valid picture remains a candidate while alternatives are sought.
         /// Candidate indices must retain their meaning until Reset is called.</summary>
         public int Select(double now, IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
-            IReadOnlyList<bool>? readable = null, IShotCandidateRanker? ranker = null)
+            IReadOnlyList<bool>? readable = null, IShotCandidateRanker? ranker = null,
+            IReadOnlyList<int>? priorities = null, bool reconsiderPicture = false)
         {
             if (!Finite(now) || now < 0 || lastTime >= 0 && now < lastTime)
             {
@@ -56,7 +57,7 @@ namespace ValheimBroadcaster.Core
 
             bool currentEligible = SelectedIndex >= 0 && eligible[SelectedIndex];
             int best = ShotCandidateRanking.Best(scores, eligible, readable,
-                currentEligible ? SelectedIndex : -1, ranker);
+                currentEligible ? SelectedIndex : -1, ranker, priorities);
 
             if (best < 0)
             {
@@ -69,8 +70,10 @@ namespace ValheimBroadcaster.Core
 
             bool recovery = readable != null && !readable[SelectedIndex];
             bool restoresReadable = recovery && readable![best];
-            float margin = recovery ? PoorViewImprovementMargin : ImprovementMargin;
-            if (best == SelectedIndex || !restoresReadable && scores[best] < scores[SelectedIndex] + margin)
+            bool purposePromotion = priorities != null && (readable == null || readable[best]) &&
+                priorities[best] > priorities[SelectedIndex];
+            float margin = recovery || reconsiderPicture ? PoorViewImprovementMargin : ImprovementMargin;
+            if (best == SelectedIndex || !restoresReadable && !purposePromotion && scores[best] < scores[SelectedIndex] + margin)
             {
                 PendingIndex = -1;
                 return SelectedIndex;

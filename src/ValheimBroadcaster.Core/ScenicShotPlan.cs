@@ -37,6 +37,7 @@ namespace ValheimBroadcaster.Core
         /// not claim a connected movement route or earn cinematic episode
         /// credit; the availability policy owns its bounded presentation.</summary>
         public bool IsPictureOnly { get; }
+        public bool IsPan { get; }
         /// <summary>The route engine is latched at preparation so a live
         /// setting change cannot replace the geometry beneath a displayed shot.</summary>
         public bool UseNativeSpline { get; } = true;
@@ -74,7 +75,7 @@ namespace ValheimBroadcaster.Core
 
         private ScenicShotPlan(long id, ScenicFeature feature, ScenicShotRole role,
             AutonomyPosition bodyStart, AutonomyPosition bodyEnd, AutonomyPosition aimStart,
-            AutonomyPosition aimEnd, float fov, float x, float y, AutonomyPosition? control, bool useNativeSpline)
+            AutonomyPosition aimEnd, float fov, float x, float y, AutonomyPosition? control, bool useNativeSpline, bool pan = false)
         {
             if (id <= 0) throw new ArgumentOutOfRangeException(nameof(id));
             if (feature == null) throw new ArgumentNullException(nameof(feature));
@@ -83,7 +84,7 @@ namespace ValheimBroadcaster.Core
             if (!Finite(x) || !Finite(y) || Math.Abs(x) > .2 || Math.Abs(y) > .2)
                 throw new ArgumentOutOfRangeException(nameof(x));
             Id = id; IsDirected = true; Feature = feature; FeatureId = feature.Id; FeatureKind = feature.Kind; Role = role;
-            UseNativeSpline = useNativeSpline;
+            IsPan = pan; UseNativeSpline = !pan && useNativeSpline;
             Style = role == ScenicShotRole.Reveal ? ScenicShotStyle.Reveal : role == ScenicShotRole.Detail ? ScenicShotStyle.Approach : ScenicShotStyle.Lateral;
             start = aimStart; end = aimEnd; cameraStart = bodyStart; cameraEnd = bodyEnd;
             curved = control.HasValue; cameraControl = control ?? Midpoint(bodyStart, bodyEnd);
@@ -99,7 +100,7 @@ namespace ValheimBroadcaster.Core
                     throw new ArgumentOutOfRangeException(nameof(bodyEnd), "Directed route must retain a finite, separated environmental aim.");
                 travel += body.Distance(previous); previous = body;
             }
-            if (travel < 1 || travel > 80) throw new ArgumentOutOfRangeException(nameof(bodyEnd), "Directed routes require bounded, meaningful movement.");
+            if ((!pan && travel < 1) || travel > 80 || pan && travel > .001) throw new ArgumentOutOfRangeException(nameof(bodyEnd), "Directed routes require bounded, meaningful movement.");
             TravelMetres = travel;
             VisualChange = EstimateVisualChange();
             // The route and its perceptual development determine duration. Long
@@ -108,6 +109,15 @@ namespace ValheimBroadcaster.Core
             double speed = role == ScenicShotRole.Detail ? .7 : role == ScenicShotRole.Establish ? 1.35 : 1.1;
             double visualSeconds = VisualChange / (role == ScenicShotRole.Detail ? .035 : .045);
             DurationSeconds = Math.Max(8, Math.Max(travel / 2.0, Math.Min(20, Math.Max(travel / speed, visualSeconds))));
+            if (pan)
+            {
+                double ax = start.X - cameraStart.X, ay = start.Y - cameraStart.Y, az = start.Z - cameraStart.Z;
+                double bx = end.X - cameraStart.X, by = end.Y - cameraStart.Y, bz = end.Z - cameraStart.Z;
+                double cosine = (ax * bx + ay * by + az * bz) / (cameraStart.Distance(start) * cameraStart.Distance(end));
+                double degrees = Math.Acos(Math.Max(-1, Math.Min(1, cosine))) * 180 / Math.PI;
+                if (degrees < 3 || degrees > 18) throw new ArgumentOutOfRangeException(nameof(aimEnd), "A restrained pan develops a bounded 3–18 degree observed composition.");
+                DurationSeconds = Math.Max(10, Math.Min(24, degrees / .65));
+            }
         }
 
         public static ScenicShotPlan Directed(long id, ScenicFeature feature, ScenicShotRole role,
@@ -116,6 +126,14 @@ namespace ValheimBroadcaster.Core
             AutonomyPosition? cameraControl = null, bool useNativeSpline = true) =>
             new ScenicShotPlan(id, feature, role, cameraStart, cameraEnd, aimStart, aimEnd,
                 fieldOfView, screenX, screenY, cameraControl, useNativeSpline);
+
+        /// <summary>Purposeful angular development at a clear fixed viewpoint.
+        /// Unlike an emergency picture lease, this is a finite authored shot with
+        /// its complete aim sweep subject to the usual route validation.</summary>
+        public static ScenicShotPlan Pan(long id, ScenicFeature feature, ScenicShotRole role,
+            AutonomyPosition camera, AutonomyPosition aimStart, AutonomyPosition aimEnd, float fov,
+            float screenX = 0, float screenY = -.04f) =>
+            new ScenicShotPlan(id, feature, role, camera, camera, aimStart, aimEnd, fov, screenX, screenY, null, false, true);
 
         public static ScenicShotPlan Picture(long id, ScenicFeature feature, ScenicShotRole role,
             AutonomyPosition camera, AutonomyPosition aim, float fieldOfView, float screenX = 0, float screenY = -.08f) =>
@@ -251,6 +269,7 @@ namespace ValheimBroadcaster.Core
                 body.Add(Body(to)); aims.Add(Aim(to));
                 return Spatial(Id, Feature!, Role, body, aims, FieldOfView, screenX, screenY, UseNativeSpline);
             }
+            if (IsPan) return Pan(Id, Feature!, Role, cameraStart, Aim(from), Aim(to), FieldOfView, screenX, screenY);
             // Quadratic blossom at (from,to) is the middle control of the
             // restricted curve. Keeping the old control would distort an
             // interior interval even if both selected endpoints were correct.
@@ -274,6 +293,7 @@ namespace ValheimBroadcaster.Core
             if (metres == 0) return this;
             if (IsPictureOnly)
                 return Picture(Id, Feature!, Role, Raised(cameraStart, metres), start, FieldOfView, screenX, screenY);
+            if (IsPan) return Pan(Id, Feature!, Role, Raised(cameraStart, metres), start, end, FieldOfView, screenX, screenY);
             if (IsSpatial)
             {
                 var body = new AutonomyPosition[WaypointCount];

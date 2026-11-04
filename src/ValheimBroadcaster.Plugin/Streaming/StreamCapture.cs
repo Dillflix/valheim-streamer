@@ -23,8 +23,7 @@ internal sealed class StreamCapture : MonoBehaviour
     private Vector3 normalPosition;
     private Quaternion normalRotation;
     private bool listenerMoved;
-    private float nextFrame;
-    private int fps;
+    private readonly CaptureCadence cadence = new CaptureCadence();
     private Action<string>? reportFailure;
     private bool failureReported;
     internal bool Active => active;
@@ -37,7 +36,8 @@ internal sealed class StreamCapture : MonoBehaviour
     internal string Status => awaitingCalibration != null ? "Calibrating video orientation" :
         preflightFailure.Length != 0 ? preflightFailure : session?.Status ?? "Stopped";
     internal string Diagnostics => (preflightFailure.Length != 0 ? preflightFailure : session == null ? "No encoder session." :
-        session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails) + "\n" + orientationDiagnostics;
+        session.FailureDetails.Length == 0 ? session.TimingDetails : session.FailureDetails) + "\n" + orientationDiagnostics +
+        "\nCapture cadence: " + cadence.AdmittedSamples + " samples admitted; " + cadence.SkippedSlots + " render/readback slots skipped.";
 
     internal void Begin(StreamOptions options, AudioListener gameListener, FrameHold programSource, Action<string>? onFailure = null)
     {
@@ -61,9 +61,8 @@ internal sealed class StreamCapture : MonoBehaviour
             pixels = new byte[options.Width * options.Height * 4];
             output = new RenderTexture(options.Width, options.Height, 0, RenderTextureFormat.ARGB32);
             if (!output.Create()) throw new InvalidOperationException("Streaming output texture could not be allocated.");
-            fps = options.Fps;
+            cadence.Reset(options.Fps);
             active = true;
-            nextFrame = 0;
             orientation?.Dispose(); orientation = null;
             if (options.AutomaticOrientation)
             {
@@ -149,8 +148,8 @@ internal sealed class StreamCapture : MonoBehaviour
         while (active)
         {
             yield return end;
-            if (!active || awaitingCalibration != null || session == null || pending || Time.unscaledTime < nextFrame) continue;
-            nextFrame = Time.unscaledTime + 1f / fps;
+            if (!active || awaitingCalibration != null || session == null) continue;
+            if (!cadence.TryCapture(Time.unscaledTimeAsDouble, !pending)) continue;
             try { CaptureFrame(); }
             catch { session?.Fail("GPU frame capture failed; check the graphics backend and restart."); StopOutput(); }
         }

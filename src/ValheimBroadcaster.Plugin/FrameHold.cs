@@ -22,10 +22,18 @@ internal sealed class FrameHold
     internal Action<RenderTexture, long, int>? ObserveLiveFrame;
     internal Action? PictureUnavailable;
     internal Func<DiagnosticPictureContext>? DescribePicture;
+    internal Func<string>? DescribeOperatorSubject;
     private DiagnosticPictureContext sourceContext;
+    private string sourceSubject = "";
     private int sourceFrame = -1;
     private float sourceTime;
     internal long Generation => program.Generation;
+    // Read-only presentation state for commands/status outside IMGUI. Metadata
+    // belongs to the captured source, including when that source is held.
+    internal FramePresentation CurrentPresentation => program.Select(Time.unscaledTime, Time.frameCount, active(), hardFailure(),
+        renderer && renderer.isActiveAndEnabled && frame && frame.IsCreated() && !captureFailed).Presentation;
+    internal DiagnosticPictureContext OperatorPicture => sourceContext;
+    internal string OperatorSubject => sourceSubject;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
     internal string LastFailure { get; set; } = "none";
     internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; clean program epoch {program.Generation}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}.";
@@ -83,6 +91,8 @@ internal sealed class FrameHold
                 Blit(source, frame!);
                 try { sourceContext = DescribePicture?.Invoke() ?? default; }
                 catch { sourceContext = new DiagnosticPictureContext("Unknown", 0, 0, false, "Diagnostic context unavailable"); }
+                try { sourceSubject = DescribeOperatorSubject?.Invoke() ?? ""; }
+                catch { sourceSubject = ""; }
                 sourceFrame = Time.frameCount; sourceTime = now;
                 continuity.Captured(now);
             }
@@ -131,8 +141,9 @@ internal sealed class FrameHold
         try
         {
             // Calibration measures each source family through this same blit
-            // path. Only the encoder copy is normalized; local presentation and
-            // picture-analysis textures retain Unity's regular texture layout.
+            // path. This normalizes the encoder copy; local presentation stays
+            // in Unity's regular layout. Picture analysis separately calibrates
+            // and normalizes its private sample without modifying this source.
             bool isSlate = stamp.Presentation == FramePresentation.Slate;
             Blit(isSlate ? slate.Texture : frame!, destination, isSlate ? flipSlate : flipCamera);
         }
@@ -221,6 +232,7 @@ internal sealed class FrameHold
         UnityEngine.Object.Destroy(lost);
         renderer = null; camera = null;
         Release(); renderedFrame = -1; testAt = -1;
+        sourceContext = default; sourceSubject = ""; sourceFrame = -1;
     }
 
     internal void Reset()

@@ -26,7 +26,7 @@ internal static class NativeRankingTests
     {
         internal int Forced = -2, Calls, LastIncumbent = -1, AlternativeCalls;
         public int Best(IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
-            IReadOnlyList<bool>? readable, int incumbent)
+            IReadOnlyList<bool>? readable, int incumbent, IReadOnlyList<int>? priorities = null)
         {
             Calls++; LastIncumbent = incumbent;
             int available = 0;
@@ -34,7 +34,7 @@ internal static class NativeRankingTests
             if (incumbent == -1 && available > 0 && available < eligible.Count) AlternativeCalls++;
             // Test double exercises the injection/timing contract. It does not
             // claim to execute Unity or the real ClearShot component.
-            return Forced != -2 ? Forced : ShotCandidateRanking.Best(scores, eligible, readable, incumbent);
+            return Forced != -2 ? Forced : ShotCandidateRanking.Best(scores, eligible, readable, incumbent, priorities: priorities);
         }
     }
 

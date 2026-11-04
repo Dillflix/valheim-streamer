@@ -22,6 +22,9 @@ internal sealed class ScenicCameraRig : IDisposable
     private float aspect, nearClip;
     private long pictureEpoch = 1000000000;
     private RenderedPictureContext pictureContext;
+    private RenderedPictureKey pendingReconsideration;
+    internal bool PictureConcern { get; private set; }
+    internal string PictureConcernReason { get; private set; } = "No persistent rendered-picture concern";
     private readonly int[] rejected = new int[Enum.GetValues(typeof(ScenicRejectionKind)).Length];
     internal bool LastPictureUsable { get; private set; }
     internal bool MovementAccepted { get; private set; }
@@ -39,8 +42,17 @@ internal sealed class ScenicCameraRig : IDisposable
         float cameraAspect, float cameraNearClip, bool continuous, bool moveCarrier,
         out Vector3 position, out Quaternion rotation, out float fov)
     {
+        CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Live, out var liveWork);
+        using (liveWork) return TrySolveBudgeted(shot, progress, suppliedVisibility, cameraAspect, cameraNearClip,
+            continuous, moveCarrier, out position, out rotation, out fov);
+    }
+
+    private bool TrySolveBudgeted(ScenicShotPlan shot, float progress, ScenicVisibility? suppliedVisibility,
+        float cameraAspect, float cameraNearClip, bool continuous, bool moveCarrier,
+        out Vector3 position, out Quaternion rotation, out float fov)
+    {
         position = default; rotation = Quaternion.identity; fov = shot.FieldOfView;
-        LastPictureUsable = MovementAccepted = false; pictureContext = default;
+        LastPictureUsable = MovementAccepted = PictureConcern = false; pictureContext = default;
         if (world != ZNet.instance || carrier != Player.m_localPlayer)
         {
             Reset(); world = ZNet.instance; carrier = Player.m_localPlayer;
@@ -48,7 +60,7 @@ internal sealed class ScenicCameraRig : IDisposable
         bool changed = !ReferenceEquals(plan, shot);
         if (!ReferenceEquals(preparedPlan, shot))
         {
-            if (!shot.IsDirected || !shot.IsPictureOnly && !path.Prepare(shot, 1))
+            if (!shot.IsDirected || !shot.IsPictureOnly && !shot.IsPan && !path.Prepare(shot, 1))
                 return Reject(ScenicRejectionKind.InvalidPlan, "Cannot prepare directed scenic native route");
             solver.Reset(); preparedPlan = shot;
         }
@@ -77,7 +89,15 @@ internal sealed class ScenicCameraRig : IDisposable
         {
             // Commit a cut only after its first actual pose passes. Preparing a
             // different path must not destroy the last valid live composition.
-            if (changed) { plan = shot; pictureEpoch++; }
+            if (changed)
+            {
+                // Consume pixel correction only when a different validated view
+                // actually goes on air, never merely for an unfulfilled request.
+                if (pendingReconsideration.IsValid) PictureMonitor?.AcceptReconsideration(pendingReconsideration, Time.unscaledTime);
+                // Shot ID distinguishes cuts. Keep the scene epoch stable so
+                // pixel-correction settling survives a local scenic edit.
+                pendingReconsideration = default; plan = shot;
+            }
             accepted = wanted; hasPose = true; MovementAccepted = true; FailureKind = ScenicRejectionKind.None;
             LastFailure = "none";
         }
@@ -95,10 +115,15 @@ internal sealed class ScenicCameraRig : IDisposable
         position = accepted.Position; rotation = accepted.Rotation; fov = accepted.FieldOfView;
         LastPictureUsable = true;
         ScenicShotPlan shown = plan!;
+        PictureRegion subjectRegion = default;
+        if (shown.Feature != null) ScenicSubjectFrame.Evaluate(shown.Feature, shown.Role, accepted, aspect, nearClip, out _, out subjectRegion);
         pictureContext = new RenderedPictureContext(new RenderedPictureKey(pictureEpoch, shown.Id, 0),
-            default, false, Time.frameCount, Time.unscaledTime);
+            subjectRegion, subjectRegion.IsValid, Time.frameCount, Time.unscaledTime);
         RenderedPictureFeedback pixels = PictureMonitor != null
             ? PictureMonitor.Feedback(pictureContext.Key, Time.unscaledTime) : RenderedPictureFeedback.Unavailable("pixel monitor unavailable");
+        PictureConcern = pixels.ShouldReconsider;
+        PictureConcernReason = pixels.Measurement.Valid ? pixels.Measurement.Reason : "Rendered-picture evidence unavailable";
+        if (PictureConcern) pendingReconsideration = pictureContext.Key;
         Diagnostics = (shown.IsPictureOnly ? "Independent scenic picture: " : "Directed scenery: ") + shown.FeatureKind + " / " + shown.Role +
             "; plan " + shown.Id + (shown.Id == shot.Id ? "" : "; awaiting cut " + shot.Id) + "; progress " + accepted.Progress.ToString("P0") +
             "; duration " + shown.DurationSeconds.ToString("F1") + "s; fixed lens " + fov.ToString("F0") +
@@ -119,7 +144,7 @@ internal sealed class ScenicCameraRig : IDisposable
     {
         plan = preparedPlan = null; world = null; carrier = null; hasPose = false; accepted = default;
         LastPictureUsable = MovementAccepted = false; FailureKind = ScenicRejectionKind.None;
-        pictureContext = default; pictureEpoch++; path.Reset(); solver.Reset(); ownedVisibility.Reset();
+        pictureContext = default; pendingReconsideration = default; PictureConcern = false; pictureEpoch++; path.Reset(); solver.Reset(); ownedVisibility.Reset();
         Array.Clear(rejected, 0, rejected.Length);
     }
     public void Dispose() { Reset(); solver.Dispose(); path.Dispose(); }

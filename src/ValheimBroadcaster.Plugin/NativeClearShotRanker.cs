@@ -60,10 +60,10 @@ internal sealed class NativeClearShotRanker : IShotCandidateRanker, IDisposable
     }
 
     public int Best(IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
-        IReadOnlyList<bool>? readable, int incumbent)
+        IReadOnlyList<bool>? readable, int incumbent, IReadOnlyList<int>? priorities = null)
     {
         if (!bound || disposed) throw new InvalidOperationException("ClearShot has no bound camera set.");
-        if (scores.Count != cameras.Length || eligible.Count != cameras.Length || readable != null && readable.Count != cameras.Length)
+        if (scores.Count != cameras.Length || eligible.Count != cameras.Length || readable != null && readable.Count != cameras.Length || priorities != null && priorities.Count != cameras.Length)
             throw new ArgumentException("ClearShot evidence must match its stable camera set.");
         var children = manager.ChildCameras;
         children.Clear();
@@ -74,7 +74,7 @@ internal sealed class NativeClearShotRanker : IShotCandidateRanker, IDisposable
             {
                 previousPriority[i] = cameras[i].Priority;
                 previousQuality[i] = cameras[i].SwapEvaluatedShotQuality(
-                    ShotCandidateRanking.NativeQuality(scores[i], readable != null && readable[i]));
+                    ShotCandidateRanking.NativeQuality(scores[i], readable == null || readable[i], priorities?[i] ?? 0));
                 prepared = i + 1;
                 // Native ClearShot keeps an incumbent on a quality tie. Its
                 // manager is used as a stateless ranker, so pass that preference

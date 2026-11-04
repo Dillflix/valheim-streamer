@@ -96,6 +96,8 @@ namespace ValheimBroadcaster.Core
         private readonly PlayerActivitySelection activitySelection = new PlayerActivitySelection();
         private readonly PlayerPictureRecovery pictureRecovery = new PlayerPictureRecovery();
         private readonly ScenicDestinationDiversity scenicDiversity = new ScenicDestinationDiversity();
+        private readonly ScenicAppearanceHistory scenicAppearanceHistory = new ScenicAppearanceHistory();
+        private ScenicAppearanceKey? scenicAppearance;
         private readonly List<ScenicRegion> scenicCandidates = new List<ScenicRegion>(1024);
         private ScenicRegion? pendingScenic;
         private readonly List<string> activityRoster = new List<string>(128);
@@ -184,18 +186,26 @@ namespace ValheimBroadcaster.Core
         {
             if (paused == value) return;
             paused = value;
+            pictureRecovery.ResetCurrent();
             WildlifeCutawayActive = false;
             PresentationGraceActive = false; shotLostAt = outOfReachSince = -1;
             if (value) { scenicDiversity.StopVisit(); pendingScenic = null; PendingTravel = ActiveTravel = null; State = AutonomyState.Paused; Reason = "Automatic direction paused"; }
             else { acquisitionBegan = lastNow; idleUnreadyBegan = -1; }
         }
-        public void SetHolding(bool value) { if (Held != value) { activitySelection.ResetRetention(); pictureRecovery.ResetCurrent(); } Held = value; }
+        public void SetHolding(bool value)
+        {
+            if (Held != value) { activitySelection.ResetRetention(); pictureRecovery.ResetCurrent(); acquisitionBegan = lastNow; }
+            Held = value;
+        }
         public void Next(int direction = 1)
         {
             if (direction != 1 && direction != -1) throw new ArgumentOutOfRangeException(nameof(direction));
             requestedStep = direction; requestedSelection = null;
         }
         public void Select(string id) { requestedSelection = Label(id, nameof(id)); requestedStep = 0; }
+        /// <summary>Measured local appearance informs only comparable, already
+        /// eligible destinations; it cannot override source variety or cooldowns.</summary>
+        public void SetScenicAppearance(ScenicAppearanceKey appearance) => scenicAppearance = appearance;
 
         /// <summary>Report readable, rendered player IDs; discovery/group membership is insufficient.</summary>
         public void RecordCoverage(double now, double dt, IReadOnlyList<string> visibleIds)
@@ -240,12 +250,14 @@ namespace ValheimBroadcaster.Core
                 EndWildlifeCutaway(now);
             if (ActiveTravel != null || travelBusy)
             {
+                pictureRecovery.ResetCurrent();
                 State = AutonomyState.Travelling;
                 Reason = ActiveTravel == null ? "Waiting for controlled travel to finish" : "Travelling to " + ActiveTravel.Name;
                 return;
             }
             if (PendingTravel != null)
             {
+                pictureRecovery.ResetCurrent();
                 if (now - pendingAt >= RequestAcceptanceSeconds)
                     TravelCompleted(PendingTravel.Token, false, now, "Travel request was not accepted before its deadline");
                 else { State = AutonomyState.Acquiring; Reason = "Preparing travel to " + PendingTravel.Name; }
@@ -258,6 +270,7 @@ namespace ValheimBroadcaster.Core
             AutonomyPlayer? selected = Find(players, targetId);
             if (wildlifeCutaway && selected != null && (WildlifeCutawayActive || CanStartWildlifeCutaway))
             {
+                pictureRecovery.ResetCurrent();
                 scenicDiversity.StopVisit();
                 WildlifeCutawayActive = true;
                 TargetName = selected.Name;
@@ -299,6 +312,7 @@ namespace ValheimBroadcaster.Core
                 {
                     Reason = "Complementary encounter view; retaining " + selected.Name + " for return";
                     pictureRecovery.ResetCurrent();
+                    acquisitionBegan = now;
                     return;
                 }
             }
@@ -309,10 +323,15 @@ namespace ValheimBroadcaster.Core
                 AutonomyPlayer? alternative = ChoosePlayer(players, now, selected.Id, 1);
                 if (alternative != null) { selected = alternative; SetTarget(selected, now); ObservePresentation(selected, now, presentedPlayerId); }
             }
-            if (selected != null && !(selected.SceneReady && string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal)) &&
+            if (selected != null && !(selected.SceneReady && (Held && hasPresentedTarget || string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal))) &&
                 now - acquisitionBegan >= AcquisitionSeconds)
             {
-                Fail("p:" + selected.Id, now, "Could not acquire " + selected.Name + " before its deadline");
+                // If every local camera option failed, retain the bounded
+                // target retry policy. Loaded geometry does not justify an
+                // endless slate, nor does it justify travel to this same actor.
+                Fail("p:" + selected.Id, now, selected.SceneReady && hasPresentedTarget ?
+                    "Could not restore a picture of locally loaded " + selected.Name + " before its deadline" :
+                    "Could not acquire " + selected.Name + " before its deadline");
                 lastPlayer = selected.Id; SetTarget(null, now); selected = null;
             }
             if (selected != null)
@@ -322,24 +341,33 @@ namespace ValheimBroadcaster.Core
                 {
                     outOfReachSince = -1;
                     idleActive = false; scenicDiversity.StopVisit();
-                    if (string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal))
+                    bool presented = string.Equals(presentedPlayerId, selected.Id, StringComparison.Ordinal);
+                    bool readablePicture = presented && usablePlayerFootage;
+                    // Losing the entire camera picture is at least as serious
+                    // as retaining an unreadable one. The established target is
+                    // independent of this frame's presentation ID; do not erase
+                    // its local-picture deadline merely because Apply failed.
+                    // A never-presented or genuinely unloaded target still uses
+                    // the separate acquisition/travel policy.
+                    pictureRecovery.Observe(selected.Id, now, hasPresentedTarget && !Held, readablePicture);
+                    if (!Held && !readablePicture && pictureRecovery.ShouldTryAlternative(now))
+                    {
+                        AutonomyPlayer? alternative = ChoosePlayer(players, now, selected.Id, 1, true, true);
+                        if (alternative != null && alternative.Id != selected.Id)
+                        {
+                            pictureRecovery.LeftUnusable(selected.Id, now);
+                            SetTarget(alternative, now);
+                            Reason = "Trying another loaded player after sustained picture loss: " + alternative.Name;
+                            return;
+                        }
+                    }
+                    if (presented)
                     {
                         State = AutonomyState.Following; Reason = "Following " + selected.Name;
                         acquisitionBegan = now; acquisitionTrips = 0; lastPlayerDestination = null;
                         failures.Remove("p:" + selected.Id);
-                        pictureRecovery.Observe(selected.Id, now, hasPresentedTarget, usablePlayerFootage);
                         if (!Held && !usablePlayerFootage && pictureRecovery.ShouldTryAlternative(now))
-                        {
-                            AutonomyPlayer? alternative = ChoosePlayer(players, now, selected.Id, 1, true, true);
-                            if (alternative != null && alternative.Id != selected.Id)
-                            {
-                                pictureRecovery.LeftUnusable(selected.Id, now);
-                                SetTarget(alternative, now);
-                                Reason = "Trying another loaded player after sustained unreadable footage: " + alternative.Name;
-                                return;
-                            }
                             Reason = "Seeking a clearer player view; no other local ready subject outside picture cooldown";
-                        }
                         if (!Held && usablePlayerFootage) dwell = Math.Min(DwellSeconds, dwell + footage);
                         if (dwell >= DwellSeconds && !Held && usablePlayerFootage)
                         {
@@ -353,8 +381,9 @@ namespace ValheimBroadcaster.Core
                         }
                         return;
                     }
-                    pictureRecovery.Observe(selected.Id, now, false, false);
-                    State = AutonomyState.Acquiring; Reason = "Waiting for a valid camera shot of " + selected.Name;
+                    State = AutonomyState.Acquiring;
+                    Reason = hasPresentedTarget ? "Recovering the missing camera picture of loaded player " + selected.Name :
+                        "Waiting for a first valid camera shot of " + selected.Name;
                 }
                 else
                 {
@@ -420,6 +449,8 @@ namespace ValheimBroadcaster.Core
             if (available) idleUnreadyBegan = -1;
             else if (idleUnreadyBegan < 0) idleUnreadyBegan = now;
             scenicDiversity.Observe(scenicFootage, scenicPicture);
+            if (scenicAppearance.HasValue && scenicDiversity.CurrentId != null)
+                scenicAppearanceHistory.Observe(scenicDiversity.CurrentId, scenicAppearance.Value, scenicFootage, scenicPicture);
             if (Held) { Reason += " (held)"; return; }
             if (ready) idleDwell += footage;
             // A loaded region can still fail to produce a picture. The client
@@ -441,7 +472,8 @@ namespace ValheimBroadcaster.Core
                 scenicCandidates.Add(region);
             }
             ScenicRegion? chosen = scenicDiversity.Choose(scenicCandidates, currentPosition,
-                id => visited.TryGetValue(id, out double lastVisit) ? lastVisit : double.NegativeInfinity);
+                id => visited.TryGetValue(id, out double lastVisit) ? lastVisit : double.NegativeInfinity,
+                scenicAppearance.HasValue ? id => scenicAppearanceHistory.Preference(id, scenicAppearance.Value) : (Func<string, double>?)null);
             if (chosen == null)
             {
                 Reason = (ready ? "Retaining the readable scenic view. " : "") +
@@ -550,6 +582,7 @@ namespace ValheimBroadcaster.Core
         {
             SetEnabled(false); PendingTravel = ActiveTravel = null; visited.Clear(); failures.Clear();
             scenicDiversity.Reset(); scenicCandidates.Clear(); pendingScenic = null;
+            scenicAppearanceHistory.Reset(); scenicAppearance = null;
             coverage.Reset(); activitySelection.Reset(); pictureRecovery.Reset();
             targetId = lastPlayer = requestedSelection = null; requestedStep = 0;
             Held = paused = started = idleActive = false; idleUnreadyBegan = -1; idleDwell = dwell = 0;
@@ -577,6 +610,7 @@ namespace ValheimBroadcaster.Core
         }
         private void EndWildlifeCutaway(double now)
         {
+            pictureRecovery.ResetCurrent();
             WildlifeCutawayActive = false;
             acquisitionBegan = now; shotLostAt = outOfReachSince = -1;
             PresentationGraceActive = false;

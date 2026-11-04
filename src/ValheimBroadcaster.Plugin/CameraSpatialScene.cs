@@ -46,11 +46,13 @@ internal sealed class CameraSpatialScene
     private ZNetScene? scene;
     private Player? carrier;
     private int obstructionMask;
-    private long epoch = 1;
+    private long epoch = 1, worldEpoch = 1;
     private long worldId;
     internal long Epoch { get { Synchronize(); return epoch; } }
+    internal long WorldEpoch { get { Synchronize(); return worldEpoch; } }
     internal string Diagnostics => $"Camera space: epoch {epoch}; {points.Count} points, {segments.Count} corridors, {pending.Count} pending; " +
-        $"work {budget.Spent}/{CameraObservationBudget.TotalUnits} (background {budget.BackgroundSpent}/{CameraObservationBudget.BackgroundUnits})";
+        $"work {budget.Spent}/{CameraObservationBudget.TotalUnits} (background {budget.BackgroundSpent}/{CameraObservationBudget.BackgroundUnits}); " +
+        CameraWorkBudget.Shared.Diagnostics + "; " + ScenicFoliageScene.Shared.Diagnostics;
 
     // Every physical input participates in exact equality. Rounded position or
     // omitted orientation/lens values could reuse proof across a wall/near plane.
@@ -317,7 +319,7 @@ internal sealed class CameraSpatialScene
         epoch++; if (epoch <= 0) epoch = 1;
     }
     internal void Reset()
-    { Invalidate(); budget.Reset(); world = null; scene = null; carrier = null; worldId = 0; obstructionMask = 0; }
+    { worldEpoch++; Invalidate(); budget.Reset(); world = null; scene = null; carrier = null; worldId = 0; obstructionMask = 0; }
     private static bool Valid(Vector3 position, Quaternion rotation, float fov, float aspect, float nearClip, CameraSpaceUse use)
     {
         float magnitude = rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w;

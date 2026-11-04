@@ -15,6 +15,7 @@ internal sealed class PlaceSurvey
     private const float SurveyRadius = 112f;
     private const int PerFrame = 128, MaximumInspected = 8192;
     private static readonly FieldInfo? AllPieces = typeof(Piece).GetField("s_allPieces", BindingFlags.Static | BindingFlags.NonPublic);
+    private readonly PlaceGeometryChanges geometryChanges = new PlaceGeometryChanges();
     private readonly PlaceHierarchy hierarchy = new PlaceHierarchy();
     private readonly PlaceHierarchy staging = new PlaceHierarchy();
     private readonly List<PlacePieceObservation> observed = new List<PlacePieceObservation>(PlaceHierarchy.MaximumPieces);
@@ -46,6 +47,9 @@ internal sealed class PlaceSurvey
         if (!TargetRoster.Finite(center) || !Finite(now) || now < 0) return;
         if (!Synchronize(now) || frame == Time.frameCount) return;
         frame = Time.frameCount;
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out CameraWorkBudget.Lease lease)) return;
+        using (lease)
+        {
         if ((collecting || probing) && (now < begunAt || now - begunAt > 5 || Vector3.Distance(center, origin) > 40))
         { collecting = probing = false; nextSurvey = 0; }
         if (!collecting && !probing)
@@ -58,7 +62,7 @@ internal sealed class PlaceSurvey
             if (source == null) { Publish(now, false); return; }
             if (source.Count != initialCount) complete = false;
             int budget = PerFrame;
-            while ((seedIndex < retained.Count || index < scanTarget && source.Count > 0) && budget-- > 0)
+            while ((seedIndex < retained.Count || index < scanTarget && source.Count > 0) && budget-- > 0 && CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Observation))
             {
                 // Revalidate the previous nearest observations before rotating
                 // through the bounded loaded-list window. Huge lists cannot
@@ -97,6 +101,7 @@ internal sealed class PlaceSurvey
             if (probeIndex < Math.Min(16, probeTargets.Count))
             { ProbeSpace(probeTargets[probeIndex++]); return; }
             Publish(now, complete);
+        }
         }
     }
 
@@ -200,9 +205,9 @@ internal sealed class PlaceSurvey
     }
     private void Publish(float now, bool localComplete)
     {
-        long previousRevision = Snapshot.Revision;
+        bool geometryChanged = geometryChanges.Update(observed, ToCore(origin), SurveyRadius, localComplete);
         hierarchy.Update(observed, spaces, ToCore(origin), SurveyRadius, localComplete, now);
-        if (previousRevision > 0 && Snapshot.Revision != previousRevision)
+        if (geometryChanged)
             CameraSpatialScene.Shared.Invalidate();
         collecting = probing = false; nextSurvey = now + 2f;
     }
@@ -215,9 +220,12 @@ internal sealed class PlaceSurvey
 
     internal IReadOnlyList<ScenicFeature> ScenicFeatures(Vector3 center, float radius, string? preferredId = null)
     {
+        if (!TargetRoster.Finite(center) || !Synchronize(Time.unscaledTime) || !Snapshot.Fresh(Time.unscaledTime) ||
+            !Finite(radius) || radius <= 0) { features.Clear(); return features; }
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out CameraWorkBudget.Lease lease)) return features;
+        using (lease)
+        {
         features.Clear();
-        if (!TargetRoster.Finite(center) || !Synchronize(Time.unscaledTime) || !Snapshot.Fresh(Time.unscaledTime)) return features;
-        if (!Finite(radius) || radius <= 0) return features;
         foreach (PlaceNode node in PlaceScenicSelection.Select(Snapshot, ToCore(center), radius, preferredId))
         {
             if (features.Count >= PlaceScenicSelection.MaximumFeatures) break;
@@ -230,7 +238,8 @@ internal sealed class PlaceSurvey
                 !ScenicSurface.TryWaterHeight(focus, out bool water, out float waterHeight)) continue;
             float lower = Mathf.Max(bounds.Minimum.Y, ground + .25f);
             if (water) lower = Mathf.Max(lower, waterHeight + .25f);
-            if (bounds.Maximum.Y - lower < .75f && node.Kind != PlaceKind.Courtyard) continue;
+            if (bounds.Maximum.Y <= lower || bounds.Width <= 0 || bounds.Depth <= 0 ||
+                bounds.Maximum.Y - lower < .75f && node.Kind != PlaceKind.Courtyard) continue;
             focus.y = node.Kind == PlaceKind.Courtyard ? ground + 1.5f : (lower + bounds.Maximum.Y) * .5f;
             string? parent = node.ParentId;
             PlaceNode? ancestor = Snapshot.Find(parent);
@@ -240,10 +249,47 @@ internal sealed class PlaceSurvey
                  Vector3.Distance(FromCore(ancestor.Bounds.Center), center) > radius))
             { parent = ancestor.ParentId; ancestor = Snapshot.Find(parent); }
             features.Add(new ScenicFeature(node.Id, node.Kind == PlaceKind.Courtyard ? ScenicFeatureKind.Clearing : ScenicFeatureKind.Structure,
-                ToCore(focus), direction, bounds.Radius, Mathf.Max(1, bounds.Maximum.Y - lower), node.Confidence,
-                parentId: parent, scopeLabel: node.Kind.ToString(), isPartial: node.IsPartial));
+                ToCore(focus), direction, Mathf.Max(1, bounds.Radius), Mathf.Max(1, bounds.Maximum.Y - lower), node.Confidence,
+                parentId: parent, scopeLabel: node.Kind.ToString(), isPartial: node.IsPartial,
+                measuredBounds: new PlaceBounds(new AutonomyPosition(bounds.Minimum.X, lower, bounds.Minimum.Z), bounds.Maximum),
+                memberBounds: RepresentativeMembers(node)));
         }
         return features;
+        }
+    }
+
+    private IReadOnlyList<PlaceBounds> RepresentativeMembers(PlaceNode parent)
+    {
+        var available = new List<PlaceBounds>();
+        if (parent.Kind != PlaceKind.District && parent.Kind != PlaceKind.Settlement) return available;
+        foreach (string id in parent.Children)
+        {
+            PlaceNode? child = Snapshot.Find(id);
+            if (child == null) continue;
+            if (child.Kind == PlaceKind.Building) available.Add(child.Bounds);
+            else if (child.Kind == PlaceKind.District)
+                foreach (string buildingId in child.Children)
+                {
+                    PlaceNode? building = Snapshot.Find(buildingId);
+                    if (building != null && building.Kind == PlaceKind.Building) available.Add(building.Bounds);
+                }
+        }
+        // Farthest-point sampling retains the actual near and far building
+        // envelopes across a sprawling site, rather than its empty parent AABB.
+        var result = new List<PlaceBounds>(8);
+        while (result.Count < 8 && available.Count > 0)
+        {
+            int chosen = 0; double best = double.NegativeInfinity;
+            for (int i = 0; i < available.Count; i++)
+            {
+                double distance = result.Count == 0 ? -(FromCore(available[i].Center) - origin).sqrMagnitude : double.PositiveInfinity;
+                foreach (PlaceBounds selectedBound in result)
+                    distance = Math.Min(distance, (FromCore(available[i].Center) - FromCore(selectedBound.Center)).sqrMagnitude);
+                if (distance > best) { best = distance; chosen = i; }
+            }
+            result.Add(available[chosen]); available.RemoveAt(chosen);
+        }
+        return result;
     }
 
     private bool Synchronize(float now)
@@ -262,7 +308,7 @@ internal sealed class PlaceSurvey
 
     internal void Reset()
     {
-        hierarchy.Reset(); staging.Reset(); source = null; world = null; scene = null; worldId = 0; lastNow = -1; observed.Clear(); distances.Clear(); spaces.Clear(); identities.Clear(); features.Clear(); colliders.Clear(); retained.Clear(); selected.Clear(); probeTargets.Clear();
+        geometryChanges.Reset(); hierarchy.Reset(); staging.Reset(); source = null; world = null; scene = null; worldId = 0; lastNow = -1; observed.Clear(); distances.Clear(); spaces.Clear(); identities.Clear(); features.Clear(); colliders.Clear(); retained.Clear(); selected.Clear(); probeTargets.Clear();
         origin = default; nextSurvey = begunAt = 0; index = initialCount = processed = probeIndex = seedIndex = scanStart = nextStart = scanTarget = 0; frame = -1; collecting = probing = complete = false;
     }
     private static bool Finite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);

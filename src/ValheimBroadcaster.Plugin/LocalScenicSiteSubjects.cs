@@ -98,10 +98,10 @@ internal sealed class LocalScenicSiteSubjects
             if (direction.sqrMagnitude < .01f) direction = Vector3.forward;
             var site = new ScenicFeature(parent, ScenicFeatureKind.Structure, ToCore(context.center), ToCore(direction),
                 Mathf.Clamp(Mathf.Max(context.extents.x, context.extents.z), 3f, 25f), Mathf.Clamp(context.size.y, 1f, 50f), .94f,
-                scopeLabel: label + " surroundings", isPartial: true, subjectKind: ScenicSubjectKind.SiteContext, subjectIdentity: identity);
+                scopeLabel: label + " surroundings", isPartial: true, subjectKind: ScenicSubjectKind.SiteContext, subjectIdentity: identity, measuredBounds: ToCore(context));
             var actor = new ScenicFeature(id, ScenicFeatureKind.Structure, ToCore(body.center), ToCore(direction),
                 Mathf.Clamp(Mathf.Max(body.extents.x, body.extents.z), 1f, 6f), Mathf.Clamp(body.size.y, 1f, 12f), .96f,
-                parentId: parent, scopeLabel: label, subjectKind: ScenicSubjectKind.Npc, subjectIdentity: identity);
+                parentId: parent, scopeLabel: label, subjectKind: ScenicSubjectKind.Npc, subjectIdentity: identity, measuredBounds: ToCore(body));
             // Retain this pair together; unrelated high-density rock/piece
             // observations cannot leave an orphan detail without its context.
             while (output.Count > maximum - 2)
@@ -177,5 +177,6 @@ internal sealed class LocalScenicSiteSubjects
         reason = "Trader upper body is outside the frame or obscured"; return false;
     }
 
+    private static PlaceBounds ToCore(Bounds value) => new PlaceBounds(ToCore(value.min), ToCore(value.max));
     private static AutonomyPosition ToCore(Vector3 value) => new AutonomyPosition(value.x, value.y, value.z);
 }

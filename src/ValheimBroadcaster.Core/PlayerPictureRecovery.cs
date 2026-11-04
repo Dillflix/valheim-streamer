@@ -11,13 +11,16 @@ namespace ValheimBroadcaster.Core
         private readonly Dictionary<string, double> failedUntil = new Dictionary<string, double>(StringComparer.Ordinal);
         private string? current;
         private double lostSince = -1, lastAt = -1;
-        public void Observe(string? id, double now, bool presented, bool readable)
+        /// <param name="established">The target has already been presented and
+        /// remains locally ready. This is not the current frame's presence;
+        /// both missing and unreadable pictures start the same recovery clock.</param>
+        public void Observe(string? id, double now, bool established, bool readable)
         {
             AutonomousDirector.Time(now, nameof(now));
             bool gap = lastAt >= 0 && (now < lastAt || now - lastAt > 3);
             if (id != current || gap) lostSince = -1;
             current = id; lastAt = now;
-            if (id == null || !presented || readable) lostSince = -1;
+            if (id == null || !established || readable) lostSince = -1;
             else if (lostSince < 0) lostSince = now;
         }
         public bool ShouldTryAlternative(double now) => lostSince >= 0 && now - lostSince >= SearchSeconds;

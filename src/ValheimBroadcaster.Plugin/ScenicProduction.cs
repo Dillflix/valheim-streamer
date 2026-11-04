@@ -212,6 +212,19 @@ internal sealed class ScenicProduction
         return !requested && director.NeedsReplacement;
     }
 
+    private long pixelReplannedId;
+    internal bool ObservePixelConcern(long planId, bool reconsider, string reason)
+    {
+        if (!reconsider || planId <= 0 || planId == pixelReplannedId ||
+            Plan?.Id != planId) return false;
+        pixelReplannedId = planId;
+        director.RequestReplacement("Measured picture concern; prepare a different local composition: " + reason);
+        retryAt = 0;
+        // Darkness, fog and poor contrast never invalidate the scene lease,
+        // erase the readable current view, or request autonomous relocation.
+        return true;
+    }
+
     internal void UpdateRecovery(bool onAir, bool usableLive, long planId, bool held)
     {
         bool knownPicture = planId > 0 && (Plan?.Id == planId || lastPresentedPlan?.Id == planId);
@@ -406,6 +419,11 @@ internal sealed class ScenicProduction
     private bool TryIndependentPicture(bool moveCarrier)
     {
         if (!spatial.HasPictureCandidate) return false;
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return false;
+        using (work) return TryIndependentPictureBudgeted(moveCarrier);
+    }
+    private bool TryIndependentPictureBudgeted(bool moveCarrier)
+    {
         bool protectCurrent = HasUsablePicture && (pictures.Current != null || !NeedsReplacement);
         if (!pictures.WantsCandidate(protectCurrent)) return false;
         ScenicShotPlan? candidate = spatial.TakePictureCandidate(++nextId, out long epoch, out float observedAt);

@@ -70,7 +70,15 @@ namespace ValheimBroadcaster.Core
             => RoleForCount(RoleCount(kind), preferred, index);
 
         public static ScenicShotRole Role(ScenicFeature feature, ScenicShotRole preferred, int index)
-            => RoleForCount(RoleCount(feature), preferred, index);
+        {
+            if (feature == null) throw new ArgumentNullException(nameof(feature));
+            if (feature.SubjectKind == ScenicSubjectKind.Npc || feature.ScopeLabel == "Opening")
+            {
+                if (index != 0) throw new ArgumentOutOfRangeException(nameof(index));
+                return ScenicShotRole.Detail;
+            }
+            return RoleForCount(RoleCount(feature), preferred, index);
+        }
 
         private static ScenicShotRole RoleForCount(int count, ScenicShotRole preferred, int index)
         {
@@ -92,6 +100,7 @@ namespace ValheimBroadcaster.Core
         public static int RoleCount(ScenicFeature feature)
         {
             if (feature == null) throw new ArgumentNullException(nameof(feature));
+            if (feature.SubjectKind == ScenicSubjectKind.Npc || feature.ScopeLabel == "Opening") return 1;
             return feature.ScopeLabel == "Settlement" || feature.ScopeLabel == "District"
                 ? 3 : RoleCount(feature.Kind);
         }

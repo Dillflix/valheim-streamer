@@ -48,8 +48,8 @@ public sealed class ReplayEngine
             if (kind == "header")
             {
                 string? version = row.GetProperty("version").GetString();
-                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31" || version == "0.8.32" || version == "0.8.33" || version == "0.8.34" || version == "0.8.35";
-                if (!compatible) Bad("Replay supports captured 0.8.29 through 0.8.35 scenic policies; do not silently replay another build");
+                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31" || version == "0.8.32" || version == "0.8.33" || version == "0.8.34" || version == "0.8.35" || version == "0.8.36";
+                if (!compatible) Bad("Replay reads captures from 0.8.29 through 0.8.36 and checks their recorded coverage/deadline decisions; unsupported build");
                 string current = row.GetProperty("utc").GetString()!;
                 if (session != current) { previousSequence = 0; session = current; unavailableSince = null; scenicTravel = false; }
                 return;
@@ -87,6 +87,9 @@ public sealed class ReplayEngine
                 if (result) { if (wait) WaitExpirations++; else SearchExpirations++; }
             }
             else if (kind == "event") Count(reasons, row.GetProperty("owner").GetString() + ": " + row.GetProperty("reason").GetString());
+            else if (kind == "foliage-projection")
+                Count(reasons, "Foliage projection: " + row.GetProperty("action").GetString());
+            else if (kind == "foliage-catalogue-progress") Count(reasons, "Incremental foliage catalogue progress");
             else if (kind == "travel") scenicTravel = true;
             else if (kind == "picture")
             {
@@ -132,6 +135,6 @@ public sealed class ReplayEngine
         foreach (var pair in coverage.OrderByDescending(p => p.Value)) yield return $"Coverage {pair.Key}: {pair.Value}";
         foreach (var pair in reasons.OrderByDescending(p => p.Value).Take(15)) yield return $"Evidence {pair.Value}: {pair.Key}";
         foreach (string problem in Problems) yield return "Problem: " + problem;
-        yield return "Replay checks recorded coverage/deadline decisions only. It does not reproduce Unity physics, loading, foliage pixels, full route selection, or video.";
+        yield return "Replay checks recorded coverage/deadline decisions only. Incremental projection/catalogue lifecycle rows are summarized observations, not re-executed scheduling. It does not reproduce Unity traversal, physics, loading, foliage pixels, full route selection, or video.";
     }
 }

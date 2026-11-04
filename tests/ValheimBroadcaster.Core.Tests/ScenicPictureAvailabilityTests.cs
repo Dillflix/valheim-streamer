@@ -14,6 +14,8 @@ internal static class ScenicPictureAvailabilityTests
         yield return ("A settled first picture gets minimum dwell before a prepared route", SettledHandoff);
         yield return ("Unreadable first picture yields promptly to a ready replacement", FailedPictureHandoff);
         yield return ("Background graph discovery cannot cause picture flicker or repeated viewpoint cuts", StableNovelPictures);
+        yield return ("A freshly revalidated known scenic view can recover picture loss without claiming novelty", EmergencyReuse);
+        yield return ("Emergency picture reuse preserves content exhaustion and scene evidence requirements", EmergencyExhaustion);
         yield return ("Finite scenic fallback content exhaustion needs displayed footage and failed route search", ContentExhaustion);
         yield return ("A requested moving cut does not erase a retained first picture lease", RetainedPictureDuringCut);
         yield return ("Repeated prepared but unpresented routes cannot renew exhausted picture grace", UnpresentedRouteGrace);
@@ -127,6 +129,35 @@ internal static class ScenicPictureAvailabilityTests
         Check(p.ContentExhausted && p.Current != null, "Exhausted local content discarded its valid picture or failed to request variety");
         p.MotionPresented();
         Check(!p.ContentExhausted && p.TotalPictureSeconds == 0, "Real developed motion did not retire fallback exhaustion");
+    }
+    private static void EmergencyReuse()
+    {
+        var p = New(); Show(p, 0, 8.1);
+        Check(p.TryOffer(Picture(2, 0, 20), 3, 3, 8.15, 8.15, true), "Fixture did not choose its second view");
+        Show(p, 8.2, 8.1, 2);
+        Check(!p.TryOffer(Picture(3), 3, 3, 16.35, 16.35, true), "Healthy coverage ignored novelty");
+        Check(p.TryOffer(Picture(3), 3, 3, 16.35, 16.35, false) && p.ReusedPicture,
+            "Novelty rules rejected the only fresh usable emergency picture");
+        Show(p, 16.4, 8.1, 3);
+        Check(!p.TryOffer(Picture(4, 0, 20), 3, 3, 24.55, 24.55, true),
+            "Emergency reuse erased other previously shown viewpoints from novelty memory");
+    }
+    private static void EmergencyExhaustion()
+    {
+        var p = New(); Show(p, 0, 24.1); p.SearchFinished(false);
+        Check(p.ContentExhausted, "Fixture did not exhaust picture content");
+        Check(!p.TryOffer(Picture(2), 2, 3, 24.2, 24.2, false) && !p.TryOffer(Picture(2), 3, 3, 23, 24.2, false),
+            "Emergency reuse accepted a stale view or a different scene epoch");
+        Check(p.TryOffer(Picture(2), 3, 3, 24.2, 24.2, false) && p.ReusedPicture && p.ContentExhausted && p.TotalPictureSeconds >= 24,
+            "Emergency picture reuse renewed exhausted content or discarded a safe picture");
+        Show(p, 24.25, 1, 2);
+        Check(p.ContentExhausted, "Displaying reused footage revived exhausted local content");
+        p.SearchFinished(true); Show(p, 25.3, 2.1, 2);
+        Check(p.ContentExhausted, "Fixture did not exhaust the pending route's brief grace");
+        Check(p.TryOffer(Picture(3), 3, 3, 27.5, 27.5, false) && p.ContentExhausted,
+            "Emergency reuse restarted an already expired pending-route grace");
+        p.ClearCurrent();
+        Check(p.ContentExhausted, "Retiring the picture renewed the expired route's grace");
     }
     private static void RetainedPictureDuringCut()
     {

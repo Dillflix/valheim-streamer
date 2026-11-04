@@ -29,6 +29,7 @@ internal sealed class AutonomousBroadcast
     private WorldInterestSite? interestTravelSite, currentInterest;
     internal WorldInterestSite? ScenicInterest => ControlsSelection && currentInterest != null && (currentInterest.Kind != WorldInterestKind.Natural || currentInterest.Landscape == ScenicLandscape.Coast) ? currentInterest : null;
     private double nextDestinations;
+    private readonly ScenicAppearanceSampler appearance = new ScenicAppearanceSampler();
     private string destinationFeedback = "none";
     private readonly List<ScenicRegion> route = new List<ScenicRegion>(32);
     private long sequence = -1, worldId;
@@ -52,7 +53,7 @@ internal sealed class AutonomousBroadcast
     internal string Status => paused ? "Automatic direction paused for manual control" : !WantsEnabled ? "Automatic direction off" :
         recovering ? "Recovering travel: " + recoveryReason : policy.Reason;
     internal string Diagnostics => "Director: " + Status + " | state " + policy.State +
-        "\nTarget: " + (policy.TargetName ?? "none") + "; ready dwell " + policy.ReadyDwellSeconds.ToString("F1") + "s; retry in " + policy.RetryAfterSeconds(Time.realtimeSinceStartup).ToString("F0") + "s" +
+        "\nTarget: " + (policy.TargetName ?? "none") + "; ready dwell " + policy.ReadyDwellSeconds.ToString("F1") + "s; retry in " + policy.RetryAfterSeconds(Time.realtimeSinceStartupAsDouble).ToString("F0") + "s" +
         "\nActivity direction: " + policy.ActivityReason + "; " + remote.EventStatus +
         "\nTarget readiness: " + targetDiagnostics + "; retaining shot " + policy.PresentationGraceActive +
         "\nLast travel decision: " + lastTravelReason +
@@ -115,13 +116,14 @@ internal sealed class AutonomousBroadcast
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
         if (!WantsEnabled || paused) return;
-        double now = Time.realtimeSinceStartup;
+        double now = Time.realtimeSinceStartupAsDouble;
         ObserverDiscoverySnapshot? snapshot = remote.Discovery;
         if (snapshot != null && worldId != snapshot.WorldId)
         {
             if (worldId != 0) { policy.Reset(); route.Clear(); policy.SetEnabled(true); }
             ResetDestinations(); worldId = snapshot.WorldId; sequence = -1;
         }
+        policy.SetScenicAppearance(appearance.Sample(now));
         if (snapshot != null && snapshot.Sequence != sequence)
         {
             sequence = snapshot.Sequence; generatedRegions.Clear(); nextDestinations = 0;
@@ -306,6 +308,7 @@ internal sealed class AutonomousBroadcast
     private void ResetDestinations()
     {
         generatedRegions.Clear(); interestSites.Clear(); destinationHistory.Clear(); destinationVisit.Reset();
+        appearance.Reset();
         interestTravelId = null; currentInterest = interestTravelSite = null; interestTravelToken = 0; nextDestinations = 0; destinationFeedback = "none";
     }
     private void ReportDestination(string id, DestinationOutcome outcome, float footage, double now)
@@ -328,7 +331,7 @@ internal sealed class AutonomousBroadcast
     {
         if (!observer.RemoteSession || !remote.Approved || observer.Phase != ObserverPhase.Watching)
             throw new InvalidOperationException("Start an authorized observer and finish current travel first.");
-        Enable(true); policy.BeginRouteTest(route, Time.realtimeSinceStartup);
+        Enable(true); policy.BeginRouteTest(route, Time.realtimeSinceStartupAsDouble);
     }
     internal void StopRoute() => policy.StopRouteTest();
     internal void ClearRoute() { policy.StopRouteTest(); route.Clear(); }

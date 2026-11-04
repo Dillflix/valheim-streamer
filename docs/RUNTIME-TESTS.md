@@ -1,5 +1,9 @@
 # Validation and runtime test record
 
+## 0.8.36 broadcast integration
+
+Built directly on 0.8.35 (`a9fbc66`). See [BROADCAST-INTEGRATION.md](BROADCAST-INTEGRATION.md) for the connected changes, deterministic regression scope and runtime acceptance scenarios. The client and server build against real matching assemblies; the existing protocol-3 companion remains compatible. Visual quality, Unity camera/readback lifecycle, Windows NVENC and Sandboxie runtime results remain pending.
+
 ## 0.8.35 broader encounter and crowd coverage
 
 Built directly on 0.8.34 (`0df83a4798b3d40e8124e14fe440dba97aad4fdc`). Adds hostile presence/developing-pressure observation, a larger representative cast with per-shot framing, explicit encounter coverage preference, and actor-to-actor body occlusion. Source identities remain attached through prediction, actual player coverage and synchronized footage. No new server capability or observer protocol is introduced.

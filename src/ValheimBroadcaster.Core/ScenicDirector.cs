@@ -160,9 +160,10 @@ namespace ValheimBroadcaster.Core
         public ScenicShotRole PreferredRole(ScenicFeature feature)
         {
             if (feature == null) throw new ArgumentNullException(nameof(feature));
-            if (feature.SubjectKind == ScenicSubjectKind.Npc) return ScenicShotRole.Detail;
+            if (feature.SubjectKind == ScenicSubjectKind.Npc || feature.ScopeLabel == "Opening") return ScenicShotRole.Detail;
             int count = RecentCount(feature.Id);
             if (count == 0) return ScenicShotRole.Establish;
+            if (count == 1 && feature.ScopeLabel == "Building") return ScenicShotRole.Detail;
             if (count == 1) return feature.Kind == ScenicFeatureKind.Ridge || feature.Kind == ScenicFeatureKind.Clearing
                 ? ScenicShotRole.Reveal : ScenicShotRole.Traverse;
             if (feature.ScopeLabel == "Settlement" || feature.ScopeLabel == "District") return ScenicShotRole.Reveal;

@@ -136,16 +136,16 @@ namespace ValheimBroadcaster.Core
                 "Partial encounter view; surrounding groups not sufficiently represented");
         }
 
-        /// <summary>Only readable candidates enter editorial bands. If no
-        /// encounter purpose is fulfilled, ordinary picture ranking is intact.</summary>
-        public static float Rank(float score, bool readable, EncounterCoverage coverage,
+        /// <summary>Purpose is an ordinal preference, independent of the
+        /// original 0..1 quality scale used by improvement hysteresis.</summary>
+        public static int Priority(bool readable, EncounterCoverage coverage,
             EncounterShotPurpose wanted, bool anyFulfilled)
         {
-            if (!readable || !anyFulfilled || wanted == EncounterShotPurpose.Player) return score;
-            if (coverage.Fulfilled && coverage.Purpose == wanted) return .82f + score * .18f;
-            if (coverage.Fulfilled && coverage.Purpose != EncounterShotPurpose.Player) return .48f + score * .16f;
-            return score * .30f;
+            if (!readable || !anyFulfilled || wanted == EncounterShotPurpose.Player) return 0;
+            if (coverage.Fulfilled && coverage.Purpose == wanted) return 2;
+            return coverage.Fulfilled && coverage.Purpose != EncounterShotPurpose.Player ? 1 : 0;
         }
+
     }
 
     /// <summary>Protect an action beat, but do not let continuous attack flags

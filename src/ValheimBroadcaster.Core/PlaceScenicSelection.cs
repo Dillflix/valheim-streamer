@@ -17,9 +17,9 @@ namespace ValheimBroadcaster.Core
             var eligible = new Dictionary<string, PlaceNode>(StringComparer.Ordinal);
             foreach (PlaceNode node in snapshot.Nodes)
             {
-                if (node.Kind == PlaceKind.Room || node.Kind == PlaceKind.Opening ||
+                if (node.Kind == PlaceKind.Room ||
                     (node.Kind == PlaceKind.District || node.Kind == PlaceKind.Settlement) && node.Children.Count <= 1 ||
-                    node.Bounds.Radius < 1 || node.Bounds.Radius > 120 || node.Bounds.Height > 120 ||
+                    (node.Bounds.Radius < 1 && node.Kind != PlaceKind.Opening) || node.Bounds.Radius > 120 || node.Bounds.Height > 120 ||
                     Distance(node.Bounds.Center, center) > radius * radius) continue;
                 eligible.Add(node.Id, node);
             }

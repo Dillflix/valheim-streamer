@@ -19,6 +19,7 @@ public sealed class ScenicDestinationDiversity
     private bool credited;
     public int CompletedVisits => history.Count;
     public int RecentAttempts => attempts.Count;
+    public string? CurrentId => current?.Id;
     public string Reason { get; private set; } = "Awaiting eligible scenic destinations";
     public string CurrentDescription => current == null ? "unclassified local scenery" : Describe(current);
     public void Reset() { history.Clear(); attempts.Clear(); StopVisit(); Reason = "Awaiting eligible scenic destinations"; }
@@ -42,7 +43,8 @@ public sealed class ScenicDestinationDiversity
         int attempt = attempts.FindLastIndex(r => r.Id == current.Id);
         if (attempt >= 0) attempts.RemoveAt(attempt);
     }
-    public ScenicRegion? Choose(IReadOnlyList<ScenicRegion> eligible, AutonomyPosition position, Func<string, double> visitRank)
+    public ScenicRegion? Choose(IReadOnlyList<ScenicRegion> eligible, AutonomyPosition position, Func<string, double> visitRank,
+        Func<string, double>? appearancePreference = null)
     {
         if (eligible == null || visitRank == null) throw new ArgumentNullException();
         if (eligible.Count > 1024) throw new ArgumentException("Scenic candidate bound exceeded.");
@@ -76,7 +78,13 @@ public sealed class ScenicDestinationDiversity
             // unknown metadata cannot masquerade as discovering a fresh biome.
             double biome = -Count(h => h.Biome == r.Biome);
             double family = -Count(h => h.FamilyId == r.FamilyId);
-            double visit = visitRank(r.Id), distance = position.HorizontalDistance(r.Position);
+            double appearance = appearancePreference?.Invoke(r.Id) ?? 0;
+            if (double.IsNaN(appearance) || double.IsInfinity(appearance)) appearance = 0;
+            // visitRank is an absolute last-visit timestamp in seconds. Express
+            // the appearance benefit in the same units: at most one minute of
+            // comparable recency, never enough to displace an unvisited site or
+            // bypass the eligibility cooldown which precedes this method.
+            double visit = visitRank(r.Id) - Math.Max(0, Math.Min(.18, appearance)) * (60 / .18), distance = position.HorizontalDistance(r.Position);
             bool better = best == null || (!first && (biome > bestBiome || biome == bestBiome && family > bestFamily)) ||
                 (first || biome == bestBiome && family == bestFamily) &&
                 (r.Preference > best!.Preference || r.Preference == best.Preference &&

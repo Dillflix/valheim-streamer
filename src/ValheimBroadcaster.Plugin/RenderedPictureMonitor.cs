@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using ValheimBroadcaster.Core;
+using ValheimBroadcaster.Plugin.Streaming;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -26,6 +27,7 @@ internal sealed class RenderedPictureMonitor : IDisposable
     private readonly byte[] rgba = new byte[Width * Height * 4];
     private RenderedPictureContext context, requestedContext;
     private RenderTexture? sampleTexture;
+    private ProgramOrientationProbe? orientation, retiringOrientation;
     private bool pending, disposed, failed, measured;
     private long epoch, requestedEpoch, requestedGeneration, latestGeneration = -1;
     private int sourceWidth, sourceHeight;
@@ -61,21 +63,38 @@ internal sealed class RenderedPictureMonitor : IDisposable
             sourceWidth = cleanLive.width; sourceHeight = cleanLive.height; nextSample = 0;
         }
         if (pending || now < nextSample) return;
+        // A reset may retire a calibration while its GPU readback is pending.
+        // Keep one owner and wait for it before allocating another probe.
+        if (retiringOrientation?.Pending == true) return;
+        retiringOrientation = null;
         if (!SystemInfo.supportsAsyncGPUReadback)
         { state = "Unavailable: asynchronous GPU readback unsupported; geometric evaluation remains active"; return; }
-        nextSample = now + .5f;
         RenderTexture previous = RenderTexture.active;
         bool srgb = GL.sRGBWrite;
         try
         {
+            // Use the exact camera-RT copy route calibrated by the transport,
+            // independently of whether RTMP is running. An actor's screen ROI
+            // must refer to its actual pixels, not whichever mirrored region
+            // happens to look better. Probe pixels never enter the program.
+            if (orientation == null) orientation = new ProgramOrientationProbe();
+            orientation.Tick();
+            if (orientation.Failure.Length != 0)
+            {
+                failed = true; policy.Reset();
+                state = "Unavailable: picture orientation could not be verified; geometric evaluation remains active";
+                orientation.Dispose();
+                return;
+            }
+            if (!orientation.Ready) { state = "Calibrating picture sample orientation"; return; }
+            nextSample = now + .5f;
             if (!sampleTexture)
             {
-                sampleTexture = new RenderTexture(Width, Height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
+                sampleTexture = new RenderTexture(Width, Height, 0, RenderTextureFormat.ARGB32)
                 { name = "Broadcaster picture measurement", useMipMap = false, autoGenerateMips = false, filterMode = FilterMode.Bilinear };
                 if (!sampleTexture.Create()) throw new InvalidOperationException("Picture sample allocation failed.");
             }
-            GL.sRGBWrite = QualitySettings.activeColorSpace == ColorSpace.Linear && sampleTexture.sRGB;
-            Graphics.Blit(cleanLive, sampleTexture);
+            FrameHold.Blit(cleanLive, sampleTexture, orientation.FlipCamera);
             requestedContext = context; requestedEpoch = epoch; requestedGeneration = programGeneration;
             pending = true;
             AsyncGPUReadback.Request(sampleTexture, 0, TextureFormat.RGBA32, Complete);
@@ -103,13 +122,13 @@ internal sealed class RenderedPictureMonitor : IDisposable
             { policy.Reset(); failed = true; state = "Unavailable: unexpected picture buffer; geometric evaluation remains active"; return; }
             data.CopyTo(rgba);
             RenderedPictureMeasurement result = RenderedPictureQuality.Measure(rgba, Width, Height,
-                requestedContext.Primary, requestedContext.HasPrimary);
+                requestedContext.Primary, requestedContext.HasPrimary, ProgramRowOrder.TopFirst);
             if (policy.Observe(requestedContext.Key, requestedContext.ObservedAt, Time.unscaledTime, result))
             {
                 measured = true;
                 RenderedPictureFeedback feedback = policy.Feedback(context.Key, Time.unscaledTime);
                 state = $"luma {result.MeanLuma:0.00}; dark {result.DarkFraction:P0}; clipped {result.ClippedFraction:P0}; " +
-                    (result.HasSubjectContrast ? $"subject contrast {result.SubjectSeparation:0.00} (conservative mirrored ROI); " : "subject contrast unavailable; ") +
+                    (result.HasSubjectContrast ? $"subject contrast {result.SubjectSeparation:0.00} (verified ROI); " : "subject contrast unavailable; ") +
                     $"penalty {feedback.Penalty:0.00}; {feedback.Reason}";
             }
         }
@@ -126,11 +145,14 @@ internal sealed class RenderedPictureMonitor : IDisposable
         return policy.Feedback(key, now);
     }
 
+    internal void AcceptReconsideration(RenderedPictureKey key, double now) => policy.MarkReconsidered(key, now);
+
     internal void Clear()
     {
         if (disposed) return;
         if (context.Valid || latestGeneration >= 0) epoch++;
         context = default; latestGeneration = -1; policy.Reset(); nextSample = 0; failed = false; measured = false;
+        RetireOrientation();
         state = "Awaiting a clean live picture";
         // An in-flight request owns sampleTexture until its callback finishes.
     }
@@ -150,7 +172,16 @@ internal sealed class RenderedPictureMonitor : IDisposable
     {
         if (disposed) return;
         epoch++; disposed = true; context = default; policy.Reset();
+        RetireOrientation();
         if (!pending) Release();
+    }
+
+    private void RetireOrientation()
+    {
+        if (orientation == null) return;
+        orientation.Dispose();
+        if (orientation.Pending) retiringOrientation = orientation;
+        orientation = null;
     }
 
     private void Release()

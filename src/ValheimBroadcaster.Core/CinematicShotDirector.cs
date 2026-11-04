@@ -79,7 +79,8 @@ namespace ValheimBroadcaster.Core
             IReadOnlyList<bool> eligible, CinematicActivity currentActivity, float speed,
             bool confined, float spaceFraction, bool usableFootage = true,
             IReadOnlyList<bool>? readable = null, ShotSituation? situation = null, ShotRole? roleOverride = null,
-            IShotCandidateRanker? ranker = null, bool protectMoment = false)
+            IShotCandidateRanker? ranker = null, bool protectMoment = false,
+            IReadOnlyList<int>? priorities = null, bool reconsiderPicture = false)
         {
             Validate(now, deltaSeconds, scores, eligible, speed, spaceFraction);
             if (hasCheckpoint && checkpoint.Now != now) hasCheckpoint = false;
@@ -106,7 +107,7 @@ namespace ValheimBroadcaster.Core
             DesiredSeconds = nominalSeconds * (confined ? 1.5 : 1);
 
             int best = ShotCandidateRanking.Best(scores, eligible, readable,
-                previous >= 0 && eligible[previous] ? previous : -1, ranker), adequate = 0;
+                previous >= 0 && eligible[previous] ? previous : -1, ranker, priorities), adequate = 0;
             for (int i = 0; i < scores.Count; i++)
             {
                 weighted[i] = scores[i];
@@ -125,14 +126,15 @@ namespace ValheimBroadcaster.Core
             bool constrained = spaceFraction < 0.45f || adequate < 2 ||
                 confined && (spaceFraction < 0.7f || adequate < 3);
             bool improving = previous >= 0 && best >= 0 && best != previous &&
-                scores[best] >= scores[previous] + ProceduralShotPolicy.ImprovementMargin;
+                (scores[best] >= scores[previous] + (reconsiderPicture ? ProceduralShotPolicy.PoorViewImprovementMargin : ProceduralShotPolicy.ImprovementMargin) ||
+                    priorities != null && priorities[best] > priorities[previous]);
             bool canPlan = usableFootage && previous >= 0 && eligible[previous] && !constrained &&
                 !settling && !improving && !protectMoment && activity != CinematicActivity.Combat && ShotAge >= DesiredSeconds;
             if (!canPlan) plannedIndex = -1;
             else
             {
                 if (!AdequateAlternative(plannedIndex, previous, best, scores, eligible, readable))
-                    plannedIndex = ChooseAlternative(now, previous, best, scores, eligible, readable, ranker);
+                    plannedIndex = ChooseAlternative(now, previous, best, scores, eligible, readable, ranker, priorities);
                 if (plannedIndex >= 0)
                 {
                     // Only already-readable, near-best alternatives receive an
@@ -146,7 +148,7 @@ namespace ValheimBroadcaster.Core
             // Unusable presentation pauses editorial timing, not recovery from
             // an obscured but physically supported camera. Fresh evaluations
             // still pass through the existing improvement persistence/dwell.
-            int chosen = selection.Select(now, new ArraySegment<float>(weighted, 0, scores.Count), eligible, readable, ranker);
+            int chosen = selection.Select(now, new ArraySegment<float>(weighted, 0, scores.Count), eligible, readable, ranker, priorities, reconsiderPicture);
             if (chosen < 0)
             {
                 ShotAge = motionAge = 0; motionGain = 0; plannedIndex = -1;
@@ -337,7 +339,7 @@ namespace ValheimBroadcaster.Core
 
         private int ChooseAlternative(double now, int current, int best,
             IReadOnlyList<float> scores, IReadOnlyList<bool> eligible, IReadOnlyList<bool>? readable,
-            IShotCandidateRanker? ranker)
+            IShotCandidateRanker? ranker, IReadOnlyList<int>? priorities)
         {
             // The native ranker receives the same bounded history preference
             // as regular selection. Only already-readable near-best shots may
@@ -349,7 +351,7 @@ namespace ValheimBroadcaster.Core
                 plannedScores[i] = (float)((scores[i] + away / HistorySeconds * 0.12) / 1.12);
             }
             return ShotCandidateRanking.Best(new ArraySegment<float>(plannedScores, 0, scores.Count),
-                new ArraySegment<bool>(plannedEligibility, 0, scores.Count), readable, -1, ranker);
+                new ArraySegment<bool>(plannedEligibility, 0, scores.Count), readable, -1, ranker, priorities);
         }
 
         private static bool AdequateAlternative(int index, int current, int best,

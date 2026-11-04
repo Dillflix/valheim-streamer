@@ -20,6 +20,7 @@ namespace ValheimBroadcaster.Core
         public ScenicShotPlan? Current { get; private set; }
         public double ShownSeconds { get; private set; }
         public double TotalPictureSeconds { get; private set; }
+        public bool ReusedPicture { get; private set; }
         public bool ContentExhausted => routeSearchFailed && TotalPictureSeconds >= ExhaustedPictureSeconds &&
             (pendingRouteAt < 0 || lastObservation - pendingRouteAt >= PendingRouteGraceSeconds);
         public bool WantsCandidate(bool currentPictureUsable) =>
@@ -35,10 +36,23 @@ namespace ValheimBroadcaster.Core
             // Never interrupt a valid cinematic shot, nor flick through clear
             // graph nodes as the background planner discovers them.
             if (!WantsCandidate(currentPictureUsable)) return false;
+            bool reused = false;
             foreach (ScenicShotPlan previous in shown)
-                if (Equivalent(previous, candidate)) return false;
+                if (Equivalent(previous, candidate))
+                {
+                    // Novelty is an ordinary-edit preference. During a real
+                    // picture outage, freshly revalidated known compositions
+                    // are valuable recovery options, not forbidden content.
+                    if (currentPictureUsable) return false;
+                    reused = true;
+                    break;
+                }
             Current = candidate; ShownSeconds = 0; acceptedAt = now;
-            lastObservation = lastReadableAt = -1; previousReadable = previousSettled = remembered = false;
+            ReusedPicture = reused;
+            lastReadableAt = -1; previousReadable = previousSettled = false;
+            // Reusing a picture must not evict older novelty memory, claim a
+            // new episode, or renew accumulated content-exhaustion/grace time.
+            remembered = reused;
             return true;
         }
 
@@ -90,11 +104,14 @@ namespace ValheimBroadcaster.Core
         public void ClearCurrent()
         {
             Current = null; ShownSeconds = 0; acceptedAt = 0;
-            lastObservation = lastReadableAt = -1; previousReadable = previousSettled = remembered = false;
+            ReusedPicture = false;
+            // The content clock belongs to the region, not to a requested
+            // picture. Retiring a pose must not renew pending-route grace.
+            lastReadableAt = -1; previousReadable = previousSettled = remembered = false;
         }
 
         public void Reset()
-        { ClearCurrent(); shown.Clear(); TotalPictureSeconds = 0; routeSearchFailed = false; pendingRouteAt = -1; }
+        { ClearCurrent(); lastObservation = -1; shown.Clear(); TotalPictureSeconds = 0; routeSearchFailed = false; pendingRouteAt = -1; }
 
         private static bool Equivalent(ScenicShotPlan a, ScenicShotPlan b)
         {

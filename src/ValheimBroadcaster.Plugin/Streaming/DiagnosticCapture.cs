@@ -19,7 +19,7 @@ internal sealed class DiagnosticCapture : MonoBehaviour
     private DiagnosticVideoWriter? writer;
     private ProgramOrientationProbe? orientation;
     private RenderTexture? texture;
-    private bool active, pending, configured, reportedFailure;
+    private bool active, pending, configured, reportedFailure, retryRequested;
     private float nextFrame;
     private string failure = "";
     private ProgramFrameStamp pendingStamp;
@@ -42,6 +42,16 @@ internal sealed class DiagnosticCapture : MonoBehaviour
     private void Update()
     {
         if (!configured) return;
+        if (retryRequested)
+        {
+            // Error belongs to the old writer until its worker and pending GPU
+            // callbacks have retired. Clearing failure first would immediately
+            // re-latch that same writer.Error and make the retry ineffective.
+            StopCapture();
+            if (pending || orientation?.Pending == true || writer?.Closed == false) return;
+            writer = null; orientation = null;
+            failure = ""; reportedFailure = false; retryRequested = false;
+        }
         if (writer?.Error != null && failure.Length == 0) Fail(writer.Error);
         bool wanted;
         try { wanted = shouldCapture?.Invoke() == true; }
@@ -136,7 +146,12 @@ internal sealed class DiagnosticCapture : MonoBehaviour
         if (!reportedFailure) { reportedFailure = true; log?.Invoke(Status + " Broadcasting continues; use broadcast capture on to retry."); }
     }
 
-    internal void Retry() { failure = ""; reportedFailure = false; }
+    internal void Retry()
+    {
+        if (failure.Length == 0 && writer?.Error == null) return;
+        retryRequested = true;
+        StopCapture();
+    }
     internal void StopCapture()
     {
         active = false;

@@ -174,12 +174,12 @@ namespace ValheimBroadcaster.Core
             if (scene.Kind == ShotSceneKind.Scenic) return Episode.Scenic;
             if (scene.Activity == CinematicActivity.Combat && scene.Confidence >= .6f) return Episode.Combat;
             if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Hunting) return Episode.Hunting;
-            if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Threat) return Episode.Threat;
+            if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Threat && !scene.ContextualPresence) return Episode.Threat;
             if (scene.Confidence < .6f) return Episode.Unknown;
             if (scene.Activity == CinematicActivity.Work) return Episode.Work;
             if (scene.Activity == CinematicActivity.Travel || scene.Locomotion == ShotLocomotion.Boat ||
                 scene.Locomotion == ShotLocomotion.Swim || scene.Locomotion == ShotLocomotion.Vertical) return Episode.Travel;
-            return scene.Companions > 0 || scene.Opponents > 0 ? Episode.Interaction : Episode.Idle;
+            return scene.Companions > 0 || scene.Opponents > 0 && !scene.ContextualPresence ? Episode.Interaction : Episode.Idle;
         }
 
         public void Reset()

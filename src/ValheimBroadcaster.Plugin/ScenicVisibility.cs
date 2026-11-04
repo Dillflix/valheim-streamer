@@ -16,34 +16,20 @@ internal sealed class ScenicVisibility
     private readonly string owner;
     private long surveyNumber;
     private int omitted, candidates, detailed, coarseCount;
-    private Bounds nearestOmitted;
-    private float nearestOmittedDistance, surveyMilliseconds;
+    private float surveyMilliseconds;
     private ScenicSurveyRefresh refreshAction;
     internal long QueryId;
     internal string QueryStage = "unspecified";
     internal ScenicVisibility(string owner = "unspecified") { this.owner = owner; }
-    private readonly List<Entry> foliage = new List<Entry>(Capacity);
-    private long catalogueRevision = -1;
-    private readonly List<float> distances = new List<float>(Capacity);
+    private readonly FoliageProjection foliage = new FoliageProjection(SurveyRadius);
     private Vector3 origin;
     private float refreshedAt = float.NegativeInfinity, coveredRadius;
-    private int furthest;
-    private float furthestDistance;
     private int obstructionMask;
     private readonly Collider[] overlaps = new Collider[32];
     private readonly RaycastHit[] hits = new RaycastHit[24];
-    private readonly bool[] foregroundBounds = new bool[Capacity + DetailBudget];
-    private readonly Bounds[] activeBounds = new Bounds[Capacity + DetailBudget];
-    private int detailRemaining, checkedFrame = -1, activeCount;
-
-    private readonly struct Entry
-    {
-        internal readonly ScenicFoliageScene.Observation Observation;
-        internal Renderer Renderer => Observation.Renderer;
-        internal readonly Bounds[]? Local;
-        internal Entry(ScenicFoliageScene.Observation observation, Bounds[]? local)
-        { Observation = observation; Local = local; }
-    }
+    private readonly bool[] foregroundBounds = new bool[FoliageProjection.BoundsCapacity];
+    private Bounds[] activeBounds => foliage.ActiveBounds;
+    private int detailRemaining, activeCount;
 
     internal readonly struct Result
     {
@@ -58,59 +44,22 @@ internal sealed class ScenicVisibility
     internal void Reset()
     {
         ScenicTrace.Event(owner, "Survey reset", QueryId);
-        foliage.Clear(); distances.Clear(); refreshedAt = float.NegativeInfinity;
-        coveredRadius = 0; furthest = 0; furthestDistance = 0;
-        catalogueRevision = -1; checkedFrame = -1; activeCount = 0;
+        foliage.Reset(); refreshedAt = float.NegativeInfinity; coveredRadius = 0; activeCount = 0;
     }
 
     internal void Refresh(Vector3 surveyOrigin)
     {
-        float now = Time.unscaledTime;
-        float displacement = Vector3.Distance(surveyOrigin, origin);
-        ScenicFoliageScene scene = ScenicFoliageScene.Shared;
-        scene.Ensure(surveyOrigin);
-        bool catalogueChanged = catalogueRevision != scene.Revision;
-        refreshAction = ScenicObservationPolicy.LocalRefresh(now, refreshedAt, displacement, coveredRadius, catalogueChanged);
-        if (ScenicTrace.Enabled)
-        {
-            CameraTraceRecord row = ScenicTrace.Row("refresh").Field("owner", owner).Field("query", QueryId)
-                .Field("policy", "local-v2").Field("catalogueChanged", catalogueChanged).Field("catalogueRevision", scene.Revision)
-                .Field("stage", QueryStage).Field("survey", surveyNumber).Field("refreshedAt", refreshedAt)
-                .Field("distance", displacement).Field("radius", coveredRadius).Field("action", refreshAction.ToString());
-            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(row, "camera", surveyOrigin), "origin", origin));
-        }
-        if (!ScenicObservationPolicy.NeedsRefresh(refreshAction)) return;
-        surveyNumber++; omitted = candidates = detailed = coarseCount = 0;
-        nearestOmitted = default; nearestOmittedDistance = float.PositiveInfinity;
-        long surveyStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-        origin = surveyOrigin; refreshedAt = now; catalogueRevision = scene.Revision;
-        coveredRadius = Mathf.Min(SurveyRadius, scene.CoverageAt(surveyOrigin));
-        foliage.Clear(); distances.Clear(); furthest = 0; furthestDistance = 0;
-        detailRemaining = DetailBudget; checkedFrame = -1;
-        obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
-        // The scene owns discovery. This is a cheap local projection of its
-        // retained renderers, including every coarse bound touching the detailed
-        // foreground neighborhood. Distant renderers cannot consume its budget.
-        foreach (ScenicFoliageScene.Observation observation in scene.Renderers)
-        {
-            Renderer renderer = observation.Renderer;
-            if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
-            if (!observation.TryBounds(out Bounds bounds))
-            { coveredRadius = observation.LimitUnknownCoverage(origin, coveredRadius); continue; }
-            Bounds expanded = bounds; expanded.Expand(.4f);
-            if (expanded.SqrDistance(origin) < SurveyRadius * SurveyRadius) Add(observation, bounds);
-        }
-        surveyMilliseconds = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - surveyStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
-        if (ScenicTrace.Enabled)
-        {
-            CameraTraceRecord row = ScenicTrace.Row("survey").Field("owner", owner).Field("survey", surveyNumber)
-                .Field("query", QueryId).Field("stage", QueryStage).Field("radius", coveredRadius)
-                .Field("retained", foliage.Count).Field("omitted", omitted).Field("candidates", candidates)
-                .Field("detailCellsUsed", DetailBudget - detailRemaining).Field("milliseconds", surveyMilliseconds)
-                .Field("nearestOmittedDistance", nearestOmittedDistance);
-            row = ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Vector(row, "origin", origin), "omittedCentre", nearestOmitted.center), "omittedExtent", nearestOmitted.extents);
-            ScenicTrace.Record(row);
-        }
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        float before = foliage.RefreshedAt;
+        foliage.Refresh(surveyOrigin);
+        refreshAction = ScenicObservationPolicy.LocalRefresh(Time.unscaledTime, refreshedAt,
+            Vector3.Distance(surveyOrigin, origin), coveredRadius, foliage.Revision != ScenicFoliageScene.Shared.Revision);
+        origin = foliage.Origin; refreshedAt = foliage.RefreshedAt; coveredRadius = foliage.CoveredRadius;
+        omitted = foliage.Omitted; candidates = foliage.RetainedCount + omitted;
+        detailed = foliage.Detailed; coarseCount = foliage.Coarse; detailRemaining = foliage.DetailRemaining;
+        if (before != refreshedAt) surveyNumber++;
+        surveyMilliseconds = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
+        if (obstructionMask == 0) obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
     }
 
     internal static bool Vegetation(Transform transform)
@@ -126,58 +75,12 @@ internal sealed class ScenicVisibility
                 name.IndexOf("leaf", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 name.IndexOf("leaves", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 name.IndexOf("foliage", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("sapling", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                name.IndexOf("sapling", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                name.IndexOf("fern", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                name.IndexOf("vine", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                name.IndexOf("ivy", StringComparison.OrdinalIgnoreCase) >= 0) return true;
         }
         return transform.GetComponentInParent<TreeBase>() || transform.GetComponentInParent<TreeLog>();
-    }
-
-    private void Add(ScenicFoliageScene.Observation observation, Bounds coarse)
-    {
-        Renderer renderer = observation.Renderer;
-        // Only the camera's local foreground needs fine geometry. Far bounds
-        // remain a bounded discovery envelope and are refined after recentering.
-        if (coarse.SqrDistance(origin) <= DetailRadius * DetailRadius && detailRemaining > 0)
-        {
-            Bounds[]? cells = ScenicFoliageScene.Shared.Geometry(renderer);
-            if (cells != null && cells.Length <= detailRemaining)
-            {
-                detailRemaining -= cells.Length; detailed++;
-                Add(new Entry(observation, cells), coarse);
-                return;
-            }
-        }
-        coarseCount++; Add(new Entry(observation, null), coarse);
-    }
-
-    private void Add(Entry entry, Bounds bounds)
-    {
-        if (!TargetRoster.Finite(bounds.center) || !TargetRoster.Finite(bounds.extents) || bounds.size.sqrMagnitude < 0.01f) return;
-        bounds.Expand(0.4f); // Clearance from shader-animated leaf edges.
-        float distance = Mathf.Sqrt(bounds.SqrDistance(origin));
-        if (distance >= SurveyRadius) return;
-        candidates++;
-        if (foliage.Count < Capacity)
-        {
-            foliage.Add(entry); distances.Add(distance);
-            if (distance >= furthestDistance) { furthest = foliage.Count - 1; furthestDistance = distance; }
-            return;
-        }
-        // Keep the nearest bounds. Retain a conservative coverage radius so a
-        // truncated cache never silently declares an unexamined position clear.
-        if (distance >= furthestDistance) { Omit(bounds, distance); return; }
-        if (!foliage[furthest].Observation.TryBounds(out Bounds evicted)) { coveredRadius = 0; evicted = default; }
-        evicted.Expand(.4f);
-        Omit(evicted, furthestDistance);
-        foliage[furthest] = entry; distances[furthest] = distance;
-        furthestDistance = 0;
-        for (int i = 0; i < distances.Count; i++)
-            if (distances[i] >= furthestDistance) { furthest = i; furthestDistance = distances[i]; }
-    }
-
-    private void Omit(Bounds bounds, float distance)
-    {
-        omitted++; coveredRadius = Mathf.Min(coveredRadius, distance);
-        if (distance < nearestOmittedDistance) { nearestOmittedDistance = distance; nearestOmitted = bounds; }
     }
 
     // Landscape quality uses the actual presented orientation/lens. Foliage and
@@ -244,7 +147,7 @@ internal sealed class ScenicVisibility
             CameraTraceRecord row = ScenicTrace.Row("coverage").Field("owner", owner).Field("query", QueryId).Field("stage", QueryStage)
                 .Field("survey", surveyNumber).Field("distance", displacement).Field("radius", coveredRadius)
                 .Field("age", Time.unscaledTime - refreshedAt).Field("gap", (long)gap)
-                .Field("retained", foliage.Count).Field("omitted", omitted).Field("candidates", candidates)
+                .Field("retained", foliage.RetainedCount).Field("omitted", omitted).Field("candidates", candidates)
                 .Field("detailed", detailed).Field("coarse", coarseCount).Field("detailRemaining", detailRemaining)
                 .Field("activeBounds", activeCount).Field("surveyMilliseconds", surveyMilliseconds).Field("focusVisible", focusVisible).Field("foreground", foreground)
                 .Field("score", score).Field("fov", fov).Field("aspect", aspect).Field("near", nearClip)
@@ -258,27 +161,8 @@ internal sealed class ScenicVisibility
 
     private void RefreshActive()
     {
-        if (checkedFrame == Time.frameCount) return;
-        checkedFrame = Time.frameCount; activeCount = 0;
-        for (int i = 0; i < foliage.Count; i++)
-        {
-            Entry entry = foliage[i]; Renderer renderer = entry.Renderer;
-            if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
-            if (!entry.Observation.TryBounds(out Bounds observed))
-            { coveredRadius = entry.Observation.LimitUnknownCoverage(origin, coveredRadius); continue; }
-            if (entry.Local == null) AddActive(observed);
-            else
-            {
-                Matrix4x4 matrix = renderer.localToWorldMatrix;
-                foreach (Bounds local in entry.Local) AddActive(FoliageGeometryMath.Transform(local, matrix));
-            }
-        }
-    }
-
-    private void AddActive(Bounds bound)
-    {
-        if (!FoliageGeometryMath.Valid(bound)) return;
-        bound.Expand(.4f); activeBounds[activeCount++] = bound;
+        foliage.RefreshActive(); activeCount = foliage.ActiveCount;
+        origin = foliage.Origin; coveredRadius = foliage.CoveredRadius;
     }
 
     // Only a measured camera-inside-canopy rejection may propose this alternate

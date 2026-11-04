@@ -23,6 +23,7 @@ internal sealed class ScenicFeatureSurvey
     private int nextCell, terrainMask, objectsMask, unavailable, truncated;
     private float waterPlane;
     private bool hasWaterPlane;
+    private IEnumerator<int>? building;
     internal bool Complete { get; private set; }
     internal IReadOnlyList<ScenicFeature> Features => features;
     internal string Diagnostics => $"Scenic survey: {nextCell}/{CellCount} terrain cells; {features.Count} features; " +
@@ -62,12 +63,24 @@ internal sealed class ScenicFeatureSurvey
     // No scene-wide object enumeration, world generation, or additional render.
     internal bool Step()
     {
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out var work)) return Complete;
+        using (work) return StepBudgeted();
+    }
+
+    private bool StepBudgeted()
+    {
         if (Complete) return true;
         if (!world || world != ZNet.instance) { Reset(); Complete = true; return true; }
-        for (int budget = 0; budget < 2 && nextCell < CellCount; budget++, nextCell++) Sample(nextCell);
+        for (int budget = 0; budget < 2 && nextCell < CellCount; budget++, nextCell++)
+        {
+            if (!CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Observation)) return false;
+            Sample(nextCell);
+        }
         if (nextCell < CellCount) return false;
-        BuildFeatures(); Complete = true;
-        return true;
+        if (building == null) building = BuildFeatures().GetEnumerator();
+        for (int i = 0; i < 4 && CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Observation); i++)
+            if (!building.MoveNext()) { building.Dispose(); building = null; Complete = true; break; }
+        return Complete;
     }
 
     private void Sample(int index)
@@ -150,10 +163,11 @@ internal sealed class ScenicFeatureSurvey
         if (objects.Count < MaximumObjects) objects.Add(new ObjectFeature(kind, bounds));
     }
 
-    private void BuildFeatures()
+    private IEnumerable<int> BuildFeatures()
     {
         foreach (ObjectFeature item in objects)
         {
+            yield return 0;
             Bounds bounds = item.Bounds;
             Vector3 center = bounds.center;
             if (Vector3.ProjectOnPlane(center - origin, Vector3.up).magnitude > 48f || !IdleShots.Ready(center)) continue;
@@ -169,13 +183,15 @@ internal sealed class ScenicFeatureSurvey
             center.y = (bottom + top) * .5f;
             Vector3 direction = bounds.size.x >= bounds.size.z ? Vector3.right : Vector3.forward;
             Add(item.Kind, center, direction, Mathf.Clamp(Mathf.Max(bounds.extents.x, bounds.extents.z), 2f, 24f),
-                Mathf.Clamp(top - bottom, 1f, 40f), item.Kind == ScenicFeatureKind.Structure ? .82f : .72f);
+                Mathf.Clamp(top - bottom, 1f, 40f), item.Kind == ScenicFeatureKind.Structure ? .82f : .72f,
+                new PlaceBounds(new AutonomyPosition(bounds.min.x, bottom, bounds.min.z), new AutonomyPosition(bounds.max.x, top, bounds.max.z)));
         }
         // Interior lattice cells have observations on both sides. Missing or
         // saturated evidence cannot certify a clearing, ridge or coastline.
         for (int z = 1; z < Side - 1; z++)
         for (int x = 1; x < Side - 1; x++)
         {
+            yield return 0;
             int index = z * Side + x;
             Cell c = cells[index], left = cells[index - 1], right = cells[index + 1], back = cells[index - Side], front = cells[index + Side];
             if (!c.Valid || !left.Valid || !right.Valid || !back.Valid || !front.Valid) continue;
@@ -225,10 +241,12 @@ internal sealed class ScenicFeatureSurvey
         Vector3 across = b.Ground - a.Ground; across.y = 0;
         if (across.sqrMagnitude < 1f) return;
         Add(ScenicFeatureKind.Coastline, shore, Vector3.Cross(Vector3.up, across).normalized, 18f,
-            Mathf.Clamp(Mathf.Abs(b.Ground.y - a.Ground.y), 2f, 20f), .86f);
+            Mathf.Clamp(Mathf.Abs(b.Ground.y - a.Ground.y), 2f, 20f), .86f,
+            waterDirection: ToCore((aWet ? a.Ground - b.Ground : b.Ground - a.Ground)));
     }
 
-    private void Add(ScenicFeatureKind kind, Vector3 center, Vector3 direction, float radius, float height, float confidence)
+    private void Add(ScenicFeatureKind kind, Vector3 center, Vector3 direction, float radius, float height, float confidence,
+        PlaceBounds? measuredBounds = null, AutonomyPosition? waterDirection = null)
     {
         for (int i = 0; i < features.Count; i++)
         {
@@ -236,7 +254,7 @@ internal sealed class ScenicFeatureSurvey
             if (previous.Kind == kind && Vector3.Distance(FromCore(previous.Center), center) < Mathf.Max(12f, radius)) return;
         }
         string id = kind.ToString().ToLowerInvariant() + ":" + Mathf.RoundToInt(center.x / 6f) + ":" + Mathf.RoundToInt(center.z / 6f);
-        var feature = new ScenicFeature(id, kind, ToCore(center), ToCore(direction), radius, height, confidence);
+        var feature = new ScenicFeature(id, kind, ToCore(center), ToCore(direction), radius, height, confidence, measuredBounds: measuredBounds, waterDirection: waterDirection);
         if (features.Count < MaximumFeatures) { features.Add(feature); return; }
         int worst = 0;
         for (int i = 1; i < features.Count; i++) if (features[i].Confidence < features[worst].Confidence) worst = i;
@@ -258,7 +276,7 @@ internal sealed class ScenicFeatureSurvey
     private static Vector3 FromCore(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);
     internal void Reset()
     {
-        siteSubjects.Reset();
+        siteSubjects.Reset(); building?.Dispose(); building = null;
         Array.Clear(cells, 0, cells.Length); seenObjects.Clear(); seenTrees.Clear(); objects.Clear(); features.Clear();
         world = null; origin = default; nextCell = unavailable = truncated = 0; Complete = false; hasWaterPlane = false; waterPlane = 0;
     }

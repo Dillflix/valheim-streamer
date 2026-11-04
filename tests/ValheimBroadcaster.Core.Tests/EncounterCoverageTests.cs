@@ -98,16 +98,16 @@ internal static class EncounterCoverageTests
     private static void AvailableFallback()
     {
         var coverage = EncounterCoveragePolicy.Measure(EncounterShotPurpose.Player, true, false, 4, 0, 3, 0, 0, 0);
-        Check(coverage.Fulfilled && EncounterCoveragePolicy.Rank(.78f, true, coverage, EncounterShotPurpose.Overview, false) == .78f,
+        Check(coverage.Fulfilled && EncounterCoveragePolicy.Priority(true, coverage, EncounterShotPurpose.Overview, false) == 0,
             "Missing enemy overview suppressed ordinary available footage.");
     }
     private static void PurposeRanking()
     {
         var exchange = EncounterCoveragePolicy.Measure(EncounterShotPurpose.Exchange, true, true, 1, 0, 1, 1, 0, 1);
         var player = EncounterCoveragePolicy.Measure(EncounterShotPurpose.Player, true, false, 1, 0, 1, 0, 0, 0);
-        float explained = EncounterCoveragePolicy.Rank(.4f, true, exchange, EncounterShotPurpose.Exchange, true);
-        float pretty = EncounterCoveragePolicy.Rank(.99f, true, player, EncounterShotPurpose.Exchange, true);
-        Check(explained > pretty + ProceduralShotPolicy.ImprovementMargin, "Cosmetic score defeated fulfilled encounter purpose.");
+        int explained = EncounterCoveragePolicy.Priority(true, exchange, EncounterShotPurpose.Exchange, true);
+        int pretty = EncounterCoveragePolicy.Priority(true, player, EncounterShotPurpose.Exchange, true);
+        Check(explained > pretty, "Cosmetic score defeated fulfilled encounter purpose.");
     }
     private static void StablePurposeChange()
     {
@@ -121,7 +121,7 @@ internal static class EncounterCoverageTests
     private static void UnreadablePurpose()
     {
         var claimed = new EncounterCoverage(EncounterShotPurpose.Overview, true, 6, 2, 4, "test");
-        Check(EncounterCoveragePolicy.Rank(.1f, false, claimed, EncounterShotPurpose.Overview, true) == .1f,
+        Check(EncounterCoveragePolicy.Priority(false, claimed, EncounterShotPurpose.Overview, true) == 0,
             "Encounter completeness promoted unreadable primary footage.");
     }
     private static void InvalidCast()

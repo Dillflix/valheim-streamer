@@ -9,27 +9,21 @@ namespace ValheimBroadcaster.Plugin;
 // hint, never evidence that a scene is unloaded or that travel is required.
 internal sealed class PlayerShotVisibility
 {
-    private const int Capacity = 512;
+    private const int Capacity = FoliageProjection.BoundsCapacity;
     internal const int MaximumSubjects = 16;
-    private readonly LoadedActorOcclusionSurvey actors = new LoadedActorOcclusionSurvey();
+    private readonly LoadedActorOcclusionSurvey actors = LoadedActorOcclusionSurvey.Shared;
     private readonly Subject[] singleSubject = new Subject[1];
     private readonly ShotProjection.Point[] bodyCorners = new ShotProjection.Point[8];
-    private const float SurveyRadius = 100f, ForegroundRange = 10f;
-    private const float RefreshSeconds = 3f, RefreshMovement = 10f, MinimumSurveySeconds = 1.5f;
-    private readonly List<FoliageEntry> foliage = new List<FoliageEntry>(Capacity);
-    private readonly HashSet<int> groups = new HashSet<int>();
-    private readonly bool[] activeFoliage = new bool[Capacity];
-    private readonly Bounds[] activeBounds = new Bounds[Capacity];
+    private const float ForegroundRange = 10f;
+    private readonly FoliageProjection foliage = FoliageProjection.Actors;
+    private Bounds[] activeBounds => foliage.ActiveBounds;
     private readonly int[] viewFoliage = new int[Capacity];
     private int viewFoliageCount;
-    private bool refreshRequested;
-    private int checkedFrame = -1;
     private readonly Collider[] overlaps = new Collider[32];
     private readonly RaycastHit[] hits = new RaycastHit[24];
     private Vector3 origin;
-    private float refreshedAt = float.NegativeInfinity, coveredRadius;
-    private int obstructionMask, furthest;
-    private float furthestDistance;
+    private float coveredRadius;
+    private int obstructionMask;
 
     internal readonly struct Subject
     {
@@ -104,64 +98,24 @@ internal sealed class PlayerShotVisibility
         }
     }
 
-    private readonly struct FoliageEntry
-    {
-        internal readonly Renderer Renderer;
-        internal readonly Bounds Bounds;
-        internal readonly float Distance;
-        internal FoliageEntry(Renderer renderer, Bounds bounds, float distance)
-        { Renderer = renderer; Bounds = bounds; Distance = distance; }
-    }
-
     internal void Reset()
     {
-        actors.Reset();
-        foliage.Clear(); groups.Clear(); coveredRadius = 0; refreshedAt = float.NegativeInfinity;
-        furthest = 0; furthestDistance = 0; checkedFrame = -1;
-        refreshRequested = false;
-        Array.Clear(overlaps, 0, overlaps.Length);
-        Array.Clear(hits, 0, hits.Length);
+        // Reset only this query's buffers. World observations are shared across
+        // standby/live rigs and remain owned by their world-bound services.
+        coveredRadius = 0; viewFoliageCount = 0;
+        Array.Clear(overlaps, 0, overlaps.Length); Array.Clear(hits, 0, hits.Length);
     }
 
     internal void Refresh(Vector3 focus)
     {
         if (!TargetRoster.Finite(focus)) return;
-        float now = Time.unscaledTime;
-        bool displaced = (focus - origin).sqrMagnitude > RefreshMovement * RefreshMovement;
-        if (now >= refreshedAt && now - refreshedAt < RefreshSeconds && !displaced && !refreshRequested) return;
-        // Even multiple candidate evaluations or exceptional target motion cannot
-        // initiate repeated whole-scene surveys within a single render frame.
-        if (now >= refreshedAt && now - refreshedAt < MinimumSurveySeconds) return;
-        origin = focus; refreshedAt = now; coveredRadius = SurveyRadius;
-        refreshRequested = false;
-        foliage.Clear(); groups.Clear(); furthest = 0; furthestDistance = 0; checkedFrame = -1;
-        obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
-        // Unity's scene discovery allocates this temporary array only at survey
-        // time. Retained bounds and every per-candidate physics buffer are capped.
-        foreach (Renderer renderer in UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
-        {
-            if (!renderer || !renderer.enabled || renderer.bounds.SqrDistance(origin) > SurveyRadius * SurveyRadius ||
-                renderer.GetComponentInParent<Character>() || !Vegetation(renderer)) continue;
-            LODGroup? group = renderer.GetComponentInParent<LODGroup>();
-            if (!group) { Add(renderer); continue; }
-            if (!groups.Add(group.GetInstanceID())) continue;
-            LOD[] levels = group.GetLODs();
-            bool detailed = false;
-            if (levels.Length > 0)
-                foreach (Renderer detail in levels[0].renderers)
-                    if (detail && detail.enabled && detail.gameObject.activeInHierarchy)
-                    { Add(detail); detailed = true; }
-            if (!detailed)
-            {
-                groups.Remove(group.GetInstanceID());
-                Add(renderer);
-            }
-        }
+        Vector3 carrier = Player.m_localPlayer ? Player.m_localPlayer.transform.position : focus;
+        foliage.Refresh(carrier, carrier + Vector3.up * 2);
+        origin = foliage.Origin; coveredRadius = foliage.CoveredRadius;
+        if (obstructionMask == 0) obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
     }
 
-    // Recovery can ask for newly loaded/moved foliage to be surveyed sooner;
-    // Refresh still limits whole-scene discovery to once per 1.5 seconds.
-    internal void RequestSurveyRefresh() => refreshRequested = true;
+    internal void RequestSurveyRefresh() => foliage.RequestRefresh();
 
     // Compatibility overload for the fixed center-aimed camera. Procedural views
     // must pass their actual orientation, including during blends and prediction.
@@ -407,20 +361,7 @@ internal sealed class PlayerShotVisibility
 
     private void RefreshActive()
     {
-        if (checkedFrame == Time.frameCount) return;
-        checkedFrame = Time.frameCount;
-        for (int i = 0; i < foliage.Count; i++)
-        {
-            Renderer renderer = foliage[i].Renderer;
-            activeFoliage[i] = renderer && renderer.enabled && renderer.gameObject.activeInHierarchy;
-            if (!activeFoliage[i]) continue;
-            // Trees can fall or animate between surveys. Never use the old
-            // world-space bound after the corresponding renderer moved.
-            Bounds bounds = renderer!.bounds;
-            activeFoliage[i] = TargetRoster.Finite(bounds.center) && TargetRoster.Finite(bounds.extents);
-            bounds.Expand(.4f);
-            activeBounds[i] = bounds;
-        }
+        foliage.RefreshActive(); origin = foliage.Origin; coveredRadius = foliage.CoveredRadius;
     }
 
     private static bool ValidPose(Vector3 camera, Quaternion rotation, float fov, float aspect, float nearClip)
@@ -484,9 +425,8 @@ internal sealed class PlayerShotVisibility
         Vector3 right = rotation * Vector3.right, up = rotation * Vector3.up, forward = rotation * Vector3.forward;
         Vector3 leftPlane = -right - forward * (tangent * aspect), rightPlane = right - forward * (tangent * aspect);
         Vector3 bottomPlane = -up - forward * tangent, topPlane = up - forward * tangent;
-        for (int i = 0; i < foliage.Count; i++)
+        for (int i = 0; i < foliage.ActiveCount; i++)
         {
-            if (!activeFoliage[i]) continue;
             Bounds bounds = activeBounds[i];
             Vector3 offset = bounds.center - camera, extent = bounds.extents;
             float depth = Vector3.Dot(forward, offset), depthExtent = Extent(forward, extent);
@@ -510,55 +450,6 @@ internal sealed class PlayerShotVisibility
 
     private static bool Solid(Collider collider) => collider && collider.enabled &&
         !collider.isTrigger && !collider.GetComponentInParent<Character>();
-
-    private static bool Vegetation(Renderer renderer)
-    {
-        Transform transform = renderer.transform;
-        for (Transform? current = transform; current; current = current.parent)
-        {
-            string name = current.name;
-            if (name.IndexOf("tree", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("bush", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("shrub", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("leaf", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("leaves", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("foliage", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("sapling", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("fern", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("vine", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("ivy", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        }
-        if (transform.GetComponentInParent<TreeBase>() || transform.GetComponentInParent<TreeLog>()) return true;
-        // A shader hint covers vegetation whose object names were replaced by
-        // a mod. It remains heuristic, not an alpha/silhouette measurement.
-        Material material = renderer.sharedMaterial;
-        string shader = material && material.shader ? material.shader.name : "";
-        return shader.IndexOf("vegetation", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            shader.IndexOf("foliage", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            shader.IndexOf("leaves", StringComparison.OrdinalIgnoreCase) >= 0;
-    }
-
-    private void Add(Renderer renderer)
-    {
-        Bounds bounds = renderer.bounds;
-        if (!TargetRoster.Finite(bounds.center) || !TargetRoster.Finite(bounds.extents) || bounds.size.sqrMagnitude < 0.01f) return;
-        bounds.Expand(0.4f);
-        float distance = Mathf.Sqrt(bounds.SqrDistance(origin));
-        if (distance >= SurveyRadius) return;
-        var entry = new FoliageEntry(renderer, bounds, distance);
-        if (foliage.Count < Capacity)
-        {
-            foliage.Add(entry);
-            if (distance >= furthestDistance) { furthest = foliage.Count - 1; furthestDistance = distance; }
-            return;
-        }
-        // Retain nearest bounds and remember where omitted coverage begins.
-        if (distance >= furthestDistance) { coveredRadius = Mathf.Min(coveredRadius, distance); return; }
-        coveredRadius = Mathf.Min(coveredRadius, furthestDistance);
-        foliage[furthest] = entry; furthestDistance = 0;
-        for (int i = 0; i < foliage.Count; i++)
-            if (foliage[i].Distance >= furthestDistance) { furthest = i; furthestDistance = foliage[i].Distance; }
-    }
 
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     private static Result Invalid(string reason) => new Result(0, false, 1, 0, 0, false, reason);

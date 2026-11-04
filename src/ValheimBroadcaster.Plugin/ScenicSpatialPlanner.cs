@@ -22,7 +22,6 @@ internal sealed class ScenicSpatialPlanner
     private readonly List<ScenicPose> poses = new List<ScenicPose>(MaximumNodes);
     private readonly Queue<Probe> frontier = new Queue<Probe>();
     private readonly HashSet<Vector3Int> considered = new HashSet<Vector3Int>();
-    private readonly ShotProjection.Point[] corners = new ShotProjection.Point[8];
     private readonly List<AutonomyPosition> bodyRoute = new List<AutonomyPosition>(16), aimRoute = new List<AutonomyPosition>(16);
     private ScenicFeature? feature;
     private ScenicShotRole role;
@@ -91,17 +90,7 @@ internal sealed class ScenicSpatialPlanner
             role == ScenicShotRole.Establish ? Mathf.Clamp(preferredFov, 58f, 78f) : Mathf.Clamp(preferredFov - 9f, 50f, 69f);
         screenX = composition ? .06f : 0; screenY = composition ? role == ScenicShotRole.Establish ? -.08f : -.035f : 0;
         bool objectSubject = source.Kind == ScenicFeatureKind.Structure || source.Kind == ScenicFeatureKind.Rock;
-        if (objectSubject)
-        {
-            Vector3 size = new Vector3(source.Radius * 2, Mathf.Max(1, source.Height), source.Radius * 2);
-            PlaceSnapshot places = PlaceSurvey.Shared.Snapshot;
-            PlaceNode? place = places.Fresh(Time.unscaledTime) ? places.Find(source.Id) : null;
-            // Exported subjects have already removed buried/submerged vertical
-            // extent. Keep that exposed Y range, and the actual measured X/Z
-            // footprint rather than inventing a square around a thin building.
-            if (place != null) { size.x = place.Bounds.Width; size.z = place.Bounds.Depth; }
-            subject = new Bounds(focus, size);
-        }
+        if (objectSubject) subject = ScenicSubjectFrame.BoundsFor(source);
         // Lens and measured extent define framing distances. The local carrier
         // boundary is not stretched to make a large settlement fit: that subject
         // must yield to a smaller building/district supplied by the place model.
@@ -111,6 +100,15 @@ internal sealed class ScenicSpatialPlanner
         if (source.SubjectKind == ScenicSubjectKind.Npc) desiredHeight = ScenicNpcComposition.Elevation(source.Height);
         seedDirection = lastCamera.HasValue ? Vector3.ProjectOnPlane(lastCamera.Value - focus, Vector3.up) : FromCore(source.Direction);
         if (seedDirection.sqrMagnitude < .01f) seedDirection = FromCore(source.Direction);
+        // The shore normal gives a meaningful relation between land and water:
+        // begin on the dry side, then develop parallel to the observed coastline.
+        if (source.Kind == ScenicFeatureKind.Coastline && source.WaterDirection.HasValue)
+        {
+            seedDirection = -FromCore(source.WaterDirection.Value);
+            desiredHeight = role == ScenicShotRole.Establish ? 5f : 3f;
+            screenY = composition ? -.12f : 0;
+        }
+        if (source.ScopeLabel == "Opening") desiredHeight = Mathf.Clamp(source.Height * .15f, .3f, 1f);
         seedDirection.Normalize(); nextGraphAt = 4;
         if (subject.HasValue)
         {
@@ -124,6 +122,12 @@ internal sealed class ScenicSpatialPlanner
     }
 
     internal bool Step(int queryBudget = 4)
+    {
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return Complete;
+        using (work) return StepBudgeted(queryBudget);
+    }
+
+    private bool StepBudgeted(int queryBudget)
     {
         if (queryBudget < 1 || queryBudget > 16) throw new ArgumentOutOfRangeException(nameof(queryBudget));
         if (Complete || feature == null) return Complete;
@@ -140,7 +144,7 @@ internal sealed class ScenicSpatialPlanner
             graphSearching = false;
             if (expired)
             {
-                if (TryFallback()) return true;
+                if (TryFallback() || TryPan()) return true;
                 Finish("No useful route within the bounded local spatial search"); return true;
             }
             nextGraphAt = nodes.Count + 4;
@@ -148,14 +152,17 @@ internal sealed class ScenicSpatialPlanner
         if (expired || nodes.Count >= MaximumNodes || Attempts >= MaximumProbes)
         {
             if (edges.Count > 0) { BeginGraph(); search.Step(512); if (TryResult() || TryFallback()) return true; }
+            if (TryPan()) return true;
             Finish($"Camera-route search expired: {nodes.Count} clear viewpoints, {edges.Count / 2} validated corridors; last observation: {Reason}"); return true;
         }
         for (int work = 0; work < queryBudget; work++)
         {
             if (current == null)
             {
-                if (frontier.Count > 0) current = frontier.Dequeue();
-                else if (seedIndex < MaximumSeeds) current = Seed(seedIndex++);
+                // Interleave azimuth seeds with graph growth; one blocked pocket
+                // cannot consume the entire observed-space budget.
+                if (seedIndex < MaximumSeeds && (frontier.Count == 0 || Attempts % 5 == 0)) current = Seed(seedIndex++);
+                else if (frontier.Count > 0) current = frontier.Dequeue();
                 else
                 {
                     if (edges.Count > 0)
@@ -163,10 +170,12 @@ internal sealed class ScenicSpatialPlanner
                         BeginGraph(); search.Step(512);
                         if (TryResult() || TryFallback()) return true;
                     }
+                    if (TryPan()) return true;
                     Finish("No clear connected viewpoint found for this subject"); return true;
                 }
                 Attempts++;
             }
+            if (!CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic)) return false;
             if (!Advance(current)) return false;
             current = null;
             if (nodes.Count >= nextGraphAt && edges.Count >= 4)
@@ -191,7 +200,7 @@ internal sealed class ScenicSpatialPlanner
 
     private float FramingDistance(Vector3 outward)
     {
-        if (feature!.SubjectKind == ScenicSubjectKind.Npc)
+        if (feature!.SubjectKind == ScenicSubjectKind.Npc || feature.ScopeLabel == "Opening")
             return ScenicNpcComposition.Distance(feature.Height, feature.Radius, fov, aspect, role == ScenicShotRole.Detail);
         Vector3 size = subject!.Value.extents, right = Vector3.Cross(Vector3.up, outward);
         float halfWidth = Mathf.Abs(right.x) * size.x + Mathf.Abs(right.z) * size.z;
@@ -306,27 +315,8 @@ internal sealed class ScenicSpatialPlanner
 
     private bool Framing(ScenicPose pose, out float quality)
     {
-        quality = 1;
-        if (!subject.HasValue) return true;
-        Bounds bounds = subject.Value;
-        Quaternion inverse = Quaternion.Inverse(pose.Rotation);
-        Vector3 min = bounds.min, max = bounds.max;
-        int n = 0;
-        for (int x = 0; x < 2; x++) for (int y = 0; y < 2; y++) for (int z = 0; z < 2; z++)
-        {
-            Vector3 local = inverse * (new Vector3(x == 0 ? min.x : max.x, y == 0 ? min.y : max.y,
-                z == 0 ? min.z : max.z) - pose.Position);
-            corners[n++] = new ShotProjection.Point(local.x, local.y, local.z);
-        }
-        ShotProjection.Envelope envelope = ShotProjection.MeasureEnvelope(corners, fov, aspect, nearClip, .10, .025, .02);
-        if (!envelope.InFront || envelope.RelativeHeight < .08 || envelope.MaxX - envelope.MinX < .1) return false;
-        double minimum = role == ScenicShotRole.Establish ? .88 : role == ScenicShotRole.Detail ? .2 : .55;
-        if (envelope.VisibleFraction < minimum) return false;
-        if (role == ScenicShotRole.Establish && (envelope.Headroom < .02 || envelope.SafeFraction < .80)) return false;
-        float coverage = (float)Math.Min(1, envelope.VisibleFraction / Math.Max(.4, minimum));
-        quality = role == ScenicShotRole.Detail ? coverage :
-            coverage * .65f + (float)envelope.SafeFraction * .20f + (float)envelope.HeadroomScore * .15f;
-        return true;
+        return ScenicSubjectFrame.Evaluate(feature!, role, pose, aspect, nearClip, out quality, out _) &&
+            ScenicSubjectFrame.MembersVisible(feature!, role, pose, visibility, aspect, nearClip);
     }
 
     private void Add(Probe probe)
@@ -346,7 +336,8 @@ internal sealed class ScenicSpatialPlanner
         // Tangential, depth and rising options compete under the shared role,
         // continuity and turn cost. The queue and graph remain bounded.
         Vector3 radial = Vector3.ProjectOnPlane(probe.Position - focus, Vector3.up).normalized;
-        Vector3 tangent = Vector3.Cross(Vector3.up, radial);
+        Vector3 tangent = feature!.Kind == ScenicFeatureKind.Coastline && feature.WaterDirection.HasValue
+            ? FromCore(feature.Direction) : Vector3.Cross(Vector3.up, radial);
         Enqueue(probe.Position + tangent * EdgeStep, index);
         Enqueue(probe.Position - tangent * EdgeStep, index);
         Enqueue(probe.Position - radial * 4f, index);
@@ -389,7 +380,19 @@ internal sealed class ScenicSpatialPlanner
     {
         if (route == null || !route.IsFresh(Time.unscaledTime, CameraSpatialScene.Shared.Epoch, 8)) return false;
         bodyRoute.Clear(); aimRoute.Clear();
-        foreach (CameraSpatialNode node in route.Nodes) { bodyRoute.Add(node.Position); aimRoute.Add(node.Aim); }
+        foreach (CameraSpatialNode node in route.Nodes)
+        {
+            bodyRoute.Add(node.Position);
+            // Track a restrained distance along the measured shore, rather than
+            // orbit a point and alternate randomly between inland and open sea.
+            if (feature!.Kind == ScenicFeatureKind.Coastline && feature.WaterDirection.HasValue)
+            {
+                Vector3 displacement = FromCore(node.Position) - FromCore(route.Nodes[0].Position);
+                Vector3 along = FromCore(feature.Direction) * Vector3.Dot(displacement, FromCore(feature.Direction)) * .45f;
+                aimRoute.Add(ToCore(focus + along));
+            }
+            else aimRoute.Add(node.Aim);
+        }
         try
         {
             ScenicShotPlan candidate = ScenicShotPlan.Spatial(id, feature!, role, bodyRoute, aimRoute, fov, screenX, screenY, native);
@@ -397,6 +400,30 @@ internal sealed class ScenicSpatialPlanner
             Plan = candidate; Score = Mathf.Clamp01((float)route.Score); Complete = true;
             Reason = fallback ? "Shorter measured corridor ready for complete native validation after bounded search" :
                 "Developed spatial trajectory ready for complete native validation";
+            return true;
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private bool TryPan()
+    {
+        if (feature == null || nodes.Count == 0) return false;
+        int best = -1;
+        for (int i = 0; i < nodes.Count; i++)
+            if (Time.unscaledTime >= nodes[i].ObservedAt && Time.unscaledTime - nodes[i].ObservedAt <= 8 &&
+                (best < 0 || nodes[i].Quality > nodes[best].Quality)) best = i;
+        if (best < 0) return false;
+        ScenicPose pose = poses[best];
+        Vector3 forward = (focus - pose.Position).normalized;
+        Vector3 tangent = Vector3.Cross(Vector3.up, forward).normalized;
+        float angle = feature.SubjectKind == ScenicSubjectKind.Npc || feature.ScopeLabel == "Opening" ? 2f : 4f;
+        float sweep = Vector3.Distance(pose.Position, focus) * Mathf.Tan(angle * Mathf.Deg2Rad);
+        try
+        {
+            Plan = ScenicShotPlan.Pan(id, feature, role, ToCore(pose.Position), ToCore(focus - tangent * sweep),
+                ToCore(focus + tangent * sweep), fov, screenX, screenY);
+            Score = nodes[best].Quality; Complete = true;
+            Reason = "Measured clear viewpoint supports a restrained pan; validate the full angular sweep";
             return true;
         }
         catch (ArgumentException) { return false; }

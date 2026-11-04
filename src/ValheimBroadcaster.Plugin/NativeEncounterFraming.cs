@@ -10,14 +10,14 @@ internal sealed class NativeEncounterFraming
 {
     private readonly EncounterAxisPolicy axis = new EncounterAxisPolicy();
     internal float Heading { get; private set; }
-    internal void Update(CameraSceneFrame context, float now, float baseline) =>
-        Heading = axis.Update(now, context.SceneId, baseline, context.Encounter,
+    internal void Update(CameraSceneFrame context, float now, float baseline, bool prioritizeEncounter = true) =>
+        Heading = axis.Update(now, context.SceneId, baseline, prioritizeEncounter ? context.Encounter : EncounterKind.None,
             context.EncounterConfidence, context.EncounterDirection.x, context.EncounterDirection.z);
     internal void Reset() { axis.Reset(); Heading = 0; }
     internal static bool Active(CameraSceneFrame frame) => EncounterFramingPolicy.Meaningful(frame.Encounter, frame.EncounterConfidence) &&
         TargetRoster.Finite(frame.EncounterFocus) && TargetRoster.Finite(frame.EncounterDirection);
-    internal static Vector3 Interest(CameraSceneFrame frame) => Active(frame) ? frame.EncounterFocus : frame.InterestFocus;
-    internal static float Confidence(CameraSceneFrame frame) => Active(frame) ? frame.EncounterConfidence : frame.InterestConfidence;
+    internal static Vector3 Interest(CameraSceneFrame frame, bool prioritizeEncounter = true) => prioritizeEncounter && Active(frame) ? frame.EncounterFocus : frame.InterestFocus;
+    internal static float Confidence(CameraSceneFrame frame, bool prioritizeEncounter = true) => prioritizeEncounter && Active(frame) ? frame.EncounterConfidence : frame.InterestConfidence;
 
     internal static float Penalty(CameraSceneFrame frame, Vector3 camera, Quaternion rotation,
         float fov, float aspect, float near, PlayerShotVisibility visibility,
@@ -41,7 +41,8 @@ internal sealed class NativeEncounterFraming
                     if (subject.Actor && framed[i].ActorId == subject.Actor.GetInstanceID() &&
                         (view.VisibleMask & (1 << i)) != 0) { visible++; break; }
             }
-        return EncounterFramingPolicy.ViewPenalty(frame.Encounter, frame.EncounterConfidence, dot, target,
+        float pressureWeight = frame.Encounter == EncounterKind.Threat && frame.EncounterSituation.Pressure == EncounterPressure.Presence ? .35f : 1f;
+        return pressureWeight * EncounterFramingPolicy.ViewPenalty(frame.Encounter, frame.EncounterConfidence, dot, target,
             Mathf.Max(0, size), opponents, visible);
     }
 

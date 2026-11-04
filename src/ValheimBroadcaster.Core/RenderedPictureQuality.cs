@@ -46,7 +46,7 @@ namespace ValheimBroadcaster.Core
     public static class RenderedPictureQuality
     {
         public static RenderedPictureMeasurement Measure(byte[] rgba, int width, int height,
-            PictureRegion primary, bool hasPrimary)
+            PictureRegion primary, bool hasPrimary, ProgramRowOrder rowOrder = ProgramRowOrder.Unknown)
         {
             if (rgba == null || width < 8 || height < 8 || width > 512 || height > 512 ||
                 rgba.Length != width * height * 4) return default;
@@ -61,8 +61,9 @@ namespace ValheimBroadcaster.Core
             }
             float darkFraction = (float)dark / whole.Count, clipFraction = (float)clipped / whole.Count;
             float separation = 0, detail = 0;
+            if (rowOrder == ProgramRowOrder.TopFirst) primary = primary.MirrorY;
             bool subject = hasPrimary && primary.IsValid && Contrast(rgba, width, height, primary, out separation, out detail);
-            if (subject)
+            if (subject && rowOrder == ProgramRowOrder.Unknown)
             {
                 // Async GPU row order is backend/path dependent. No platform-wide
                 // flip is assumed. Accept the more readable of the projected ROI
@@ -136,12 +137,12 @@ namespace ValheimBroadcaster.Core
 
     public readonly struct RenderedPictureFeedback
     {
-        public readonly bool IsFresh;
+        public readonly bool IsFresh, ShouldReconsider;
         public readonly float Penalty;
         public readonly RenderedPictureMeasurement Measurement;
         public readonly string Reason;
-        internal RenderedPictureFeedback(bool fresh, float penalty, RenderedPictureMeasurement measurement, string reason)
-        { IsFresh = fresh; Penalty = penalty; Measurement = measurement; Reason = reason; }
+        internal RenderedPictureFeedback(bool fresh, float penalty, RenderedPictureMeasurement measurement, string reason, bool reconsider = false)
+        { IsFresh = fresh; Penalty = penalty; Measurement = measurement; Reason = reason; ShouldReconsider = reconsider; }
         public static RenderedPictureFeedback Unavailable(string reason) => new RenderedPictureFeedback(false, 0, default, reason);
     }
 
@@ -150,7 +151,7 @@ namespace ValheimBroadcaster.Core
     public sealed class RenderedPicturePolicy
     {
         public const double PersistenceSeconds = 2, FreshSeconds = 1.5, MaximumSampleGap = 1, CorrectionCooldownSeconds = 8;
-        public const float MaximumPenalty = .10f;
+        public const float MaximumPenalty = .22f;
         private RenderedPictureKey key;
         private RenderedPictureMeasurement measurement;
         private double sampledAt = -1, concernSince = -1, invalidBefore = -1;
@@ -190,7 +191,19 @@ namespace ValheimBroadcaster.Core
             float penalty = persistent && now >= cooldownUntil ? Math.Min(MaximumPenalty, MaximumPenalty * measurement.Concern) : 0;
             return new RenderedPictureFeedback(true, penalty, measurement,
                 now < cooldownUntil ? "Rendered-picture correction settling" : persistent ? measurement.Reason :
-                measurement.Concern > 0 ? "Waiting for persistent rendered-picture evidence" : measurement.Reason);
+                measurement.Concern > 0 ? "Waiting for persistent rendered-picture evidence" : measurement.Reason,
+                persistent && now >= cooldownUntil && measurement.Concern > 0);
+        }
+
+        /// <summary>Consume only after an actually accepted editorial replacement.
+        /// This evidence authorizes one reconsideration, never a physical failure.</summary>
+        public bool MarkReconsidered(RenderedPictureKey identity, double now)
+        {
+            if (!Feedback(identity, now).ShouldReconsider) return false;
+            cooldownUntil = now + CorrectionCooldownSeconds;
+            invalidBefore = Math.Max(invalidBefore, now);
+            ResetEvidence();
+            return true;
         }
 
         /// <summary>A normal blend/held frame invalidates pixel evidence at once,

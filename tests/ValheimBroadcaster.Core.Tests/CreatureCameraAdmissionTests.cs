@@ -75,7 +75,7 @@ internal static class CreatureCameraAdmissionTests
     private sealed class InvalidRanker : IShotCandidateRanker
     {
         public int Best(IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
-            IReadOnlyList<bool>? readable, int incumbent) => 0;
+            IReadOnlyList<bool>? readable, int incumbent, IReadOnlyList<int>? priorities = null) => 0;
     }
     private static void NativeCannotOverride()
     {

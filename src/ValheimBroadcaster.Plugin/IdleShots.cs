@@ -61,6 +61,8 @@ internal sealed class IdleShots
         scenic.Observe(ready, usable, planId, progress, blocked, held, reason, actualFocus);
     internal void UpdateRecovery(bool onAir, bool usableLive, long planId, bool held) =>
         scenic.UpdateRecovery(onAir, usableLive, planId, held);
+    internal bool ObservePixelConcern(long planId, bool reconsider, string reason) =>
+        scenic.ObservePixelConcern(planId, reconsider, reason);
 
     internal void Refresh(float searchRadius, Vector3? creatureSearchOrigin = null)
     {

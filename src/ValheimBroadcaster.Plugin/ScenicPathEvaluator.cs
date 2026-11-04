@@ -45,7 +45,7 @@ internal sealed class ScenicPoseSolver : IDisposable
                 ScenicVisibility.Compose(picturePosition, pictureFocus, picture.ScreenX, picture.ScreenY,
                     plan.FieldOfView, aspect), plan.FieldOfView, 0);
         }
-        ScenicShotSample sample = path.Sample(progress);
+        ScenicShotSample sample = plan.IsPan ? plan.Sample(progress) : path.Sample(progress);
         Vector3 expected = FromCore(sample.CameraPosition), focus = FromCore(sample.AimPosition);
         if (!plan.UseNativeSpline)
         {
@@ -130,16 +130,17 @@ internal static class ScenicPoseValidation
             if (!continuous && !IdleShots.Ready(carrier))
                 return Reject(ScenicRejectionKind.Acquisition, "Scenic carrier area is not acquired", out kind, out reason);
         }
-        Bounds? subject = null;
         ScenicFeature? feature = plan.Feature;
-        if (feature != null && (feature.Kind == ScenicFeatureKind.Rock || feature.Kind == ScenicFeatureKind.Structure))
-            subject = new Bounds(new Vector3(feature.Center.X, feature.Center.Y, feature.Center.Z),
-                new Vector3(feature.Radius * 2f, Mathf.Max(1f, feature.Height), feature.Radius * 2f));
+        Bounds? subject = feature != null ? ScenicSubjectFrame.BoundsFor(feature) : null;
+        if (feature != null && !ScenicSubjectFrame.Evaluate(feature, plan.Role, pose, aspect, nearClip, out _, out _))
+            return Reject(ScenicRejectionKind.Focus, "Final scenic pose loses the measured subject envelope or deliberate scale", out kind, out reason);
         ScenicVisibility.Result view = visibility.Evaluate(pose.Position, pose.Rotation, pose.Focus,
             pose.FieldOfView, aspect, nearClip, subject);
         score = view.Score;
         if (feature != null && !LocalScenicSiteSubjects.Validate(feature, pose, visibility, aspect, nearClip, out string subjectReason))
             return Reject(ScenicRejectionKind.Focus, subjectReason, out kind, out reason);
+        if (feature != null && view.SurveyComplete && !ScenicSubjectFrame.MembersVisible(feature, plan.Role, pose, visibility, aspect, nearClip))
+            return Reject(ScenicRejectionKind.Focus, "Final scenic pose does not show enough independently observed site members", out kind, out reason);
         if (!view.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, view.Reason, out kind, out reason);
         if (!view.SurveyComplete) return Reject(ScenicRejectionKind.SurveyIncomplete, view.Reason, out kind, out reason);
         if (!view.FocusVisible) return Reject(ScenicRejectionKind.Focus, "Scenic feature is outside the frame or hidden", out kind, out reason);
@@ -195,7 +196,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     internal float ValidatedFraction { get; private set; }
     internal ScenicRouteWindow ReadableWindow => window;
     internal ScenicShotPlan ProposeReadableSection() =>
-        path.ProposeMeasuredSlice((float)window.Start, (float)window.End);
+        plan!.IsPan ? plan.Slice(window.Start, window.End) : path.ProposeMeasuredSlice((float)window.Start, (float)window.End);
     internal float SuggestedCanopyLift { get; private set; }
     internal ScenicRejectionKind FailureKind { get; private set; }
     internal string Reason { get; private set; } = "No scenic route prepared";
@@ -204,7 +205,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     {
         Reset(); plan = source; visibility = survey; aspect = cameraAspect; nearClip = cameraNearClip; moveCarrier = moveObserver;
         sceneEpoch = CameraSpatialScene.Shared.Epoch;
-        if (!source.IsDirected || !Finite(aspect) || aspect <= 0 || !Finite(nearClip) || nearClip <= 0 || !path.Prepare(source, 1))
+        if (!source.IsDirected || !Finite(aspect) || aspect <= 0 || !Finite(nearClip) || nearClip <= 0 || !PreparePath(source))
         { Fail(ScenicRejectionKind.InvalidPlan, "Unable to prepare the directed native scenic route"); return; }
         // A minimum of 16 intervals limits unsampled curvature, aim and foliage
         // changes even on a compact route; refinement below follows actual pose.
@@ -214,12 +215,19 @@ internal sealed class ScenicPathEvaluator : IDisposable
 
     internal bool Step(int sampleBudget = 6)
     {
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return Complete;
+        using (work) return StepBudgeted(sampleBudget);
+    }
+
+    private bool StepBudgeted(int sampleBudget)
+    {
         if (sampleBudget < 1 || sampleBudget > 64) throw new ArgumentOutOfRangeException(nameof(sampleBudget));
         if (Complete || plan == null || visibility == null) return Complete;
         if (sceneEpoch != CameraSpatialScene.Shared.Epoch)
         { Fail(ScenicRejectionKind.Geometry, "Scenic scene changed during route validation; discard mixed spatial evidence"); return true; }
         for (int i = 0; i < sampleBudget && pending.Count > 0; i++)
         {
+            if (!CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic)) return false;
             if (++samples > MaximumSamples) { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route exceeds bounded survey effort"); return true; }
             float fraction = pending.Pop();
             ScenicPose pose = solver.Solve(path, plan, fraction, aspect, nearClip);
@@ -249,8 +257,10 @@ internal sealed class ScenicPathEvaluator : IDisposable
                         if (++fitPasses > 3 || totalLift + adjustment > 48f)
                         { Fail(ScenicRejectionKind.SurfaceClearance, "Scenic route cannot fit above the local surface within its elevation budget"); return true; }
                         totalLift += adjustment;
-                        plan = plan.RaiseCamera(adjustment);
-                        if (!path.Prepare(plan, 1))
+                        try { plan = plan.RaiseCamera(adjustment); }
+                        catch (ArgumentException)
+                        { Fail(ScenicRejectionKind.SurfaceClearance, "Terrain fitting would lose the bounded scenic aim or useful angular development"); return true; }
+                        if (!PreparePath(plan))
                         { Fail(ScenicRejectionKind.InvalidPlan, "Cannot prepare terrain-fitted scenic route"); return true; }
                         solver.Reset();
                     }
@@ -321,6 +331,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
         }
         return Complete;
     }
+
+    private bool PreparePath(ScenicShotPlan value) => value.IsPan || path.Prepare(value, 1);
 
     private void Fail(ScenicRejectionKind kind, string reason)
     { Complete = true; Accepted = false; FailureKind = kind; Reason = reason; pending.Clear(); }

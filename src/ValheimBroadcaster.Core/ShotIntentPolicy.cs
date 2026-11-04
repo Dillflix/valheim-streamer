@@ -14,6 +14,9 @@ namespace ValheimBroadcaster.Core
         public readonly ShotSceneKind Kind;
         public readonly CinematicActivity Activity;
         public readonly EncounterKind Encounter;
+        public readonly EncounterPressure Pressure;
+        public bool ContextualPresence => Encounter == EncounterKind.Threat && Pressure == EncounterPressure.Presence;
+        public bool RequiresEncounterFocus => EncounterConfidence >= .6f && Encounter != EncounterKind.None && !ContextualPresence;
         public readonly float EncounterConfidence, EncounterDistance;
         public readonly float Confidence, Space;
         public readonly int Companions, Opponents;
@@ -24,7 +27,7 @@ namespace ValheimBroadcaster.Core
         public ShotSituation(ShotSceneKind kind, CinematicActivity activity, float confidence,
             int companions, int opponents, bool hasInterest, ShotEnvironment environment,
             ShotLocomotion locomotion, float space = 1, EncounterKind encounter = EncounterKind.None,
-            float encounterConfidence = 0, float encounterDistance = 0)
+            float encounterConfidence = 0, float encounterDistance = 0, EncounterPressure? pressure = null)
         {
             if ((int)kind < 0 || (int)kind > (int)ShotSceneKind.Scenic ||
                 (int)activity < 0 || (int)activity > (int)CinematicActivity.Work ||
@@ -34,6 +37,9 @@ namespace ValheimBroadcaster.Core
                 float.IsNaN(encounterDistance) || float.IsInfinity(encounterDistance) || encounterDistance < 0 || encounterDistance > 1000 ||
                 !Unit(confidence) || !Unit(space) || companions < 0 || companions > 63 || opponents < 0 || opponents > 64)
                 throw new ArgumentOutOfRangeException(nameof(confidence));
+            Pressure = pressure ?? (encounter == EncounterKind.Combat ? EncounterPressure.Engaged :
+                encounter == EncounterKind.Threat ? EncounterPressure.Developing : EncounterPressure.None);
+            if ((int)Pressure < 0 || (int)Pressure > (int)EncounterPressure.Engaged) throw new ArgumentOutOfRangeException(nameof(pressure));
             Kind = kind; Activity = activity; Encounter = encounter; EncounterConfidence = encounterConfidence; EncounterDistance = encounterDistance; Confidence = confidence; Companions = companions;
             Opponents = opponents; HasInterest = hasInterest; Environment = environment;
             Locomotion = locomotion; Space = space;
@@ -138,7 +144,7 @@ namespace ValheimBroadcaster.Core
             if (role == ShotRole.Interaction && EncounterFramingPolicy.Meaningful(scene.Encounter, scene.EncounterConfidence)) return true;
             if (scene.Confidence < .6f) return false;
             if (role == ShotRole.Detail) return scene.Activity == CinematicActivity.Work && scene.HasInterest;
-            if (role == ShotRole.Interaction) return scene.Companions > 0 || scene.Opponents > 0 || scene.HasInterest;
+            if (role == ShotRole.Interaction) return scene.Companions > 0 || scene.Opponents > 0 && !scene.ContextualPresence || scene.HasInterest;
             if (role == ShotRole.Action) return scene.Activity == CinematicActivity.Combat;
             if (role == ShotRole.Tracking) return scene.Activity == CinematicActivity.Travel ||
                 scene.Locomotion == ShotLocomotion.Boat || scene.Locomotion == ShotLocomotion.Swim || scene.Locomotion == ShotLocomotion.Vertical;
@@ -153,11 +159,11 @@ namespace ValheimBroadcaster.Core
                 return ShotRole.Interior;
             if (scene.Activity == CinematicActivity.Combat && scene.Confidence >= .6f)
                 return ShotRole.Action;
-            if (scene.EncounterConfidence >= .6f && (scene.Encounter == EncounterKind.Hunting || scene.Encounter == EncounterKind.Threat))
+            if (scene.EncounterConfidence >= .6f && (scene.Encounter == EncounterKind.Hunting || scene.Encounter == EncounterKind.Threat && !scene.ContextualPresence))
                 return shown < 3 ? ShotRole.Establish : ShotRole.Interaction;
             if (shown < EstablishSeconds || scene.Confidence < .6f) return ShotRole.Establish;
             if (scene.Activity == CinematicActivity.Work && scene.HasInterest) return ShotRole.Detail;
-            if (scene.Companions > 0 || scene.Opponents > 0) return ShotRole.Interaction;
+            if (scene.Companions > 0 || scene.Opponents > 0 && !scene.ContextualPresence) return ShotRole.Interaction;
             if (scene.Activity == CinematicActivity.Travel || scene.Locomotion == ShotLocomotion.Boat ||
                 scene.Locomotion == ShotLocomotion.Swim || scene.Locomotion == ShotLocomotion.Vertical)
                 return ShotRole.Tracking;
@@ -187,7 +193,7 @@ namespace ValheimBroadcaster.Core
             }
             if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Hunting)
             { motion = 0; interest = .18f; aim = Math.Min(aim, 1); height *= .7f; angular = 35; }
-            else if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Threat)
+            else if (scene.EncounterConfidence >= .6f && scene.Encounter == EncounterKind.Threat && !scene.ContextualPresence)
             { motion = Math.Min(motion, .15f); interest = .12f; angular = 35; }
             if (scene.Locomotion == ShotLocomotion.Boat && scene.HasInterest)
                 interest = Math.Max(.2f, interest);

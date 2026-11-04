@@ -19,9 +19,25 @@ internal static class ScenicTraceTests
         yield return ("Flight recorder rotates bounded files and preserves unrelated files", Rotation);
         yield return ("Flight recorder reports inaccessible storage without throwing into the producer", StorageFailure);
         yield return ("Encounter source metadata survives held-frame reuse and current replay headers", EncounterCapture);
+        yield return ("Incremental foliage lifecycle evidence is summarized without claiming replayed Unity work", IncrementalEvidence);
     }
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     private static string Header() => new CameraTraceRecord("header", 0).Field("version", "0.8.29").Field("utc", "test-session").ToString();
+    private static void IncrementalEvidence()
+    {
+        var replay = new ReplayEngine();
+        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.36").Field("utc", "incremental-test").ToString());
+        replay.Read(Row("foliage-projection", 1, 1).Field("action", "start").Field("retained", 400).ToString());
+        replay.Read(Row("foliage-projection", 1.2, 2).Field("action", "budget-deferred").ToString());
+        replay.Read(Row("foliage-catalogue-progress", 1.3, 3).Field("steps", 1024).ToString());
+        replay.Read(Row("foliage-projection", 1.4, 4).Field("action", "commit").Field("retained", 410).ToString());
+        Check(replay.Invalid == 0 && replay.Missing == 0 && replay.Replayed == 0,
+            "Observation telemetry became an invented replay decision or invalid input");
+        string report = string.Join("\n", replay.Summary());
+        Check(report.Contains("Foliage projection: budget-deferred") && report.Contains("Foliage projection: commit") &&
+            report.Contains("Incremental foliage catalogue progress") && report.Contains("not re-executed scheduling"),
+            "Replay summary hid the incremental survey evidence or its limits");
+    }
     private static void EncounterCapture()
     {
         var source = new DiagnosticPictureContext("Player", 12, 4, true, "Readable fallback", intent: "Action",
@@ -36,7 +52,7 @@ internal static class ScenicTraceTests
             row.RootElement.GetProperty("hostiles").GetInt32() == 9 && row.RootElement.GetProperty("visibleOpponents").GetInt32() == 0 &&
             row.RootElement.GetProperty("actorOcclusion").GetDouble() == .2, "Held picture acquired later encounter metadata");
         var replay = new ReplayEngine();
-        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.35").Field("utc", "encounter-test").ToString());
+        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.36").Field("utc", "encounter-test").ToString());
         replay.Read(encoded);
         replay.Read(Row("budget", 11.5, 2).Field("operation", "step").Field("started", 10).Field("waitingAt", 11.2)
             .Field("urgent", true).Field("expired", true).ToString());

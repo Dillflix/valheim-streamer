@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.35";
+    public const string PluginVersion = "0.8.36";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -84,6 +84,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private ZNet? referenceOwner;
     private long lastRevision = -1;
     private string lastStatus = "Disabled";
+    private GUIStyle? operatorStyle;
+    private string operatorText = "";
+    private double nextOperatorText;
+    private FramePresentation operatorPresentation = FramePresentation.Slate;
 
     private void Awake()
     {
@@ -97,6 +101,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         frameHold.PictureUnavailable = pictureMonitor.Suspend;
         frameHold.ObserveLiveFrame = ObserveProgramPicture;
         frameHold.DescribePicture = DescribeDiagnosticPicture;
+        frameHold.DescribeOperatorSubject = DescribeOperatorSubject;
         observer.RemoteApproved = () => remote.Isolated && remote.Approved;
         automatic = new AutonomousBroadcast(settings, remote, observer, playerShots,
             (target, point) => rig.RequiredPlayerCameraMovement(target, point, settings), ResetShot, message => Logger.LogInfo(message));
@@ -245,6 +250,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                     recentPicture && frameHold.HasRecentLiveFrame,
                     recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
                     presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus);
+            if (!probe.Active && !director.IsHolding && coverage.Mode == CoverageMode.Scenic &&
+                presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
+                recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable &&
+                presentedScenicPlan == rig.ScenicPresentedPlanId)
+                idle.ObservePixelConcern(presentedScenicPlan, rig.ScenicPictureConcern, rig.ScenicPictureConcernReason);
             // Selecting a creature is not proof that it rendered. Preserve an
             // existing idle blackout until that cutaway supplies usable output.
             bool pendingIdleCreature = coverage.Mode == CoverageMode.Creature && !coverage.IsWildlifeCutaway && !usableIdlePicture;
@@ -303,7 +313,6 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (observer.Active && observer.Phase != ObserverPhase.Watching)
             {
                 cameraReady = false;
-                LogStatus();
                 return;
             }
             director.DwellSeconds = settings.Dwell.Value;
@@ -377,16 +386,16 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 else { RestoreReference(); rig.ResetPose(); }
             }
             else if (!observer.Active) UpdateReference(readyPlayer ? current : acquiring ? roster.Find(acquisition.CurrentTarget?.Id) : null);
-            LogStatus();
         }
         catch (Exception error) { FailClosed(error); }
     }
 
     private void LogStatus()
     {
+        if (Time.unscaledTime < nextStatusLog) return;
+        nextStatusLog = Time.unscaledTime + 5;
         string status = Status();
-        if (status != lastStatus && Time.unscaledTime >= nextStatusLog)
-        { Logger.LogInfo(status); lastStatus = status; nextStatusLog = Time.unscaledTime + 5; }
+        if (status != lastStatus) { Logger.LogInfo(status); lastStatus = status; }
     }
 
     private static bool IsTextOrMenuOpen() =>
@@ -446,7 +455,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         break;
                     }
         }
-        double now = Time.realtimeSinceStartup;
+        double now = Time.realtimeSinceStartupAsDouble;
         director.RecordCoverage(now, Time.unscaledDeltaTime, visibleCoverageIds);
         automatic?.RecordCoverage(now, Time.unscaledDeltaTime, visibleCoverageIds);
     }
@@ -460,7 +469,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             presentedMode != CoverageMode.Player || presentedPlayerId != selected.Identity.Id) return;
         float age = Time.unscaledTime - rig.PlayerSceneObservedAt;
         if (age < 0 || age > .75f) return;
-        double freshUntil = Time.realtimeSinceStartup + .75f - age;
+        double freshUntil = Time.realtimeSinceStartupAsDouble + .75 - age;
         foreach (CameraSceneSubject subject in scene.Subjects)
         {
             if (!subject.Player || subject.Player.IsDead()) continue;
@@ -825,6 +834,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             rig.FramedParticipantCount, rig.VisibleOpponentCount, rig.PrimaryActorOcclusion);
     }
 
+    private string DescribeOperatorSubject() => presentedMode == CoverageMode.Player
+        ? roster.Find(presentedPlayerId)?.Identity.Name ?? "Player"
+        : presentedMode == CoverageMode.Creature ? idle.Find(coverage.SubjectId)?.GetHoverName() ?? "Creature" : "";
+
     private void ToggleStream()
     {
         if (output?.Desired == true) { output.RequestStop(); return; }
@@ -873,39 +886,69 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             return;
         }
         FramePresentation presentation = frameHold.Present();
-        if (presentation == FramePresentation.Hold) return;
+        FramePresentation programPresentation = frameHold.CurrentPresentation;
+        // Update precedes camera rendering. Report the actual completed
+        // compositor selection at repaint, not an inevitable pre-render gap.
+        if (Event.current.type == EventType.Repaint) LogStatus();
         Color old = GUI.color;
         if (presentation == FramePresentation.Slate)
         {
             GUI.color = Color.black;
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
-            GUI.Label(new Rect(24, 24, Screen.width - 48, 110), "Valheim Broadcaster — recovery: waiting for a ready scene\n" + Status() +
-                (observer.Active ? remote.Isolated
-                    ? "\nF8 or broadcast observer return: return and park. Disconnect to leave the read-only role."
-                    : "\nF8 or broadcast observer return: return to the starting position, then restore controls." : ""));
         }
-        else if (settings.ShowStatus.Value || selfTest || probe.Active)
+        if (programPresentation == FramePresentation.Slate || settings.ShowStatus.Value || selfTest || probe.Active)
         {
             GUI.color = Color.white;
-            GUI.Box(new Rect(12, 12, Mathf.Max(200, Screen.width - 24), observer.RemoteSession ? 76 : 48), Status());
+            if (operatorStyle == null)
+                operatorStyle = new GUIStyle(GUI.skin.box)
+                {
+                    alignment = TextAnchor.UpperLeft, wordWrap = true, richText = false,
+                    fontSize = 14, padding = new RectOffset(12, 12, 9, 9)
+                };
+            double now = Time.unscaledTimeAsDouble;
+            if (programPresentation != operatorPresentation || now >= nextOperatorText)
+            {
+                operatorPresentation = programPresentation; nextOperatorText = now + .25;
+                operatorText = Status(programPresentation);
+                if (presentation == FramePresentation.Slate && observer.Active)
+                    operatorText += remote.Isolated
+                        ? "\nF8: return and park. Disconnect to leave the read-only role."
+                        : "\nF8: return to the starting position and restore controls.";
+            }
+            float width = Mathf.Max(160, Screen.width - 24);
+            float height = operatorStyle.CalcHeight(new GUIContent(operatorText), width);
+            GUI.Box(new Rect(12, 12, width, height), operatorText, operatorStyle);
         }
         GUI.color = old;
     }
 
-    private string Status()
+    private string Status() => Status(frameHold.CurrentPresentation);
+
+    private string Status(FramePresentation presentation)
     {
-        if (observer.Active) return observer.Status + " | " + (coverage.IsWildlifeCutaway ? "Wildlife cutaway" : coverage.Mode.ToString()) + " | RTMP: " + (output?.Status ?? "Stopped") +
-            (observer.RemoteSession ? "\n" + automatic?.Status + " | " + remote.DiscoveryStatus : "") +
-            (coverage.Mode == CoverageMode.Scenic && (!cameraReady || !idle.HasScenicPath) ? "\n" + idle.ScenicSearchStatus : "");
-        if (acquisitionFailure != null) return acquisitionFailure;
-        if (probe.Active) return $"SOLO DISTANT SCENE TEST | {probe.State} | {probe.Elapsed:F0}s | RTMP: {output?.Status ?? "Stopped"}";
-        string subject = coverage.Mode == CoverageMode.Player ? roster.Find(coverage.SubjectId)?.Identity.Name ?? "Player" :
-            coverage.Mode == CoverageMode.Creature ? idle.Find(coverage.SubjectId)?.GetHoverName() ?? "Creature" : "Scenery";
-        string exhausted = coverage.Mode == CoverageMode.Scenic && !idle.HasScenicPath ? " | No fresh scenic path in loaded region" : "";
-        string pending = coverage.AwaitingPlayers ? acquisitionWindow.Active ? " | Acquiring distant player" : " | Awaiting player scene" : "";
-        return $"{(selfTest ? "SELF-FOLLOW TEST | " : "")}{coverage.Mode} | {subject} | {(director.IsHolding ? "Hold" : "Auto")} | {roster.ConnectedOthers} other connected, {director.Roster.Count} ready{pending}{exhausted} | RTMP: {output?.Status ?? "Stopped"}";
+        DiagnosticPictureContext shown = frameHold.OperatorPicture;
+        string state = presentation == FramePresentation.Live ? "LIVE" : presentation == FramePresentation.Hold ? "HELD" : "RECOVERY SLATE";
+        string onAir = presentation == FramePresentation.Slate ? StatusText(frameHold.LastFailure) :
+            StatusText(shown.Mode) + (frameHold.OperatorSubject.Length > 0 ? " — " + StatusText(frameHold.OperatorSubject) : "") +
+            (shown.Perspective?.Length > 0 ? " | " + StatusText(shown.Perspective) : "") +
+            (shown.Intent?.Length > 0 ? " | " + StatusText(shown.Intent) : "");
+        if (presentation != FramePresentation.Slate && shown.Coverage?.Length > 0)
+            onAir += " | " + StatusText(shown.Coverage);
+        string directing = acquisitionFailure ?? (probe.Active ? "Solo probe " + probe.State :
+            director.IsHolding ? "Operator hold: edits paused" : observer.RemoteSession ? automatic?.Status ?? "Preparing coverage" :
+            coverage.IsWildlifeCutaway ? "Wildlife cutaway; observing player activity" : coverage.AwaitingPlayers ?
+                "Waiting for a loaded player view" : "Automatic " + coverage.Mode + " coverage");
+        string planning = coverage.Mode == CoverageMode.Scenic && (idle.Searching || !idle.HasScenicPath)
+            ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
+        string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
+        string discovery = observer.RemoteSession ? remote.DiscoveryStatus : roster.ConnectedOthers + " other connected; " + roster.Targets.Count + " known targets";
+        return "ON AIR: " + state + " | " + onAir + "\nDIRECTOR: " + StatusText(directing) + planning +
+            "\nSESSION: " + session + " | " + StatusText(discovery) + "\nRTMP: " + StatusText(output?.Status ?? "Stopped");
     }
+
+    private static string StatusText(string? text) => string.IsNullOrEmpty(text) ? "Awaiting evidence" :
+        (text!.Length > 220 ? text.Substring(0, 217) + "..." : text).Replace('\r', ' ').Replace('\n', ' ');
 
     private bool ProbeCameraAreaReady(Vector3 point)
     {
@@ -1094,7 +1137,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)

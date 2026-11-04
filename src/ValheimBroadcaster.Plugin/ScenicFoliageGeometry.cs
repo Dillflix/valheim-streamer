@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -23,8 +24,9 @@ internal sealed class ScenicFoliageGeometry
     internal void BeginSurvey() { remainingReads = 2; sequence++; }
     internal void Reset() { cache.Clear(); sequence = remainingReads = 0; }
 
-    internal Bounds[]? Get(Renderer renderer)
+    internal Bounds[]? Get(Renderer renderer, out bool pending)
     {
+        pending = false;
         // Bone deformation cannot be represented by immutable mesh-local cells.
         if (!(renderer is MeshRenderer)) return null;
         MeshFilter? filter = renderer.GetComponent<MeshFilter>();
@@ -33,6 +35,9 @@ internal sealed class ScenicFoliageGeometry
         int id = mesh!.GetInstanceID();
         if (!cache.TryGetValue(id, out Entry? entry) || entry.Mesh != mesh)
         {
+            if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out CameraWorkBudget.Lease metadataLease)) { pending = true; return null; }
+            using (metadataLease)
+            {
             if (cache.Count >= MaximumMeshes)
             {
                 int oldest = 0, age = int.MaxValue;
@@ -41,11 +46,14 @@ internal sealed class ScenicFoliageGeometry
             }
             entry = new Entry { Mesh = mesh, Cells = SubmeshBounds(mesh), CanRefine = CanRead(mesh) };
             cache[id] = entry;
+            }
         }
         entry.Used = sequence;
         // A budget-deferred fallback remains eligible on the next survey.
         // It is not cached permanently as if it were a completed refinement.
-        if (!entry.Refined && entry.CanRefine && remainingReads > 0)
+        if (!entry.Refined && entry.CanRefine && remainingReads > 0 &&
+            CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out CameraWorkBudget.Lease geometryLease))
+        using (geometryLease)
         {
             remainingReads--; entry.CanRefine = false;
             try
@@ -55,6 +63,7 @@ internal sealed class ScenicFoliageGeometry
             }
             catch (UnityException) { /* Retain measured submesh/renderer bounds. */ }
         }
+        pending = !entry.Refined && entry.CanRefine;
         return entry.Cells;
     }
 
