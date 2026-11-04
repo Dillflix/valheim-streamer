@@ -29,6 +29,8 @@ internal sealed class AutonomousBroadcast
     private WorldInterestSite? interestTravelSite, currentInterest;
     internal WorldInterestSite? ScenicInterest => ControlsSelection && currentInterest != null && (currentInterest.Kind != WorldInterestKind.Natural || currentInterest.Landscape == ScenicLandscape.Coast) ? currentInterest : null;
     private double nextDestinations;
+    private long observedJourneyEnd;
+    private bool journeyCataloguePublished, lastDiscoveryFresh, journeyVisitChanged;
     private readonly ScenicAppearanceSampler appearance = new ScenicAppearanceSampler();
     private string destinationFeedback = "none";
     private readonly List<ScenicRegion> route = new List<ScenicRegion>(32);
@@ -112,6 +114,71 @@ internal sealed class AutonomousBroadcast
         return movement >= 0 && movement < CameraReachability.ImmediateLimit;
     }
 
+    // Refresh before ordinary direction runs: an ending Journey must establish
+    // its new local visit before old source-area dwell can request relocation.
+    // This also feeds explicit Journey requests when automatic selection is off.
+    internal void SynchronizeScenicJourney(IdleShots idle)
+    {
+        double now = Time.realtimeSinceStartupAsDouble;
+        ObserverDiscoverySnapshot? snapshot = remote.Discovery;
+        bool discoveryFresh = remote.DiscoveryFresh;
+        if (snapshot != null && worldId != snapshot.WorldId)
+        {
+            if (worldId != 0) { policy.Reset(); route.Clear(); policy.SetEnabled(WantsEnabled); }
+            ResetDestinations(); worldId = snapshot.WorldId; sequence = -1;
+            observedJourneyEnd = idle.JourneyEndRevision;
+        }
+        if (snapshot != null && snapshot.Sequence != sequence)
+        {
+            sequence = snapshot.Sequence; generatedRegions.Clear(); nextDestinations = 0;
+            foreach (ObserverRegion region in snapshot.Regions)
+                generatedRegions.Add(new ScenicRegion(region.Id, string.IsNullOrWhiteSpace(region.Name) ? region.Id : region.Name, Convert(region.Position)));
+        }
+        if (!journeyCataloguePublished || now >= nextDestinations || discoveryFresh != lastDiscoveryFresh)
+        {
+            nextDestinations = now + 1; interestSites.Clear();
+            IReadOnlyList<WorldInterestSite> sites = remote.WorldInterests;
+            foreach (WorldInterestSite site in sites) interestSites[site.Id] = site;
+            regions.Clear();
+            regions.AddRange(WorldDestinationPlanner.Merge(discoveryFresh ? generatedRegions : Array.Empty<ScenicRegion>(), sites, destinationHistory, now));
+            idle.SetJourneyCatalogue(worldId, regions, interestSites,
+                observer.RemoteSession && remote.Approved && (discoveryFresh || sites.Count > 0));
+            journeyCataloguePublished = true; lastDiscoveryFresh = discoveryFresh;
+        }
+        if (idle.JourneyActive)
+        { destinationVisit.Reset(); currentInterest = null; }
+        if (observedJourneyEnd == idle.JourneyEndRevision) return;
+        observedJourneyEnd = idle.JourneyEndRevision;
+        if (!observer.RemoteSession || !remote.Approved || observer.Phase != ObserverPhase.Watching || !Player.m_localPlayer) return;
+        AutonomyPosition position = Convert(Player.m_localPlayer.transform.position);
+        ScenicRegion? arrived = idle.JourneyArrivedDestination;
+        WorldInterestSite? arrivedSite = idle.JourneyArrivedSite;
+        // A superseding relocation cannot inherit an earlier ending's identity.
+        if (arrived != null && position.HorizontalDistance(arrived.Position) > 96)
+        { arrived = null; arrivedSite = null; }
+        bool destinationPresented = arrived != null;
+        if (arrived == null)
+        {
+            double nearest = 64;
+            foreach (ScenicRegion region in regions)
+            {
+                double distance = position.HorizontalDistance(region.Position);
+                if (distance < nearest) { arrived = region; nearest = distance; }
+            }
+        }
+        if (!policy.ScenicJourneyEnded(arrived, now, destinationPresented)) return;
+        destinationVisit.Reset(); interestTravelId = null; interestTravelSite = null; journeyVisitChanged = true;
+        // Partial journeys do not invent arrival at the intended destination.
+        // They also must not keep imposing the now distant source site's subject.
+        currentInterest = arrivedSite;
+        if (currentInterest != null)
+        {
+            if (interestSites.TryGetValue(currentInterest.Id, out WorldInterestSite current)) currentInterest = current;
+            destinationVisit.Begin(currentInterest.Id, currentInterest.Kind != WorldInterestKind.Natural || currentInterest.Landscape == ScenicLandscape.Coast);
+        }
+        log("Journey ended; local scenic coverage rebased to " + (arrived?.Name ?? "the observed ending area") + ".");
+    }
+
     internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true,
         bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool scenicPicture = false, bool creaturePicture = false, bool destinationSubjectShown = false, bool destinationSubjectUnavailable = false, bool destinationSubjectSatisfied = false,
         bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false,
@@ -121,28 +188,8 @@ internal sealed class AutonomousBroadcast
         policy.SetEnabled(WantsEnabled);
         if (!WantsEnabled || paused) return;
         double now = Time.realtimeSinceStartupAsDouble;
-        ObserverDiscoverySnapshot? snapshot = remote.Discovery;
-        if (snapshot != null && worldId != snapshot.WorldId)
-        {
-            if (worldId != 0) { policy.Reset(); route.Clear(); policy.SetEnabled(true); }
-            ResetDestinations(); worldId = snapshot.WorldId; sequence = -1;
-        }
         policy.SetScenicAppearance(appearance.Sample(now));
-        if (snapshot != null && snapshot.Sequence != sequence)
-        {
-            sequence = snapshot.Sequence; generatedRegions.Clear(); nextDestinations = 0;
-            foreach (ObserverRegion region in snapshot.Regions)
-                generatedRegions.Add(new ScenicRegion(region.Id, string.IsNullOrWhiteSpace(region.Name) ? region.Id : region.Name, Convert(region.Position)));
-        }
-        if (now >= nextDestinations)
-        {
-            nextDestinations = now + 1; interestSites.Clear();
-            IReadOnlyList<WorldInterestSite> sites = remote.WorldInterests;
-            foreach (WorldInterestSite site in sites) interestSites[site.Id] = site;
-            regions.Clear();
-            regions.AddRange(WorldDestinationPlanner.Merge(remote.DiscoveryFresh ? generatedRegions : Array.Empty<ScenicRegion>(), sites, destinationHistory, now));
-        }
-        bool justArrived = false;
+        bool justArrived = journeyVisitChanged; journeyVisitChanged = false;
         policy.DwellSeconds = settings.Dwell.Value;
         policy.AcquisitionSeconds = settings.AcquireSeconds.Value;
         policy.RegionSeconds = settings.RegionSeconds.Value;
@@ -314,7 +361,7 @@ internal sealed class AutonomousBroadcast
     private void ResetDestinations()
     {
         generatedRegions.Clear(); interestSites.Clear(); destinationHistory.Clear(); destinationVisit.Reset();
-        appearance.Reset();
+        appearance.Reset(); journeyCataloguePublished = false; lastDiscoveryFresh = false; journeyVisitChanged = false;
         interestTravelId = null; currentInterest = interestTravelSite = null; interestTravelToken = 0; nextDestinations = 0; destinationFeedback = "none";
     }
     private void ReportDestination(string id, DestinationOutcome outcome, float footage, double now)

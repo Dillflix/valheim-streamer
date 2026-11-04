@@ -43,21 +43,32 @@ namespace ValheimBroadcaster.Core
         public double DisplacementMetres { get; private set; }
         public double ObjectiveAdvanceMetres { get; private set; }
         public double MaximumSeconds { get; private set; }
+        public ScenicJourneyItinerary? Itinerary { get; private set; }
+        public double RouteProgressMetres { get; private set; }
+        public double ArrivalShownSeconds { get; private set; }
+        public bool AtArrival => Itinerary != null && previousLive &&
+            previousPosition.HorizontalDistance(Itinerary.Destination.Position) <= Itinerary.ArrivalRadius &&
+            TravelMetres >= Math.Max(0, TargetMetres - Itinerary.ArrivalRadius * 2) * .9 &&
+            creditedRouteProgress >= TargetMetres - Itinerary.ArrivalRadius * 2;
         public int Windows { get; private set; }
         public AutonomyPosition ObjectiveOrigin { get; private set; }
         public AutonomyPosition ObjectiveGoal { get; private set; }
         public AutonomyPosition Heading { get; private set; }
         public ScenicJourneyOutcome Outcome { get; private set; }
         public string Reason { get; private set; } = "No journey requested";
-        public double RemainingMetres => Math.Max(0, Math.Max(TargetMetres - TravelMetres,
+        public double RemainingMetres => Itinerary != null ? Math.Max(0, TargetMetres - RouteProgressMetres) :
+            Math.Max(0, Math.Max(TargetMetres - TravelMetres,
             TargetMetres * ObjectiveFraction - Math.Min(ObjectiveAdvanceMetres, creditedAdvanceMetres)));
-        public bool TargetReached => TargetMetres > 0 && TravelMetres >= TargetMetres - .5 &&
+        public bool TargetReached => Itinerary != null ? AtArrival && ArrivalShownSeconds >= 3 :
+            TargetMetres > 0 && TravelMetres >= TargetMetres - .5 &&
             Math.Min(ObjectiveAdvanceMetres, creditedAdvanceMetres) >= TargetMetres * ObjectiveFraction - .5;
         public bool BudgetExpired => TargetMetres > 0 && (ShownSeconds >= MaximumSeconds || Windows >= 1024 || TravelMetres >= TargetMetres * 1.5 + MinimumWindowMetres);
         public bool CanContinue => Active && !TargetReached && !BudgetExpired;
         public double AchievedMetresPerSecond => ShownSeconds > 0 ? TravelMetres / ShownSeconds : 0;
         private long observedPlan;
         private double observedProgress, observedAt = -1, creditedAdvanceMetres;
+        private double previousRouteProgress, creditedRouteProgress, arrivalObservedAt = -1;
+        private bool previousArrivalLive;
         private bool previousLive;
         private AutonomyPosition previousPosition;
 
@@ -79,6 +90,45 @@ namespace ValheimBroadcaster.Core
             ObjectiveOrigin = origin; ObjectiveGoal = goal; Heading = direction;
             MaximumSeconds = targetMetres / cruiseSpeed * 1.5 + 30;
             Outcome = ScenicJourneyOutcome.Running; Reason = "Developing a distance-directed scenic journey";
+        }
+
+        /// <summary>Production admission uses a named, observed destination and
+        /// metadata itinerary. The legacy heading overload remains available to
+        /// old mathematical fixtures; it is not destination discovery.</summary>
+        public void Start(long id, ScenicJourneyItinerary itinerary, double cruiseSpeed)
+        {
+            if (id <= 0 || itinerary == null || itinerary.RouteMetres < 256 || itinerary.RouteMetres > 6750)
+                throw new ArgumentOutOfRangeException(nameof(itinerary));
+            Speed(cruiseSpeed);
+            Reset(); Id = id; Itinerary = itinerary; TargetMetres = itinerary.RouteMetres; CruiseSpeed = cruiseSpeed;
+            ObjectiveOrigin = itinerary.Origin; ObjectiveGoal = itinerary.Destination.Position;
+            AutonomyPosition next = itinerary.SteeringGoal(itinerary.Origin);
+            double magnitude = itinerary.Origin.HorizontalDistance(next);
+            Heading = new AutonomyPosition((float)((next.X - ObjectiveOrigin.X) / magnitude), 0,
+                (float)((next.Z - ObjectiveOrigin.Z) / magnitude));
+            MaximumSeconds = TargetMetres / cruiseSpeed * 1.5 + 45;
+            Outcome = ScenicJourneyOutcome.Running; Reason = itinerary.Description;
+        }
+
+        public AutonomyPosition SteeringGoal(AutonomyPosition from, double lookaheadMetres = 48) =>
+            Itinerary?.SteeringGoal(from, lookaheadMetres) ?? ObjectiveGoal;
+
+        /// <summary>Arrival is an actual presented ending, not merely a nearby
+        /// coordinate or a spent distance budget. A held/hidden/unidentified
+        /// subject cannot earn completion, and returning to it restarts its dwell.</summary>
+        public void ObserveArrival(double at, bool liveReadable, bool held,
+            AutonomyPosition? actualPosition, bool arrivalSubjectVisible)
+        {
+            if (!Finite(at) || at < 0) throw new ArgumentOutOfRangeException(nameof(at));
+            if (!Active || Itinerary == null || at <= arrivalObservedAt) return;
+            double gap = arrivalObservedAt < 0 ? 0 : at - arrivalObservedAt;
+            arrivalObservedAt = at;
+            bool valid = AtArrival && liveReadable && !held && arrivalSubjectVisible && actualPosition.HasValue &&
+                actualPosition.Value.HorizontalDistance(Itinerary.Destination.Position) <= Itinerary.ArrivalRadius;
+            if (!valid)
+            { previousArrivalLive = false; if (!held) ArrivalShownSeconds = 0; return; }
+            if (previousArrivalLive && gap <= .25) ArrivalShownSeconds += gap;
+            previousArrivalLive = true;
         }
 
         /// <summary>One locally certifiable section. At high speed multiple
@@ -131,13 +181,23 @@ namespace ValheimBroadcaster.Core
                 // the objective even if enough local looping travel preceded it.
                 creditedAdvanceMetres += (position.X - previousPosition.X) * Heading.X +
                     (position.Z - previousPosition.Z) * Heading.Z;
+                if (Itinerary != null)
+                    creditedRouteProgress += Itinerary.ProjectProgress(position) - previousRouteProgress;
                 ShownSeconds += gap;
             }
             if (observedPlan != plan.Id) { observedPlan = plan.Id; Windows++; }
             observedProgress = progress;
             previousPosition = position; previousLive = true;
+            if (Itinerary != null)
+            {
+                previousRouteProgress = RouteProgressMetres = Itinerary.ProjectProgress(position);
+                // This is actual route-relative development, not a dot product
+                // against the first heading which would reject curved journeys.
+                ObjectiveAdvanceMetres = RouteProgressMetres;
+            }
             DisplacementMetres = ObjectiveOrigin.HorizontalDistance(position);
-            ObjectiveAdvanceMetres = (position.X - ObjectiveOrigin.X) * Heading.X + (position.Z - ObjectiveOrigin.Z) * Heading.Z;
+            if (Itinerary == null)
+                ObjectiveAdvanceMetres = (position.X - ObjectiveOrigin.X) * Heading.X + (position.Z - ObjectiveOrigin.Z) * Heading.Z;
         }
 
         public void Finish(ScenicJourneyOutcome outcome, string reason)
@@ -146,14 +206,22 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(outcome));
             if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A journey outcome needs a reason.", nameof(reason));
             if (outcome == ScenicJourneyOutcome.Completed && !TargetReached)
-            { outcome = ScenicJourneyOutcome.Blocked; reason = "Distance/forward objective was not reached: " + reason; }
+            { outcome = ScenicJourneyOutcome.Blocked; reason = (Itinerary == null ? "Distance/forward objective was not reached: " :
+                "Observed destination and readable arrival were not completed: ") + reason; }
             Outcome = outcome; Reason = reason; previousLive = false;
         }
+
+        /// <summary>A missing capture breaks continuity without inventing a
+        /// newer timestamp that would suppress the next real render sample.</summary>
+        public void BreakPresentation()
+        { previousLive = previousArrivalLive = false; }
 
         public void Reset()
         {
             Id = observedPlan = 0; ShownSeconds = TravelMetres = DisplacementMetres = ObjectiveAdvanceMetres = MaximumSeconds = TargetMetres = CruiseSpeed = observedProgress = creditedAdvanceMetres = 0;
             observedAt = -1; Windows = 0; previousLive = false; previousPosition = ObjectiveOrigin = ObjectiveGoal = Heading = default;
+            Itinerary = null; RouteProgressMetres = ArrivalShownSeconds = previousRouteProgress = creditedRouteProgress = 0;
+            arrivalObservedAt = -1; previousArrivalLive = false;
             Outcome = ScenicJourneyOutcome.None; Reason = "No journey requested";
         }
         private static void Speed(double value)

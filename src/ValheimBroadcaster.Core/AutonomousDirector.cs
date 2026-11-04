@@ -558,6 +558,29 @@ namespace ValheimBroadcaster.Core
             { routeArrived = true; routeDwell = 0; routeArrivalAt = now; State = AutonomyState.RouteTest; Reason = "Checking scenic readiness at " + request.Name; }
         }
 
+        /// <summary>Rebase scenic editorial time after physical camera travel without fabricating a teleport or destination visit.</summary>
+        public bool ScenicJourneyEnded(ScenicRegion? localRegion, double now, bool destinationPresented = false)
+        {
+            CheckCallbackTime(now);
+            // A new transport owner or explicit route cannot be superseded by
+            // a delayed callback from an older camera programme.
+            if (ActiveTravel != null || PendingTravel != null || route != null) return false;
+            CurrentRegionId = localRegion?.Id; CurrentRegionName = localRegion?.Name;
+            scenicDiversity.StopVisit(); scenicRelocation.Reset(); pendingScenic = null;
+            if (localRegion != null)
+            {
+                Remember(localRegion.Id, now);
+                // Proximity identifies the ending area, not proof that a
+                // structure was framed during a partial journey.
+                if (localRegion.Kind == ScenicDestinationKind.Landscape || destinationPresented)
+                    scenicDiversity.Begin(localRegion);
+            }
+            idleActive = true; idleDwell = 0; idleUnreadyBegan = -1;
+            if (State == AutonomyState.Scenic || State == AutonomyState.Waiting)
+                Reason = "Preparing coverage of " + (localRegion?.Name ?? "the journey ending area");
+            return true;
+        }
+
         public void BeginRouteTest(IReadOnlyList<ScenicRegion> destinations, double now)
         {
             CheckCallbackTime(now);

@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.42 Scenic destination journeys
+
+Built on the complete 0.8.41 source. The supplied Journey 19 footage establishes roughly 145.45 m of travel with a fixed backward gaze, followed by about 32.7 seconds at the endpoint. Its trace reports zero achieved distance because the production adapter rejects the preceding completed render during Update. It also shows ordinary planning beginning cold after the continuation fails. This is failed 0.8.41 runtime evidence, not validation of the replacement.
+
+0.8.42 selects a named catalogue destination and itinerary, directs forward gaze separately from movement, admits a fully validated departure and an ending with every section, and keeps ordinary local planning active. Captured position/progress/time and exact render identity drive distance and arrival credit. Missing output breaks continuity even for a one-frame gap. Replay retains compatibility with 0.8.29–0.8.41 captures and admits 0.8.42.
+
+Regression scope includes connected/stale catalogue selection, curved route progress and real arrival, forward/developing native gaze, section/ending continuity, braking commitment, and captured-frame ordering at 60 fps using reduced numeric evidence from the supplied recording. Local client/server/replay compilation against the real references passed with warnings treated as errors; **1,126/1,126 Core cases** and **89/89 native camera-math cases** passed. The standalone editorial-capture replay reports zero divergences. These checks do not execute Valheim's full loading/render loop. **0.8.42 in-game validation has not been run.** The [runtime acceptance guide](SCENIC-0.8.42-JOURNEYS.md#runtime-acceptance--not-yet-run) defines the required paired footage/trace checks. **No server update is required; observer protocol remains 3.**
+
 ## 0.8.41 Scenic pacing, sequences and arrival preparation
 
 Built on the complete 0.8.40 source. Ordinary route timing now measures camera travel and angular development instead of applying the old representation-dependent 20/30-second rules. Soft editorial requests continue valid movement while replacement planning runs; actual invalidity still stops movement. Site sequence progression requires six seconds of actual establishing context. Ordinary dwell relocation waits for an edit boundary for at most 15 seconds of continuous unheld operation. Already-loaded destination work can prepare off air during native travel and survive only its matching arrival, with the duplicate reset removed. The operator displays the owned transition/recovery card instead of hiding it with black.
