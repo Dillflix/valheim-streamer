@@ -61,7 +61,7 @@ namespace ValheimBroadcaster.Core
         private bool previousLive;
         private AutonomyPosition previousPosition;
 
-        public static bool Eligible(ScenicShotPlan? plan) => plan != null && plan.IsDirected && !plan.IsPictureOnly && !plan.IsPan &&
+        public static bool Eligible(ScenicShotPlan? plan) => plan != null && plan.IsDirected && !plan.IsPictureOnly && !plan.IsPan && !plan.HasRejectedContinuation &&
             plan.Feature != null && plan.Feature.SubjectKind == ScenicSubjectKind.Environment && plan.Feature.MeasuredBounds == null &&
             plan.Feature.Kind != ScenicFeatureKind.Structure && plan.Feature.Kind != ScenicFeatureKind.Rock && plan.TravelMetres >= 8;
 

@@ -12,6 +12,7 @@ public static class CameraFixtureCodec
     public const int MaximumBytes = 32768;
     private const int Magic = 0x56424346;
     private const int DigestBytes = 32;
+    private const int MaximumContinuationReason = 512;
     private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
 
     public static byte[] Encode(CameraFixture fixture)
@@ -42,6 +43,7 @@ public static class CameraFixtureCodec
                 Point(w, start.AimPosition); Point(w, end.AimPosition);
                 w.Write(p.CameraControl.HasValue); if (p.CameraControl.HasValue) Point(w, p.CameraControl.Value);
             }
+            Text(w, p.ContinuationRejection, MaximumContinuationReason);
         }
         if (payload.Length > MaximumBytes - DigestBytes) throw new ArgumentException("Camera fixture is too large.", nameof(fixture));
         byte[] body = payload.ToArray();
@@ -65,7 +67,8 @@ public static class CameraFixtureCodec
             using var stream = new MemoryStream(bytes, 0, bytes.Length - DigestBytes, false);
             using var r = new BinaryReader(stream, Utf8, true);
             if (r.ReadInt32() != Magic) throw new InvalidDataException("Not a broadcaster camera fixture.");
-            if (r.ReadInt32() != CameraFixture.SchemaVersion) throw new InvalidDataException("Unsupported camera fixture schema.");
+            int schema = r.ReadInt32();
+            if (schema != 1 && schema != CameraFixture.SchemaVersion) throw new InvalidDataException("Unsupported camera fixture schema.");
             long world = r.ReadInt64();
             if (world == 0 || world != expectedWorldId) throw new InvalidDataException("Camera fixture world UID does not match this world.");
             string name = Text(r, 48), version = Text(r, 128), settings = Text(r, 4096);
@@ -97,6 +100,13 @@ public static class CameraFixtureCodec
                     ScenicShotPlan.Directed(id, feature, role, bodyStart, bodyEnd, aimStart, aimEnd, fov, x, y, control, native);
             }
             plan = plan.WithDuration(duration).WithConstantSpeed(constantSpeed).WithJourneyRamps(easeIn, easeOut);
+            // Schema 1 never recorded the evidence beyond its saved endpoint.
+            // An absent reason is unknown, not proof of a clear continuation.
+            if (schema >= 2)
+            {
+                string continuationRejection = Text(r, MaximumContinuationReason);
+                if (continuationRejection.Length != 0) plan = plan.WithRejectedContinuation(continuationRejection);
+            }
             if (stream.Position != stream.Length) throw new InvalidDataException("Camera fixture contains unexpected trailing data.");
             return new CameraFixture(world, name, version, settings, created, motion, dynamic, plan, journeyId, predecessor);
         }

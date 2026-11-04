@@ -59,7 +59,7 @@ public sealed partial class BroadcasterPlugin
         if (args.Length >= 2 && args[1].Equals("play", StringComparison.OrdinalIgnoreCase)) StopLiveTimelapse("Operator requested a saved fixture");
         try
         {
-            context?.AddString(cameraFixtures.Command(args, ZNet.instance ? ZNet.instance.GetWorldUID() : 0,
+            context?.AddString(cameraFixtures.Command(args, WorldIdentity.Current,
                 playback, idle, settings, typeof(BroadcasterPlugin).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? PluginVersion,
                 start =>
                 {

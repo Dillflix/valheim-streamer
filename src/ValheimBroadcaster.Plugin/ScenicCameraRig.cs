@@ -26,6 +26,10 @@ internal sealed class ScenicCameraRig : IDisposable
     internal bool PictureConcern { get; private set; }
     internal string PictureConcernReason { get; private set; } = "No persistent rendered-picture concern";
     private readonly int[] rejected = new int[Enum.GetValues(typeof(ScenicRejectionKind)).Length];
+    private bool tracedFailure;
+    private long tracedPlan;
+    private string tracedReason = "";
+    private float nextMotionTrace;
     internal bool LastPictureUsable { get; private set; }
     internal bool MovementAccepted { get; private set; }
     internal float PresentedProgress => hasPose ? accepted.Progress : 0;
@@ -91,6 +95,7 @@ internal sealed class ScenicCameraRig : IDisposable
             { safe = false; failure = ScenicRejectionKind.SamplingBudget; reason = "Scenic proposal exceeds one continuous movement step"; }
             else safe = ScenicPoseValidation.Corridor(accepted, wanted, visibility, aspect, nearClip, out failure, out reason);
         }
+        TraceProposal(shot, wanted, safe, failure, reason);
         if (safe)
         {
             // Commit a cut only after its first actual pose passes. Preparing a
@@ -103,6 +108,7 @@ internal sealed class ScenicCameraRig : IDisposable
                 // Shot ID distinguishes cuts. Keep the scene epoch stable so
                 // pixel-correction settling survives a local scenic edit.
                 pendingReconsideration = default; plan = shot;
+                ScenicTrace.Plan(shot);
             }
             accepted = wanted; hasPose = true; MovementAccepted = true; FailureKind = ScenicRejectionKind.None;
             LastFailure = "none";
@@ -141,6 +147,16 @@ internal sealed class ScenicCameraRig : IDisposable
     }
 
     private int TotalRejected() { int sum = 0; foreach (int count in rejected) sum += count; return sum; }
+    private void TraceProposal(ScenicShotPlan requested, ScenicPose wanted, bool safe, ScenicRejectionKind failure, string reason)
+    {
+        if (!ScenicTrace.Enabled || safe && !tracedFailure) return;
+        if (!safe && tracedFailure && tracedPlan == requested.Id && tracedReason == reason && Time.unscaledTime < nextMotionTrace) return;
+        ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("scenic-motion"), "requestedCamera", wanted.Position)
+            .Field("plan", requested.Id).Field("shownPlan", plan?.Id ?? 0).Field("safe", safe)
+            .Field("failure", safe ? "None" : failure.ToString()).Field("reason", safe ? "Movement resumed" : reason)
+            .Field("requestedProgress", wanted.Progress).Field("acceptedProgress", hasPose ? accepted.Progress : -1));
+        tracedFailure = !safe; tracedPlan = requested.Id; tracedReason = reason; nextMotionTrace = Time.unscaledTime + 1;
+    }
     private bool Reject(ScenicRejectionKind kind, string reason)
     {
         FailureKind = kind; LastFailure = reason; LastPictureUsable = MovementAccepted = false;
@@ -152,6 +168,7 @@ internal sealed class ScenicCameraRig : IDisposable
         LastPictureUsable = MovementAccepted = false; FailureKind = ScenicRejectionKind.None;
         pictureContext = default; pendingReconsideration = default; PictureConcern = false; pictureEpoch++; path.Reset(); solver.Reset(); ownedVisibility.Reset();
         Array.Clear(rejected, 0, rejected.Length);
+        tracedFailure = false; tracedPlan = 0; tracedReason = ""; nextMotionTrace = 0;
     }
     public void Dispose() { Reset(); solver.Dispose(); path.Dispose(); }
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

@@ -300,7 +300,7 @@ internal sealed class CameraSpatialScene
         ZNet currentWorld = ZNet.instance;
         ZNetScene currentScene = ZNetScene.instance;
         Player currentCarrier = Player.m_localPlayer;
-        long currentId = currentWorld && currentScene ? currentWorld.GetWorldUID() : 0;
+        long currentId = currentScene ? WorldIdentity.Read(currentWorld) : 0;
         // Reference identity also catches destruction/null transitions which
         // Unity's overloaded equality can otherwise treat as the same null.
         if (!ReferenceEquals(world, currentWorld) || !ReferenceEquals(scene, currentScene) ||

@@ -154,17 +154,21 @@ internal sealed class ScenicSplinePath : IDisposable
                 { body.Add(ToCore((Vector3)Spline![i].Position)); aims.Add(plan.AimWaypoint(i)); }
             }
             body.Add(last.CameraPosition); aims.Add(last.AimPosition);
-            return ScenicShotPlan.Spatial(plan.Id, plan.Feature!, plan.Role, body, aims,
+            ScenicShotPlan section = ScenicShotPlan.Spatial(plan.Id, plan.Feature!, plan.Role, body, aims,
                 plan.FieldOfView, first.ScreenX, first.ScreenY, plan.UseNativeSpline);
+            return RetainEndEvidence(section, endProgress);
         }
         // SplineUtility's normalized spline coordinate is distance normalized
         // over the entire spline, matching Sample and the selected Dolly Body.
         Vector3 middle = SplineUtility.EvaluatePosition(Spline!, (Ease(startProgress) + Ease(endProgress)) * .5f);
         Vector3 control = 2f * middle - .5f * (FromCore(first.CameraPosition) + FromCore(last.CameraPosition));
-        return ScenicShotPlan.Directed(plan.Id, plan.Feature!, plan.Role,
+        return RetainEndEvidence(ScenicShotPlan.Directed(plan.Id, plan.Feature!, plan.Role,
             first.CameraPosition, last.CameraPosition, first.AimPosition, last.AimPosition,
-            plan.FieldOfView, first.ScreenX, first.ScreenY, ToCore(control), plan.UseNativeSpline);
+            plan.FieldOfView, first.ScreenX, first.ScreenY, ToCore(control), plan.UseNativeSpline), endProgress);
     }
+
+    private ScenicShotPlan RetainEndEvidence(ScenicShotPlan section, float endProgress) =>
+        plan!.HasRejectedContinuation && endProgress >= 1 - .000001f ? section.WithRejectedContinuation(plan.ContinuationRejection) : section;
 
     // Short smooth ramps and a steady cruise apply to distance, not knot parameter. Unequal
     // knot spacing therefore cannot produce accidental acceleration or stalls.

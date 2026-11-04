@@ -41,6 +41,28 @@ internal static class ScenicTrace
         row.Field(name + "X", value.x).Field(name + "Y", value.y).Field(name + "Z", value.z);
     internal static void Event(string source, string reason, long plan = 0)
     { if (Enabled) Record(Row("event").Field("owner", source).Field("reason", reason).Field("plan", plan)); }
+    internal static void Plan(ScenicShotPlan plan)
+    {
+        if (!Enabled) return;
+        CameraTraceRecord row = Row("scenic-admission").Field("plan", plan.Id).Field("feature", plan.FeatureId)
+            .Field("parent", plan.Feature?.ParentId).Field("scope", plan.Feature?.ScopeLabel)
+            .Field("featureKind", plan.FeatureKind.ToString()).Field("role", plan.Role.ToString())
+            .Field("duration", plan.DurationSeconds).Field("travel", plan.TravelMetres)
+            .Field("fov", plan.FieldOfView).Field("spatial", plan.IsSpatial).Field("pan", plan.IsPan)
+            .Field("picture", plan.IsPictureOnly).Field("journey", plan.JourneyId)
+            .Field("rejectedContinuation", plan.HasRejectedContinuation).Field("continuationReason", plan.ContinuationRejection);
+        if (plan.IsSpatial)
+        {
+            row.Field("waypoints", plan.WaypointCount);
+            for (int i = 0; i < plan.WaypointCount; i++)
+            {
+                AutonomyPosition camera = plan.CameraWaypoint(i), aim = plan.AimWaypoint(i);
+                row.Field("camera" + i + "X", camera.X).Field("camera" + i + "Y", camera.Y).Field("camera" + i + "Z", camera.Z)
+                    .Field("aim" + i + "X", aim.X).Field("aim" + i + "Y", aim.Y).Field("aim" + i + "Z", aim.Z);
+            }
+        }
+        Record(row);
+    }
     internal static void Picture(bool onAir, bool usable, bool held, long plan, float elapsed, bool expired, string reason)
     {
         if (!Enabled || !onAir && !lastOnAir) return;

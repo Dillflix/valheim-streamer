@@ -296,7 +296,7 @@ internal sealed class PlaceSurvey
     {
         ZNet currentWorld = ZNet.instance;
         ZNetScene currentScene = ZNetScene.instance;
-        long currentId = currentWorld && currentScene ? currentWorld.GetWorldUID() : 0;
+        long currentId = currentScene ? WorldIdentity.Read(currentWorld) : 0;
         // Unity's overloaded null/equality must not hide destroyed instances,
         // and a reused ZNet instance may represent a different world session.
         if (!ReferenceEquals(world, currentWorld) || !ReferenceEquals(scene, currentScene) ||

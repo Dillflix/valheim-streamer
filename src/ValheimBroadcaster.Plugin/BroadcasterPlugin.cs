@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.39";
+    public const string PluginVersion = "0.8.40";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -186,7 +186,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         ScenicTrace.Tick();
         try { remote.Tick(); }
         catch (Exception error) { remote.Fail("Observer connection error: " + error.GetType().Name); }
-        cameraFixtures?.SetWorld(ZNet.instance ? ZNet.instance.GetWorldUID() : 0);
+        cameraFixtures?.SetWorld(WorldIdentity.Current);
         scenicEnvironment?.Configure(settings.EnvironmentCycleSeconds.Value, settings.EnvironmentWeather.Value);
         try { UpdateLiveTimelapse(); }
         catch (Exception error)

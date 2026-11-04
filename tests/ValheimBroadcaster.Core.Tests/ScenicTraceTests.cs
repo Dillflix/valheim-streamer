@@ -52,7 +52,7 @@ internal static class ScenicTraceTests
             row.RootElement.GetProperty("hostiles").GetInt32() == 9 && row.RootElement.GetProperty("visibleOpponents").GetInt32() == 0 &&
             row.RootElement.GetProperty("actorOcclusion").GetDouble() == .2, "Held picture acquired later encounter metadata");
         var replay = new ReplayEngine();
-        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.39").Field("utc", "encounter-test").ToString());
+        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.40").Field("utc", "encounter-test").ToString());
         replay.Read(encoded);
         replay.Read(Row("budget", 11.5, 2).Field("operation", "step").Field("started", 10).Field("waitingAt", 11.2)
             .Field("urgent", true).Field("expired", true).ToString());

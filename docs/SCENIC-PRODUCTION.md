@@ -1,13 +1,15 @@
-# Scenic journeys, camera fixtures and timelapse — 0.8.39
+# Scenic journeys, camera fixtures and timelapse — 0.8.40
 
-Version 0.8.39 builds on the complete 0.8.38 implementation. It replaces the original short, slow journey policy with a persistent distance objective and independent cruise speed. The earlier default of 180 seconds at 1 m/s could cover only about 180 m before the decorative motion multiplier; at `ShotMotion=0.5`, that was about 90 m. Naming that a long journey did not make it long-distance traversal.
+Version 0.8.40 retains the distance objective and independent cruise introduced in 0.8.39, and repairs departure admission using the supplied failure capture. A speculative journey no longer takes over ordinary coverage before its first section is ready. Routes salvaged immediately before rejected geometry retain that provenance and cannot launch back toward the known failed tail. See [the evidence and repair limits](SCENIC-0.8.40-REPAIR.md).
+
+The earlier 0.8.37–0.8.38 default of 180 seconds at 1 m/s could cover only about 180 m before the decorative motion multiplier; at `ShotMotion=0.5`, that was about 90 m. The distance/cruise controls below replace that short, slow journey policy.
 
 Camera fixtures, operator previews, render-pose auditing, interval recordings and empty-server environment controls remain available. Autonomous live timelapse shots added in 0.8.38 are documented in [LIVE-TIMELAPSE.md](LIVE-TIMELAPSE.md).
 
 ## Install and compatibility
 
 - Replace the **three client DLLs and included ThirdParty notices together**, preserving the existing configuration.
-- Journey, fixture, preview, pose-audit and recorded-timelapse features work with an existing compatible **protocol-3** companion.
+- Journey, fixture, preview, pose-audit and recorded-timelapse features work with an existing compatible **protocol-3** companion. **No server update is required for 0.8.40.**
 - Install the **0.8.37 server/core pair** for the new optional empty-server `Environment1` permission. Earlier companions leave remote environment overrides inactive. Ordinary players need no mod update.
 - `Observer.CinematicEnvironmentEnabled=true` permits an already-authorized observer to request this optional capability. Client environment overrides default off.
 - Admission, pre-admission opt-in and observer isolation remain protocol 3. No new game, Unity, BepInEx or Jötunn binaries belong in either payload.
@@ -24,11 +26,15 @@ Execution sections scale from **32 to 64 m** with speed, with an 8 m minimum for
 
 The protected loading anchor may move up to 24 m ahead along the **current validated route**. Its intermediate and destination carrier geometry must already be loaded, and the camera stays on the accepted route. The observer body, network reference and interest position remain together. This is continuous loading support, not teleportation into an unobserved corridor. Missing loading evidence is retried within a bounded preparation window; a known obstruction instead sends the planner to another candidate.
 
-Automatic journeys are offered after at least two shown Scenic shots, with a three-minute cooldown after one ends. A readable eligible natural route and a validated continuation are required. Building/site sequences, pans, ordinary local scenery and player coverage remain available. Player acquisition and missing-picture recovery retain priority. Ordinary region-dwell travel and idle wildlife cuts do not interrupt an active useful journey solely because their shorter timers expire.
+Automatic journeys are offered after at least two shown Scenic shots, with a three-minute cooldown after an admitted journey ends. A readable eligible natural route and a validated continuation are required. A salvaged route that ends before known rejected geometry can remain ordinary footage but cannot seed a journey into that rejected continuation.
 
-Completion requires both the requested **actual rendered-camera travel distance** and at least **65% of that distance as forward displacement along the objective direction**. This prevents looping near the start from satisfying a long-distance objective. Held frames, prepared paths, stale render identities and missing captured-position evidence earn no travel. Diagnostics retain measured distance, displacement, objective advance, achieved speed, shown time and the outcome after the journey ends. A short blocked attempt is `Blocked` or `Interrupted`, never a completed kilometre. Automatic Scenic JSONL includes a `journey` record at start, once per active second and at finish, with measured distance, achieved speed, prepared distance ahead, loading state and the exact ending reason.
+**Departure preparation does not own the picture.** It runs during the existing shot's final ten seconds, preserves ordinary prepared coverage and leaves that shot's movement settings unchanged. The journey takes ownership only when its first validated section is ready at the exact endpoint of the still-current seed. If the seed changes, the scene changes, preparation fails or the endpoint arrives without a ready section, ordinary coverage remains in charge. A pending departure cannot impose an endpoint wait or suppress normal editorial travel.
 
-Terrain, water, near-plane/corridor clearance, foliage and readability remain authoritative. If no continuation can be validated, the camera finishes the available valid route and returns to ordinary local coverage. A pending continuation may retain its readable endpoint for up to six seconds of active operation. Journey effort is bounded by a distance-derived time budget and travel/section limits. A kilometre objective is not evidence that a kilometre of clear route exists.
+Building/site sequences, pans, ordinary local scenery and player coverage remain available. Player acquisition and missing-picture recovery retain priority. Once a journey is admitted, ordinary region-dwell travel and idle wildlife cuts do not interrupt its useful footage solely because their shorter timers expire.
+
+Completion requires both the requested **actual rendered-camera travel distance** and at least **65% of that distance as forward displacement along the objective direction**. This prevents looping near the start from satisfying a long-distance objective. Held frames, prepared paths, stale render identities and missing captured-position evidence earn no travel. Diagnostics retain measured distance, displacement, objective advance, achieved speed, shown time and the outcome after the journey ends. A short blocked attempt is `Blocked` or `Interrupted`, never a completed kilometre. Automatic Scenic JSONL includes `journey` records for departure preparation/admission/abandonment, once per active second and at finish, with ownership/departure state, measured distance, achieved speed, prepared distance ahead, loading state and the exact ending reason.
+
+Terrain, water, near-plane/corridor clearance, foliage and readability remain authoritative. If no continuation can be validated, the camera finishes the available valid route and returns to ordinary local coverage. After departure has been admitted, a pending later continuation may retain its readable endpoint for up to six seconds of active operation. This allowance does not apply to the initial departure. Journey effort is bounded by a distance-derived time budget and travel/section limits. A kilometre objective is not evidence that a kilometre of clear route exists.
 
 ```text
 broadcast journey distance 1000
@@ -40,7 +46,7 @@ broadcast journey off
 broadcast journey on
 ```
 
-`start` requests a journey from protected-observer Scenic coverage; it does not cut immediately or bypass validation. `stop` ends the current request and resumes ordinary direction; `off` also disables future automatic journeys. Distance and speed changes apply to the **next** journey. For compatibility, `broadcast journey duration <seconds>` sets distance to seconds multiplied by the current cruise speed, provided the result is 256–5,000 m. It no longer establishes a hard shot-duration goal.
+`start` requests a journey from protected-observer Scenic coverage for up to 90 seconds of unheld operation; it does not cut immediately or bypass validation. An unsuccessful departure can leave the request pending for another eligible shot within that bound. `stop` ends the current request and resumes ordinary direction; `off` also disables future automatic journeys. Distance and speed changes apply to the **next** journey. For compatibility, `broadcast journey duration <seconds>` sets distance to seconds multiplied by the current cruise speed, provided the result is 256–5,000 m. It no longer establishes a hard shot-duration goal.
 
 | Configuration | Default | Purpose |
 | --- | --- | --- |
@@ -48,7 +54,7 @@ broadcast journey on
 | `Idle.JourneyDistanceMetres` | `1000` | Requested actual travel distance, 256–5,000 m |
 | `Idle.JourneyCruiseMetresPerSecond` | `6` | Independent cruise speed, 2–12 m/s |
 
-**Configuration migration:** preserve the existing configuration file. The old `Idle.ScenicJourneySeconds` and `Idle.ScenicJourneySpeed` entries are no longer read. New keys give existing installations the new defaults instead of silently retaining the previous 1 m/s speed. An old `Camera.ShotMotion` value does not scale journey cruising. `Camera.DynamicShots=false` still disables moving journeys.
+**Configuration migration:** preserve the existing configuration file. The old `Idle.ScenicJourneySeconds` and `Idle.ScenicJourneySpeed` entries are no longer read. New keys give existing installations the new defaults instead of silently retaining the previous 1 m/s speed. An old `Camera.ShotMotion` value does not scale admitted journey cruising. The ordinary seed keeps its existing movement setting while departure is pending: at `ShotMotion=0`, the request waits for a moving seed rather than overriding that setting. `Camera.DynamicShots=false` still disables moving journeys.
 
 ## Correct motion and editorial clocks
 
@@ -85,6 +91,8 @@ broadcast fixture delete coast-pass
 ```
 
 Data lives under `BepInEx/config/ValheimBroadcaster/CameraFixtures/<world UID>/`. Files use a bounded, versioned, checksummed format. A world supports up to 64 fixtures, each at most 32 KiB. Replacement is atomic and retains a `.bak`; no silent delete-and-rewrite fallback is used if atomic replacement is unavailable. Names are normalized and cannot select arbitrary filesystem paths.
+
+Version 0.8.40 writes fixture schema 2, which preserves a bounded rejected-continuation reason. It still reads schema-1 fixtures, treating their continuation provenance as unknown; loading an old fixture does not rewrite it. Explicit replacement keeps the existing backup behavior. **Downgrading to 0.8.39 cannot load newly written schema-2 fixtures**; retain the original schema-1 file or its backup if rollback is needed. Existing files, live configuration and saves are not migrated automatically.
 
 ## Operator-only spatial preview
 

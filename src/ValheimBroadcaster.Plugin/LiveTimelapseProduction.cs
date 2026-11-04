@@ -24,7 +24,7 @@ public sealed partial class BroadcasterPlugin
     {
         if (scenicEnvironment == null) return;
         double now = Time.realtimeSinceStartupAsDouble;
-        long world = ZNet.instance ? ZNet.instance.GetWorldUID() : 0;
+        long world = WorldIdentity.Current;
         if (timelapseWorld != world) { StopLiveTimelapse("World changed"); timelapseWorld = world; liveTimelapse.Reset(now); }
         bool context = settings.LiveTimelapse.Value && enabled && director.IsEnabled && !selfTest && !probe.Active &&
             settings.ProceduralPlayers.Value && settings.DynamicShots.Value && settings.ShotMotion.Value > 0 && observer.Active && observer.Phase == ObserverPhase.Watching &&

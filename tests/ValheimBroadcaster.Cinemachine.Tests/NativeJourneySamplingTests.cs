@@ -11,6 +11,7 @@ internal static class NativeJourneySamplingTests
     {
         yield return ("Native journey keeps its intended view direction across short-focus knots", ConstantAim);
         yield return ("Native journey full preflight remains within its bounded sampling effort", SamplingBound);
+        yield return ("Native measured slices retain only the rejected endpoint they still reach", RejectedEndpoint);
     }
 
     private static void ConstantAim()
@@ -33,6 +34,20 @@ internal static class NativeJourneySamplingTests
             Check(path.Sample(1).AimPosition.Distance(plan.AimWaypoint(plan.WaypointCount - 1)) < .0001,
                 "Journey interpolation moved its terminal aim");
         }
+    }
+
+    private static void RejectedEndpoint()
+    {
+        var source = Plan(48, 40, .1f, 20, true).AsStandalone()
+            .WithRejectedContinuation("Observed focus obstruction after this endpoint");
+        using var path = new ScenicSplinePath();
+        Check(path.Prepare(source, 1), "Source native route did not prepare");
+        var suffix = path.ProposeMeasuredSlice(.2f, 1);
+        Check(suffix.HasRejectedContinuation && suffix.ContinuationRejection == source.ContinuationRejection,
+            "Native reconstruction erased the rejected tail adjoining its retained endpoint");
+        var prefix = path.ProposeMeasuredSlice(0, .6f);
+        Check(!prefix.HasRejectedContinuation && ScenicJourneyPolicy.Eligible(prefix),
+            "Native earlier endpoint retained unrelated rejection evidence");
     }
 
     private static void SamplingBound()

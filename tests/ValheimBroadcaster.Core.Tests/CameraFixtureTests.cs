@@ -13,6 +13,8 @@ internal static class CameraFixtureTests
         yield return ("Camera fixtures preserve every spatial waypoint and paired aim", SpatialRoundTrip);
         yield return ("Camera fixtures preserve finite pans without inventing translation", PanRoundTrip);
         yield return ("Saved journey windows replay independently with the original constant-speed profile", JourneyWindow);
+        yield return ("Saved scenic fixtures preserve bounded rejected-tail evidence", RejectedContinuation);
+        yield return ("Schema 1 camera fixtures remain readable without modifying their saved bytes", LegacySchema);
         yield return ("Camera fixture parsing rejects corruption, truncation, trailing data and newer schema", Corruption);
         yield return ("Camera fixture parsing rejects non-finite playback settings even with a valid checksum", InvalidSettings);
         yield return ("Camera fixtures require matching world UID rather than a world display name", WorldIdentity);
@@ -45,7 +47,8 @@ internal static class CameraFixtureTests
     {
         Check(expected.Id == actual.Id && expected.Role == actual.Role && expected.UseNativeSpline == actual.UseNativeSpline &&
             expected.DurationSeconds == actual.DurationSeconds && expected.FieldOfView == actual.FieldOfView &&
-            expected.IsPan == actual.IsPan && expected.IsSpatial == actual.IsSpatial && expected.ConstantSpeed == actual.ConstantSpeed,
+            expected.IsPan == actual.IsPan && expected.IsSpatial == actual.IsSpatial && expected.ConstantSpeed == actual.ConstantSpeed &&
+            expected.ContinuationRejection == actual.ContinuationRejection,
             "Playback identity or timing/lens changed on reload.");
         for (int i = 0; i <= 100; i++)
         {
@@ -96,6 +99,50 @@ internal static class CameraFixtureTests
             "Saved window claimed continuity with a prior runtime shot or lost linear motion.");
         SamePlan(fixture.Plan, loaded.Plan);
     }
+    private static void RejectedContinuation()
+    {
+        var feature = new ScenicFeature("coast", ScenicFeatureKind.Coastline, P(10, 3, 10), P(1, 0, 0), 12, 6, .9f);
+        var plan = ScenicShotPlan.Directed(123, feature, ScenicShotRole.Traverse,
+            P(0, 8, -15), P(20, 9, -12), P(10, 3, 10), P(12, 5, 10), 61).WithDuration(120);
+        Check(ScenicJourneyPolicy.Eligible(plan), "Fixture test does not exercise an otherwise eligible departure");
+        CameraFixture source = Fixture(plan.WithRejectedContinuation("Focus ray blocked immediately beyond the retained prefix"));
+        CameraFixture loaded = RoundTrip(source);
+        SamePlan(source.Plan, loaded.Plan);
+        Check(loaded.Plan.HasRejectedContinuation && !ScenicJourneyPolicy.Eligible(loaded.Plan),
+            "Saving and reloading laundered a known rejected tail into a journey departure");
+        string maximum = new string('\u00e9', 512);
+        Check(RoundTrip(Fixture(plan.WithRejectedContinuation(maximum))).Plan.ContinuationRejection == maximum,
+            "Bounded Unicode continuation evidence did not round-trip");
+        Reject(() => CameraFixtureCodec.Encode(Fixture(plan.WithRejectedContinuation(new string('x', 513)))));
+    }
+    private static void LegacySchema() => InDirectory(directory =>
+    {
+        // Fixed schema-1 payload, independent of the current encoder: linear
+        // 20m coastal route, world UID 1234567, authored at noon 2026-11-04 UTC.
+        byte[] bytes = Convert.FromBase64String(
+            "RkNCVgEAAACH1hIAAAAAAAwAbGVnYWN5LWNvYXN0BgAwLjguMzkAAAAg/iZrOt8IAAAAPwF7AAAAAAAAAAABAAAAAAAAAF5AAAB0Qo/C9T0pXI+9AAAAAAAAAAAAAAAAAAAAAAAAAAUAY29hc3QCAAAgQQAAQEAAACBBAACAPwAAAAAAAAAAAABAQQAAwEBmZmY/AAAAAAAAAAAAAAAAAAAAAEEAAHDBAACgQQAAEEEAAEDBAAAgQQAAQEAAACBBAABAQQAAoEAAACBBAFlg3X+SxTf1+Vpf+BrnrHTdV3g9GMZtzppcmOlLxxEQ");
+        string worldDirectory = Path.Combine(directory, "000000000012d687");
+        Directory.CreateDirectory(worldDirectory);
+        string path = Path.Combine(worldDirectory, "legacy-coast.vbcamera");
+        File.WriteAllBytes(path, bytes);
+        var store = new CameraFixtureStore(directory);
+        CameraFixture loaded = store.Load(1234567, "legacy-coast");
+        Check(loaded.WorldId == 1234567 && loaded.Name == "legacy-coast" && loaded.SourceVersion == "0.8.39" &&
+            loaded.Plan.Id == 123 && loaded.Plan.DurationSeconds == 120 && loaded.Plan.FieldOfView == 61 &&
+            loaded.Plan.Sample(0).CameraPosition.Distance(P(0, 8, -15)) == 0 &&
+            loaded.Plan.Sample(1).CameraPosition.Distance(P(20, 9, -12)) == 0 &&
+            loaded.CreatedUtc == new DateTime(2026, 11, 4, 12, 0, 0, DateTimeKind.Utc),
+            "Legacy fixture identity, playback geometry or timestamp changed");
+        Check(!loaded.Plan.HasRejectedContinuation && loaded.Plan.ContinuationRejection.Length == 0,
+            "Legacy missing evidence became an invented rejected continuation");
+        Check(File.ReadAllBytes(path).SequenceEqual(bytes), "Loading a legacy fixture silently rewrote it");
+        Reject(() => store.Save(loaded));
+        Check(File.ReadAllBytes(path).SequenceEqual(bytes), "Unapproved schema replacement changed the original file");
+        Reject(() => CameraFixtureCodec.Decode(bytes, 1234568));
+        store.Save(loaded, true);
+        Check(BitConverter.ToInt32(File.ReadAllBytes(path), 4) == 2 && File.ReadAllBytes(path + ".bak").SequenceEqual(bytes),
+            "Explicit replacement did not write schema 2 while preserving the legacy backup");
+    });
     private static void Corruption()
     {
         byte[] bytes = CameraFixtureCodec.Encode(Fixture());

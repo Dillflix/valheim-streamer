@@ -18,6 +18,9 @@ internal static class ScenicRouteWindowTests
         yield return ("Scenic window permits rotation samples without inventing camera travel", StationarySamples);
         yield return ("Invalid scenic route observations preserve accumulated valid evidence", InvalidObservations);
         yield return ("Scenic window resets all history between independently generated routes", Reset);
+        yield return ("Recorded coast-prefix salvage retains the rejection beyond its endpoint", RecordedCoastPrefix);
+        yield return ("Unknown scenery evidence does not become a known blocked departure", UnknownDeparture);
+        yield return ("Selected scenic window owns only the rejection adjoining its own boundary", SelectedBoundary);
     }
 
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
@@ -140,5 +143,57 @@ internal static class ScenicRouteWindowTests
             "Previous route evidence survived reset.");
         route.Observe(0, 0, true, false); route.Observe(.2, 6, true, true);
         Window(route, 0, .2, 6);
+    }
+
+    private static void RecordedCoastPrefix()
+    {
+        // 0.8.39 capture: query70 was clear through progress.5625 (z670.538),
+        // then its focus ray failed at.59375 (z671.049). The last tail became
+        // readable again but was shorter than the selected8.54m prefix.
+        const string rejection = "Scenic feature is outside the frame or hidden";
+        var route = new ScenicRouteWindow();
+        route.Observe(0, 0, true, false);
+        route.Observe(.53125, 8.028, true, true);
+        route.Observe(.5625, 8.54, true, true);
+        route.Observe(.59375, 9.052, false, false, rejection);
+        route.Observe(.78125, 11.91, false, false, rejection);
+        route.Observe(.8125, 12.42, true, false);
+        route.Observe(1, 14.95, true, true);
+        Window(route, 0, .5625, 8.54);
+        Check(route.HasRejectedContinuation && route.ContinuationRejection == rejection,
+            "Readable prefix discarded the known failure that terminated it");
+        route.Reset();
+        Check(!route.HasRejectedContinuation && route.ContinuationRejection.Length == 0,
+            "A new route inherited another route's rejected continuation");
+    }
+
+    private static void UnknownDeparture()
+    {
+        foreach (bool readableEndpoint in new[] { false, true })
+        {
+            var route = new ScenicRouteWindow();
+            route.Observe(0, 0, true, false); route.Observe(.5, 10, true, true);
+            route.Observe(.75, 15, readableEndpoint, false); // Loading/unknown pose or corridor.
+            Check(!route.HasRejectedContinuation, "Missing geometry was represented as an observed obstruction");
+        }
+    }
+
+    private static void SelectedBoundary()
+    {
+        var route = new ScenicRouteWindow();
+        route.Observe(0, 0, true, false); route.Observe(.2, 8, true, true);
+        route.Observe(.3, 10, false, false, "First boundary is hidden");
+        route.Observe(.4, 11, true, false); route.Observe(.5, 12, true, true);
+        route.Observe(.6, 13, true, false, "Later short corridor crosses a wall");
+        Check(route.ContinuationRejection == "First boundary is hidden", "An unrelated later failure replaced the selected boundary");
+        route.Observe(1, 24, true, true);
+        Window(route, .6, 1, 11);
+        Check(!route.HasRejectedContinuation, "A longer clear suffix inherited the previous selected run's rejection");
+
+        route = new ScenicRouteWindow();
+        route.Observe(0, 0, true, false); route.Observe(.5, 8, true, true);
+        route.Observe(.6, 8, true, true); // Aim-only change at the same terminal camera position.
+        route.Observe(.7, 9, true, false, "Wall at the outgoing corridor");
+        Check(route.HasRejectedContinuation, "A stationary boundary sample hid the outgoing corridor failure");
     }
 }

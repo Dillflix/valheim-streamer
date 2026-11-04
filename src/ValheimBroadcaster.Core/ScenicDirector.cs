@@ -187,6 +187,16 @@ namespace ValheimBroadcaster.Core
         {
             CheckPlan(plan);
             if (!siteSequence.CanDevelop(plan.Feature!)) return false;
+            // Independent surveys can name the same physical subject
+            // differently. A new identifier must not turn the same camera
+            // route and framing into an unseen composition. Keep this tighter
+            // than same-subject episode memory: neighbouring buildings and
+            // genuine changes of scale remain separate editorial choices.
+            foreach (ShownShot shown in history)
+            {
+                if (shown.Plan.FeatureId == plan.FeatureId || now < shown.At || now - shown.At > 300) continue;
+                if (SameWorldComposition(shown.Plan, plan)) return false;
+            }
             if (!episodes.TryGetValue(plan.FeatureId, out List<ShownShot>? shots)) return true;
             int recent = 0;
             foreach (ShownShot shown in shots)
@@ -280,6 +290,41 @@ namespace ValheimBroadcaster.Core
                 Math.Tan(b.FieldOfView * Math.PI / 360);
             double ratio = Math.Max(scaleA, scaleB) / Math.Max(.001, Math.Min(scaleA, scaleB));
             return angle < 25 && ratio < 1.35;
+        }
+
+        private static bool SameWorldComposition(ScenicShotPlan a, ScenicShotPlan b)
+        {
+            ScenicFeature fa = a.Feature!, fb = b.Feature!;
+            double subjectTolerance = Math.Min(2, Math.Min(fa.Radius, fb.Radius) * .15);
+            if (fa.Kind != fb.Kind || fa.SubjectKind != fb.SubjectKind || fa.SubjectIdentity != fb.SubjectIdentity ||
+                fa.Center.Distance(fb.Center) > subjectTolerance) return false;
+            if (fa.MeasuredBounds.HasValue && fb.MeasuredBounds.HasValue &&
+                (fa.MeasuredBounds.Value.HorizontalGap(fb.MeasuredBounds.Value) > 0 ||
+                 fa.MeasuredBounds.Value.VerticalGap(fb.MeasuredBounds.Value) > 0)) return false;
+            double lensA = Math.Tan(a.FieldOfView * Math.PI / 360), lensB = Math.Tan(b.FieldOfView * Math.PI / 360);
+            if (Math.Max(lensA, lensB) / Math.Min(lensA, lensB) >= 1.15) return false;
+            return MatchingCompositionPath(a, b, false) || MatchingCompositionPath(a, b, true);
+        }
+
+        private static bool MatchingCompositionPath(ScenicShotPlan a, ScenicShotPlan b, bool reverse)
+        {
+            // Endpoints alone alias distinct curves. Include intermediate
+            // viewpoints and the authored aim/composition in both directions;
+            // replaying an arc backwards is still the same recent view.
+            for (int i = 0; i <= 4; i++)
+            {
+                double progress = i / 4d;
+                ScenicShotSample pa = a.Sample(progress), pb = b.Sample(reverse ? 1 - progress : progress);
+                if (pa.CameraPosition.Distance(pb.CameraPosition) > 2 || pa.AimPosition.Distance(pb.AimPosition) > 1 ||
+                    Math.Abs(pa.ScreenX - pb.ScreenX) > .08 || Math.Abs(pa.ScreenY - pb.ScreenY) > .08) return false;
+                double distanceA = pa.CameraPosition.Distance(pa.AimPosition), distanceB = pb.CameraPosition.Distance(pb.AimPosition);
+                if (Math.Max(distanceA, distanceB) / Math.Min(distanceA, distanceB) >= 1.2) return false;
+                double dot = (pa.AimPosition.X - pa.CameraPosition.X) * (pb.AimPosition.X - pb.CameraPosition.X) +
+                    (pa.AimPosition.Y - pa.CameraPosition.Y) * (pb.AimPosition.Y - pb.CameraPosition.Y) +
+                    (pa.AimPosition.Z - pa.CameraPosition.Z) * (pb.AimPosition.Z - pb.CameraPosition.Z);
+                if (dot / (distanceA * distanceB) < .965925826) return false; // 15 degrees.
+            }
+            return true;
         }
 
         public void Reset()

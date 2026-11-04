@@ -48,6 +48,11 @@ namespace ValheimBroadcaster.Core
         public long JourneyId { get; private set; }
         public long ContinuationOf { get; private set; }
         public bool IsJourney => JourneyId > 0;
+        /// <summary>Local salvage ended this route just before a measured
+        /// rejection. Revalidating the retained prefix does not establish that
+        /// extending through its discarded tail is now possible.</summary>
+        public string ContinuationRejection { get; private set; } = string.Empty;
+        public bool HasRejectedContinuation => ContinuationRejection.Length != 0;
         public bool ConstantSpeed { get; private set; }
         public bool JourneyEaseIn { get; private set; }
         public bool JourneyEaseOut { get; private set; }
@@ -238,6 +243,12 @@ namespace ValheimBroadcaster.Core
             var copy = (ScenicShotPlan)MemberwiseClone(); copy.Id = id; return copy;
         }
 
+        public ScenicShotPlan WithRejectedContinuation(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A rejected continuation needs observed evidence.", nameof(reason));
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.ContinuationRejection = reason; return copy;
+        }
+
         /// <summary>A bounded, validated window belonging to one continuous
         /// environmental journey. The predecessor is checked again at the live
         /// seam; this flag is not permission to jump to an arbitrary new path.</summary>
@@ -311,17 +322,17 @@ namespace ValheimBroadcaster.Core
                     { body.Add(spatialBody![i]); aims.Add(spatialAim![i]); }
                 }
                 body.Add(Body(to)); aims.Add(Aim(to));
-                return Spatial(Id, Feature!, Role, body, aims, FieldOfView, screenX, screenY, UseNativeSpline);
+                return RetainEndEvidence(Spatial(Id, Feature!, Role, body, aims, FieldOfView, screenX, screenY, UseNativeSpline), endFraction);
             }
-            if (IsPan) return Pan(Id, Feature!, Role, cameraStart, Aim(from), Aim(to), FieldOfView, screenX, screenY);
+            if (IsPan) return RetainEndEvidence(Pan(Id, Feature!, Role, cameraStart, Aim(from), Aim(to), FieldOfView, screenX, screenY), endFraction);
             // Quadratic blossom at (from,to) is the middle control of the
             // restricted curve. Keeping the old control would distort an
             // interior interval even if both selected endpoints were correct.
             AutonomyPosition? control = curved
                 ? Lerp(Lerp(cameraStart, cameraControl, from), Lerp(cameraControl, cameraEnd, from), to)
                 : (AutonomyPosition?)null;
-            return Directed(Id, Feature!, Role, Body(from), Body(to), Lerp(start, end, from), Lerp(start, end, to),
-                FieldOfView, screenX, screenY, control, UseNativeSpline);
+            return RetainEndEvidence(Directed(Id, Feature!, Role, Body(from), Body(to), Lerp(start, end, from), Lerp(start, end, to),
+                FieldOfView, screenX, screenY, control, UseNativeSpline), endFraction);
         }
 
         /// <summary>Fit a proposed route above observed terrain as one rigid
@@ -343,15 +354,18 @@ namespace ValheimBroadcaster.Core
                 var body = new AutonomyPosition[WaypointCount];
                 for (int i = 0; i < body.Length; i++) body[i] = Raised(spatialBody![i], metres);
                 var raised = Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline).WithDuration(DurationSeconds);
-                return (IsJourney ? raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds) : raised.WithConstantSpeed(ConstantSpeed)).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut);
+                return RetainEndEvidence((IsJourney ? raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds) : raised.WithConstantSpeed(ConstantSpeed)).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1);
             }
             return RetainPlayback(Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
                 start, end, FieldOfView, screenX, screenY,
                 curved ? Raised(cameraControl, metres) : (AutonomyPosition?)null, UseNativeSpline));
         }
 
-        private ScenicShotPlan RetainPlayback(ScenicShotPlan replacement) => replacement.WithDuration(DurationSeconds)
-            .WithConstantSpeed(ConstantSpeed).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut);
+        private ScenicShotPlan RetainPlayback(ScenicShotPlan replacement) => RetainEndEvidence(replacement.WithDuration(DurationSeconds)
+            .WithConstantSpeed(ConstantSpeed).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1);
+
+        private ScenicShotPlan RetainEndEvidence(ScenicShotPlan replacement, double endFraction) =>
+            HasRejectedContinuation && endFraction >= 1 - .000001 ? replacement.WithRejectedContinuation(ContinuationRejection) : replacement;
 
         /// <summary>Bounded non-looping movement starts/ends at rest. A paused
         /// caller samples the same progress; previews never advance state.

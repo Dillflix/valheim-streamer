@@ -28,6 +28,9 @@ internal static class ScenicDirectorTests
         yield return ("Long observation gaps reset uncertain scenic failure persistence", RecoveryGap);
         yield return ("Completed scenic episodes cannot win again through score fallback", EpisodeAdmission);
         yield return ("Equivalent scenic views cannot be relabeled as fresh sequence beats", EquivalentAdmission);
+        yield return ("Measured repeated scenic arcs cannot bypass novelty through a new survey identity", CrossIdentityArcAdmission);
+        yield return ("World-composition memory preserves different places scales and camera paths", DistinctWorldComposition);
+        yield return ("World-composition memory requires shown footage and never vetoes recovery pictures", WorldCompositionEvidence);
         yield return ("A blocked scenic route can admit a materially different recovery path", RecoveryAdmission);
         yield return ("Scenic episode memory survives unrelated short-history turnover", EpisodeRetention);
         yield return ("Recovered matching scenery cancels obsolete missing-output replacement", RecoveredMissingPicture);
@@ -267,7 +270,9 @@ internal static class ScenicDirectorTests
         var novelAngle = ScenicShotPlan.Directed(5, Feature(), ScenicShotRole.Detail,
             P(18, 24, -8), P(18, 24, 8), P(), P(), 45);
         Check(!d.CanOffer(novelAngle), "A fourth shot of a completed subject episode was still admissible.");
-        Check(d.CanOffer(Plan(6, "fresh-feature")), "A completed episode blocked unrelated scenery.");
+        var freshFeature = new ScenicFeature("fresh-feature", ScenicFeatureKind.Ridge, P(100), P(1, 0, 0), 10, 8, .8f);
+        Check(d.CanOffer(ScenicShotPlan.Directed(6, freshFeature, ScenicShotRole.Establish,
+            P(92, 26, -24), P(108, 26, -24), P(100), P(102), 55)), "A completed episode blocked unrelated scenery.");
         d.Accept(Plan(7, "clock"), 320);
         Check(d.CanOffer(novelAngle), "Expired episode memory permanently banned a feature.");
     }
@@ -278,6 +283,76 @@ internal static class ScenicDirectorTests
             "Relabeling identical framing bypassed view novelty admission.");
         var scaled = Plan(3, role: ScenicShotRole.Detail, distance: 12);
         Check(d.CanOffer(scaled), "A genuinely different framing scale was mistaken for an equivalent view.");
+    }
+    private static ScenicFeature ArcSubject(string id, float x = 0, float radius = 8, string? parent = null, string scope = "Building") =>
+        new ScenicFeature(id, ScenicFeatureKind.Structure, P(x, 0, 0), P(1, 0, 0), radius, 8, .9f,
+            parentId: parent, scopeLabel: scope);
+
+    // The observed 0.8.39 route pair 6/9, translated to a common local origin.
+    // Both showed the same structure through almost identical 15m arcs. The
+    // original trace did not record feature IDs, so these intentionally model
+    // the two survey identities that must not bypass geometric memory.
+    private static ScenicShotPlan ObservedArc(long id, ScenicFeature subject, bool second = false,
+        bool reverse = false, float fov = 75, float cameraScale = 1, bool differentCurve = false)
+    {
+        AutonomyPosition[] points = second ? new[] {
+            P(10.94456f, 6.19179f, 13.56055f), P(12.87946f, 6.19179f, 10.73682f),
+            P(15.24394f, 6.19179f, 7.40625f), P(17.14985f, 6.19179f, 3.84814f), P(18.12107f, 6.19179f, .54956f)
+        } : new[] {
+            P(11.75531f, 6.19179f, 12.69336f), P(13.48521f, 6.19179f, 9.74487f),
+            P(15.61005f, 6.19179f, 6.25830f), P(17.26539f, 6.19179f, 2.55273f), P(17.99127f, 6.19179f, -.79150f)
+        };
+        var aims = new AutonomyPosition[points.Length];
+        for (int i = 0; i < points.Length; i++)
+        {
+            points[i] = P(subject.Center.X + points[i].X * cameraScale,
+                subject.Center.Y + points[i].Y * cameraScale + (differentCurve && i == 2 ? 6 : 0),
+                subject.Center.Z + points[i].Z * cameraScale);
+            aims[i] = subject.Center;
+        }
+        if (reverse) Array.Reverse(points);
+        return ScenicShotPlan.Spatial(id, subject, ScenicShotRole.Establish, points, aims, fov);
+    }
+    private static void CrossIdentityArcAdmission()
+    {
+        var d = new ScenicDirector(); d.Accept(ObservedArc(6, ArcSubject("survey-cluster")), 0); Observe(d, 0, 22);
+        Check(!d.CanOffer(ObservedArc(9, ArcSubject("measured-building"), second: true)),
+            "A different survey identity admitted the near-identical observed 15m arc.");
+        Check(!d.CanOffer(ObservedArc(10, ArcSubject("reverse-alias"), second: true, reverse: true)),
+            "Reversing the same world-space arc bypassed composition memory.");
+        Check(!d.CanOffer(ObservedArc(11, ArcSubject("changed-envelope", radius: 14), second: true)),
+            "A changed subject envelope relabeled an otherwise identical actual picture.");
+    }
+    private static void DistinctWorldComposition()
+    {
+        var d = new ScenicDirector(); d.Accept(ObservedArc(6, ArcSubject("building-a")), 0); Observe(d, 0, 22);
+        Check(d.CanOffer(ObservedArc(9, ArcSubject("building-b", x: 4), second: true)),
+            "A physically different nearby building was treated as the previous subject.");
+        Check(d.CanOffer(ObservedArc(10, ArcSubject("building-close"), second: true, cameraScale: .55f)),
+            "A meaningfully closer view was rejected as the same world composition.");
+        Check(d.CanOffer(ObservedArc(11, ArcSubject("lens-detail"), second: true, fov: 45)),
+            "Different lens framing was mistaken for an alias of the wide shot.");
+        Check(d.CanOffer(ObservedArc(12, ArcSubject("raised-route"), differentCurve: true)),
+            "Matching endpoints erased a route with a different intermediate viewpoint.");
+        var hierarchy = new ScenicDirector();
+        hierarchy.Accept(ObservedArc(13, ArcSubject("settlement", radius: 35, scope: "Settlement"), cameraScale: 3), 0);
+        Observe(hierarchy, 0, 65);
+        Check(hierarchy.CanOffer(ObservedArc(14, ArcSubject("central-building", parent: "settlement"))),
+            "Settlement context incorrectly prohibited a closer view of its central building.");
+    }
+    private static void WorldCompositionEvidence()
+    {
+        var d = new ScenicDirector(); var first = ObservedArc(6, ArcSubject("first"));
+        var alias = ObservedArc(9, ArcSubject("alias"), second: true);
+        d.Accept(first, 0); Observe(d, 0, 22, held: true);
+        Check(d.CanOffer(alias), "Unshown or held route observations consumed world-composition novelty.");
+        Observe(d, 23, 46); Check(!d.CanOffer(alias), "Sustained readable output did not establish world-composition memory.");
+        var availability = new ScenicPictureAvailability(); var pose = alias.Sample(0);
+        var picture = ScenicShotPlan.Picture(10, alias.Feature!, alias.Role, pose.CameraPosition, pose.AimPosition, alias.FieldOfView);
+        Check(availability.TryOffer(picture, 1, 1, 4.6, 4.6, false),
+            "Editorial composition memory vetoed an independently readable recovery picture.");
+        d.Accept(Plan(11, "clock"), 320);
+        Check(d.CanOffer(alias), "Expired cross-identity memory permanently prohibited a place.");
     }
     private static void RecoveryAdmission()
     {

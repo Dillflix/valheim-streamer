@@ -30,6 +30,9 @@ internal sealed class ScenicVisibility
     private readonly bool[] foregroundBounds = new bool[FoliageProjection.BoundsCapacity];
     private Bounds[] activeBounds => foliage.ActiveBounds;
     private int detailRemaining, activeCount;
+    private string focusRayResult = "Not queried", focusBlocker = "";
+    private float focusHitDistance = -1;
+    private Vector3 focusHitPoint;
 
     internal readonly struct Result
     {
@@ -105,6 +108,8 @@ internal sealed class ScenicVisibility
 
         Vector3 local = Quaternion.Inverse(rotation) * (focus - camera);
         ShotProjection.Result projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
+        focusRayResult = projected.CenterInFrame ? "Not queried" : "Outside frame";
+        focusBlocker = ""; focusHitDistance = -1; focusHitPoint = default;
         bool focusVisible = projected.CenterInFrame && FocusClear(camera, focus, subjectBounds);
         // A projection is usable only inside its measured local coverage. The
         // projection can recenter immediately from scene-owned observations;
@@ -150,6 +155,9 @@ internal sealed class ScenicVisibility
                 .Field("retained", foliage.RetainedCount).Field("omitted", omitted).Field("candidates", candidates)
                 .Field("detailed", detailed).Field("coarse", coarseCount).Field("detailRemaining", detailRemaining)
                 .Field("activeBounds", activeCount).Field("surveyMilliseconds", surveyMilliseconds).Field("focusVisible", focusVisible).Field("foreground", foreground)
+                .Field("focusInFrame", projected.CenterInFrame).Field("focusRayResult", focusRayResult)
+                .Field("focusBlocker", focusBlocker).Field("focusHitDistance", focusHitDistance)
+                .Field("focusHitX", focusHitPoint.x).Field("focusHitY", focusHitPoint.y).Field("focusHitZ", focusHitPoint.z)
                 .Field("score", score).Field("fov", fov).Field("aspect", aspect).Field("near", nearClip)
                 .Field("rotationX", rotation.x).Field("rotationY", rotation.y).Field("rotationZ", rotation.z).Field("rotationW", rotation.w)
                 .Field("reason", reason);
@@ -258,10 +266,10 @@ internal sealed class ScenicVisibility
     {
         Vector3 delta = focus - camera;
         float distance = delta.magnitude;
-        if (distance < 0.5f) return false;
+        if (distance < 0.5f) { focusRayResult = "Invalid focus distance"; return false; }
         int count = Physics.RaycastNonAlloc(camera, delta / distance, hits, Mathf.Max(0, distance - 0.25f),
             obstructionMask, QueryTriggerInteraction.Ignore);
-        if (count == hits.Length) return false;
+        if (count == hits.Length) { focusRayResult = "Hit buffer saturated; unknown sightline"; return false; }
         // A rock or building is framed around its measured extent; the sightline
         // should terminate on its surface instead of requiring a ray through it
         // to its centre. Unrelated foreground hits outside that extent still
@@ -273,10 +281,22 @@ internal sealed class ScenicVisibility
             // Buried rocks and foundations often enclose terrain in their
             // bounds. That terrain is still an obstruction, never the visible
             // surface of the intended object.
-            if (hit.GetComponentInParent<Heightmap>() || hit.gameObject.layer == LayerMask.NameToLayer("terrain") ||
-                !subjectBounds.HasValue || !subjectBounds.Value.Contains(hits[i].point)) return false;
+            bool terrain = hit.GetComponentInParent<Heightmap>() || hit.gameObject.layer == LayerMask.NameToLayer("terrain");
+            if (terrain || !subjectBounds.HasValue || !subjectBounds.Value.Contains(hits[i].point))
+            {
+                // RaycastNonAlloc does not promise sorted hits. Preserve the
+                // nearest actual blocker without adding a second physics query.
+                if (focusHitDistance < 0 || hits[i].distance < focusHitDistance)
+                {
+                    focusRayResult = terrain ? "Terrain blocks focus" : "Solid geometry blocks focus";
+                    string name = hit.name;
+                    focusBlocker = name.Length > 96 ? name.Substring(0, 96) : name;
+                    focusHitDistance = hits[i].distance; focusHitPoint = hits[i].point;
+                }
+            }
         }
-        return true;
+        if (focusHitDistance >= 0) return false;
+        focusRayResult = "Clear focus sightline"; return true;
     }
 
     private bool SolidOverlap(int count)

@@ -23,6 +23,7 @@ internal static class ScenicJourneyTests
         yield return ("Journey planning excludes distance already committed to its current route", CommittedDistance);
         yield return ("Journey windows use monotonic linear distance and compatible entry exit ramps", JourneyProfile);
         yield return ("Authored journey fallback preserves its view offset without changing ordinary scenic aim easing", AuthoredJourneyAim);
+        yield return ("A salvaged scenic endpoint cannot become a journey into its known rejected tail", RejectedDeparture);
         yield return ("Continuous Scenic ownership postpones editorial travel but not player acquisition", PlayerPreemption);
         yield return ("Continuous Scenic ownership never suppresses missing-picture recovery", RecoveryPreemption);
         yield return ("Bounded fixture preparation defers scenic recovery only until its owner expires", FixturePreparation);
@@ -36,6 +37,22 @@ internal static class ScenicJourneyTests
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
     private static void Near(double a, double b, double tolerance = .0001) => Check(Math.Abs(a - b) <= tolerance, $"Expected {a} near {b}");
     private static void Reject(Action call) { try { call(); } catch (ArgumentException) { return; } throw new Exception("Invalid value was accepted"); }
+
+    private static void RejectedDeparture()
+    {
+        var original = Plan();
+        Check(ScenicJourneyPolicy.Eligible(original), "Ordinary unblocked natural routes lost journey eligibility");
+        var clipped = original.WithRejectedContinuation("Focus hidden immediately beyond the retained prefix");
+        Check(!ScenicJourneyPolicy.Eligible(clipped) && !original.HasRejectedContinuation, "Known rejected tail was extended or source was mutated");
+        foreach (var copy in new[] { clipped.WithIdentity(3), clipped.WithDuration(120), clipped.WithConstantSpeed(),
+            clipped.AsStandalone(), clipped.RaiseCamera(2), clipped.Slice(.1, 1) })
+            Check(copy.HasRejectedContinuation && copy.ContinuationRejection == clipped.ContinuationRejection,
+                "Retiming, re-identification, fitting or endpoint-preserving slicing erased boundary evidence");
+        var intentionalPrefix = clipped.Slice(0, .5);
+        Check(!intentionalPrefix.HasRejectedContinuation && ScenicJourneyPolicy.Eligible(intentionalPrefix),
+            "An intentionally earlier fixture endpoint inherited a rejected tail it no longer reaches");
+        Reject(() => original.WithRejectedContinuation(" "));
+    }
 
     private static void SeamFirstFrame()
     {

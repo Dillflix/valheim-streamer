@@ -154,7 +154,7 @@ internal sealed class CameraFixtureController : IDisposable
 
     internal void Draw(Camera camera, ScenicShotPlan? activePlan, float progress)
     {
-        if (!PreviewEnabled || !camera || worldId == 0 || !ZNet.instance || ZNet.instance.GetWorldUID() != worldId) return;
+        if (!PreviewEnabled || !camera || worldId == 0 || WorldIdentity.Current != worldId) return;
         ScenicShotPlan? plan = selected?.Plan ?? activePlan;
         if (plan == null || !plan.IsDirected) return;
         preview.Draw(camera, plan, selected == null ? progress : -1,

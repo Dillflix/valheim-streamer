@@ -195,8 +195,11 @@ internal sealed class ScenicPathEvaluator : IDisposable
     internal float Score => hasPrevious ? minimumScore : 0;
     internal float ValidatedFraction { get; private set; }
     internal ScenicRouteWindow ReadableWindow => window;
-    internal ScenicShotPlan ProposeReadableSection() =>
-        plan!.IsPan ? plan.Slice(window.Start, window.End) : path.ProposeMeasuredSlice((float)window.Start, (float)window.End);
+    internal ScenicShotPlan ProposeReadableSection()
+    {
+        ScenicShotPlan section = plan!.IsPan ? plan.Slice(window.Start, window.End) : path.ProposeMeasuredSlice((float)window.Start, (float)window.End);
+        return window.HasRejectedContinuation ? section.WithRejectedContinuation(window.ContinuationRejection) : section;
+    }
     internal float SuggestedCanopyLift { get; private set; }
     internal ScenicRejectionKind FailureKind { get; private set; }
     internal string Reason { get; private set; } = "No scenic route prepared";
@@ -331,7 +334,10 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 if (corridor && !ScenicPoseValidation.Corridor(previous, pose, visibility, aspect, nearClip, out kind, out reason))
                 { corridor = false; routeRejected = true; FailureKind = kind; Reason = reason; }
             }
-            window.Observe(fraction, measuredTravel, readable, corridor);
+            bool knownRejection = kind == ScenicRejectionKind.Focus || kind == ScenicRejectionKind.Foliage ||
+                kind == ScenicRejectionKind.CameraCollision || kind == ScenicRejectionKind.CorridorCollision ||
+                kind == ScenicRejectionKind.SurfaceClearance;
+            window.Observe(fraction, measuredTravel, readable, corridor, knownRejection ? reason : null);
             previous = pose; hasPrevious = true; previousReadable = readable;
             if (!routeRejected) ValidatedFraction = fraction;
             if (readable) minimumScore = Mathf.Min(minimumScore, score);
