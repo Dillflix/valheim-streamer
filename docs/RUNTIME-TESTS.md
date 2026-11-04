@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.37 Scenic production capabilities
+
+Built directly on 0.8.36 (`0de075d3213e76e3abd41c4ce627c4f071ed49a7`). The new cases cover route completion at reduced speed, exact initial/native window admission, bounded fixture preparation and player preemption, fixture persistence and validation, render-pose/identity comparison, expiring empty-server permissions, and real FFmpeg timelapse frame timing, orientation, storage and failure handling. Existing Core, native camera mathematics, real-game hook, RTMP, diagnostic video and replay suites remain required. Project builds use the matching real game assemblies with warnings treated as errors; repository CI provides an independent build and packaged artifacts.
+
+Actual Valheim long-distance terrain streaming, visual seam quality, seven-day operation, render-hook order on the user's graphics backend, empty-server join/revocation behavior, and Windows/Sandboxie GPU capture remain **not run here**. Automated policy/encoder results do not establish these outcomes. Use the specific [runtime acceptance matrix](SCENIC-PRODUCTION.md#validation-and-remaining-runtime-checks) and synchronized footage/diagnostics.
+
 ## 0.8.36 broadcast integration
 
 Built directly on 0.8.35 (`a9fbc66`). See [BROADCAST-INTEGRATION.md](BROADCAST-INTEGRATION.md) for the connected changes, deterministic regression scope and runtime acceptance scenarios. The client and server build against real matching assemblies; the existing protocol-3 companion remains compatible. Visual quality, Unity camera/readback lifecycle, Windows NVENC and Sandboxie runtime results remain pending.

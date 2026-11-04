@@ -14,7 +14,18 @@ internal sealed class IdleShots
     private readonly List<CreatureCandidate> nearby = new List<CreatureCandidate>(MaximumCreatures);
     private readonly ScenicProduction scenic = new ScenicProduction();
     private float radius = 50;
-    private Vector3 surveyOrigin, creatureOrigin;
+    private Vector3 creatureOrigin;
+    internal bool JourneyActive => scenic.JourneyActive;
+    internal string JourneyStatus => scenic.JourneyStatus;
+    internal string RequestJourney() => scenic.RequestJourney();
+    internal void StopJourney() => scenic.StopJourney();
+    internal bool FixturePreparing => scenic.FixturePreparing;
+    internal bool FixtureActive => scenic.FixtureActive;
+    internal string FixtureStatus => scenic.FixtureStatus;
+    internal bool RequestFixture(ScenicShotPlan plan, out string reason, float playbackMotion = 1, bool playbackDynamic = true) =>
+        scenic.RequestFixture(plan, out reason, playbackMotion, playbackDynamic);
+    internal void StopFixture() => scenic.StopFixture();
+    internal bool TryGetFixturePlayback(long planId, out float motion, out bool dynamic) => scenic.TryGetFixturePlayback(planId, out motion, out dynamic);
     internal bool Searching => scenic.Searching;
     internal bool NeedsReplacement => scenic.NeedsReplacement;
     internal bool RecoveryExhausted => scenic.RecoveryExhausted;
@@ -47,9 +58,9 @@ internal sealed class IdleShots
         internal CreatureCandidate(string id, Character actor, float distance) { Id = id; Actor = actor; Distance = distance; }
     }
     internal void SetRegion(Vector3 origin)
-    { creatures.Clear(); readyIds.Clear(); nearby.Clear(); surveyOrigin = creatureOrigin = origin; scenic.SetRegion(origin); }
+    { creatures.Clear(); readyIds.Clear(); nearby.Clear(); creatureOrigin = origin; scenic.SetRegion(origin); }
     internal void Clear()
-    { creatures.Clear(); readyIds.Clear(); nearby.Clear(); surveyOrigin = creatureOrigin = default; scenic.Clear(); }
+    { creatures.Clear(); readyIds.Clear(); nearby.Clear(); creatureOrigin = default; scenic.Clear(); }
     internal void BeginScenicPath(bool resume = false)
     { if (resume) scenic.ResumeShot(); else scenic.RequestShot(); }
     internal float ProposeScenic(float dt, BroadcastSettings settings, bool held) => scenic.Propose(dt, settings, held);
@@ -70,7 +81,7 @@ internal sealed class IdleShots
         creatures.Clear(); nearby.Clear();
         // A wildlife cutaway searches the selected player's already loaded area.
         // It must not relocate the scenic survey or erase its paths/history.
-        creatureOrigin = creatureSearchOrigin ?? surveyOrigin;
+        creatureOrigin = creatureSearchOrigin ?? scenic.RegionOrigin;
         if (creatureSearchOrigin.HasValue ? !Ready(creatureOrigin) : !SceneReady) return;
         foreach (Character actor in Character.GetAllCharacters())
         {

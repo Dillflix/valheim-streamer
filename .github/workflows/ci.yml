@@ -72,6 +72,9 @@ jobs:
       - name: Test diagnostic footage encoding, frame mapping and retention
         timeout-minutes: 3
         run: dotnet run --project tests/ValheimBroadcaster.DiagnosticCapture.Tests --configuration Release -warnaserror
+      - name: Test real timelapse encoding and accelerated frame timeline
+        timeout-minutes: 3
+        run: dotnet run --project tests/ValheimBroadcaster.Timelapse.Tests --configuration Release -warnaserror
 
   plugin:
     needs: [core, streaming]

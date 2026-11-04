@@ -17,18 +17,20 @@ namespace ValheimBroadcaster.Core
         // after its views leave the short global continuity history.
         private readonly Dictionary<string, List<ShownShot>> episodes = new Dictionary<string, List<ShownShot>>(StringComparer.Ordinal);
         private double lastObservation = -1, badPictureSeconds, missingPictureSeconds, now;
-        private bool recorded;
+        private bool recorded, movementEnabled = true;
+        private double stationarySeconds;
         private enum ReplacementCause { None, Requested, BlockedRoute, MissingPicture, UnreadablePicture, Completed }
         private ReplacementCause replacementCause;
 
         public ScenicShotPlan? Current { get; private set; }
         public ScenicShotPlan? Prepared { get; private set; }
         public double Progress { get; private set; }
+        public bool HasPresented { get; private set; }
         public double ElapsedSeconds { get; private set; }
         public double BlockedSeconds { get; private set; }
         public bool NeedsReplacement => replacementCause != ReplacementCause.None;
         public bool ShouldPrefetch => Current == null || NeedsReplacement ||
-            Progress >= .65 || ElapsedSeconds >= Current.DurationSeconds - 4;
+            Progress >= .65 || !movementEnabled && stationarySeconds >= Current.DurationSeconds - 4;
         public string Reason { get; private set; } = "Awaiting a measured scenic subject";
         public int RememberedShots => history.Count;
 
@@ -59,6 +61,7 @@ namespace ValheimBroadcaster.Core
             if (Prepared?.Id == plan.Id) Prepared = null;
             Progress = ElapsedSeconds = BlockedSeconds = badPictureSeconds = missingPictureSeconds = 0;
             lastObservation = -1; now = at; recorded = false; replacementCause = ReplacementCause.None;
+            stationarySeconds = 0; movementEnabled = true; HasPresented = false;
             Reason = "Establishing " + plan.FeatureKind + " / " + plan.Role;
         }
 
@@ -69,7 +72,7 @@ namespace ValheimBroadcaster.Core
             Time(deltaSeconds);
             if (float.IsNaN(motionSpeed) || float.IsInfinity(motionSpeed) || motionSpeed < 0 || motionSpeed > 1.5f)
                 throw new ArgumentOutOfRangeException(nameof(motionSpeed));
-            if (Current == null || !canMove || NeedsReplacement || motionSpeed == 0) return Progress;
+            if (Current == null || !HasPresented || !canMove || NeedsReplacement || motionSpeed == 0) return Progress;
             return Math.Min(1, Progress + Math.Min(deltaSeconds, .1) * motionSpeed / Current.DurationSeconds);
         }
 
@@ -77,11 +80,13 @@ namespace ValheimBroadcaster.Core
         /// A rejected proposal reports the held accepted progress and its own
         /// motion failure; repeated previews, held textures and gaps earn none.</summary>
         public void Observe(long planId, double at, double displayedProgress, bool livePicture,
-            bool readable, bool motionBlocked, bool held = false)
+            bool readable, bool motionBlocked, bool held = false, bool movementEnabled = true)
         {
             Time(at); Time(displayedProgress);
             if (displayedProgress > 1) throw new ArgumentOutOfRangeException(nameof(displayedProgress));
             if (Current == null || Current.Id != planId || at <= lastObservation) return;
+            this.movementEnabled = movementEnabled;
+            if (movementEnabled) stationarySeconds = 0;
             siteSequence.Observe(at, Current.Feature, Current.Role, livePicture && readable, held);
             double gap = lastObservation >= 0 ? at - lastObservation : 0;
             double dt = gap <= .25 ? gap : 0;
@@ -93,6 +98,7 @@ namespace ValheimBroadcaster.Core
             lastObservation = now = at;
             if (livePicture && readable)
             {
+                HasPresented = true;
                 Progress = Math.Max(Progress, displayedProgress);
                 badPictureSeconds = missingPictureSeconds = 0;
                 // Recovery is conditional on the failed picture still being
@@ -105,6 +111,7 @@ namespace ValheimBroadcaster.Core
                 if (!held)
                 {
                     ElapsedSeconds += dt;
+                    if (!movementEnabled) stationarySeconds += dt;
                     if (ElapsedSeconds >= 2 && !recorded)
                     {
                         history.Add(new ShownShot(Current, now));
@@ -129,8 +136,10 @@ namespace ValheimBroadcaster.Core
                 RequestReplacement("Scenic live output unavailable", ReplacementCause.MissingPicture);
             else if (!held && badPictureSeconds >= 2)
                 RequestReplacement("Scenic picture remained unreadable", ReplacementCause.UnreadablePicture);
-            else if (!held && (Progress >= .999999 || ElapsedSeconds >= Current.DurationSeconds))
-                RequestReplacement("Scenic movement completed; advance the environmental sequence", ReplacementCause.Completed);
+            else if (!held && Progress >= .999999)
+                RequestReplacement("Scenic route completed; advance the environmental sequence", ReplacementCause.Completed);
+            else if (!held && !movementEnabled && stationarySeconds >= Current.DurationSeconds)
+                RequestReplacement("Stationary scenic dwell completed; motion is disabled", ReplacementCause.Completed);
             else Reason = held ? "Operator holding the scenic composition" : motionBlocked
                 ? "Retaining the readable composition while preparing a different route"
                 : "Developing " + Current.FeatureKind + " / " + Current.Role;
@@ -277,7 +286,7 @@ namespace ValheimBroadcaster.Core
         {
             Current = Prepared = null; Progress = ElapsedSeconds = BlockedSeconds = 0;
             lastObservation = -1; now = badPictureSeconds = missingPictureSeconds = 0;
-            recorded = false; replacementCause = ReplacementCause.None;
+            recorded = false; movementEnabled = true; HasPresented = false; stationarySeconds = 0; replacementCause = ReplacementCause.None;
             history.Clear(); episodes.Clear(); siteSequence.Reset(); Reason = "Awaiting a measured scenic subject";
         }
         private static void CheckPlan(ScenicShotPlan plan)

@@ -130,6 +130,7 @@ internal sealed partial class RemoteObserverClient
         client.events.Reset(); client.eventProbeAt = -1; client.nextEvents = 0;
         client.eventsSupported = client.eventsUnavailable = client.eventsRejected = false;
         client.ResetInterests();
+        client.ResetEnvironment();
         client.Status = client.requested ? "Waiting for read-only observer authorization" : "Observer connection disabled";
         if (client.requested)
         {
@@ -140,6 +141,7 @@ internal sealed partial class RemoteObserverClient
             __0.m_rpc.Register<ZPackage>(ObserverEventProtocol.Reply, client.EventReply);
             __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Reply, client.InterestReply);
             __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Reply2, client.InterestReply2);
+            __0.m_rpc.Register<ZPackage>(ObserverEnvironmentProtocol.Reply, client.EnvironmentReply);
         }
     }
     private static bool RequestBeforeAdmission(ZRpc __0)
@@ -322,6 +324,7 @@ internal sealed partial class RemoteObserverClient
         TickActivity(Time.realtimeSinceStartup);
         TickEvents(Time.realtimeSinceStartup);
         TickInterests(Time.realtimeSinceStartup);
+        TickEnvironment(Time.realtimeSinceStartupAsDouble);
     }
     internal void Spawned() { spawned = true; Status = "Read-only observer connection active"; }
     internal void Fail(string reason, bool terminal = true)
@@ -331,12 +334,14 @@ internal sealed partial class RemoteObserverClient
         activity.Reset(); activityUnavailable = true; Status = reason; log(reason);
         events.Reset(); eventsUnavailable = true;
         ResetInterests();
+        ResetEnvironment();
         if (world && world == ZNet.instance && server != null && world.GetPeers().Contains(server)) world.Disconnect(server);
         // Do not unpin input/network restrictions inside a still-loaded world.
     }
     internal void Close()
     {
         ResetInterests();
+        ResetEnvironment();
         if (Isolated) Fail("Observer plugin stopped; disconnecting read-only session");
     }
     private static bool BeforeRespawn()

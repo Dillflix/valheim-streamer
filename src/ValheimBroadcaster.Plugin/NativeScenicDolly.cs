@@ -112,7 +112,7 @@ internal sealed class ScenicSplinePath : IDisposable
         for (int i = 0; i < 32; i++)
         {
             double middle = (lo + hi) * .5;
-            if (ScenicMotionProfile.Progress(middle) < distance) lo = middle; else hi = middle;
+            if (plan.MotionFraction(middle) < distance) lo = middle; else hi = middle;
         }
         return index == 0 ? 0 : index == plan.WaypointCount - 1 ? 1 : (float)((lo + hi) * .5);
     }
@@ -126,7 +126,7 @@ internal sealed class ScenicSplinePath : IDisposable
         if (!Finite(fromProgress) || !Finite(toProgress) || fromProgress < 0 || toProgress > 1 || toProgress < fromProgress)
             throw new ArgumentOutOfRangeException(nameof(fromProgress));
         double length = plan.UseNativeSpline ? Length : plan.TravelMetres;
-        return (float)(length * (ScenicMotionProfile.Progress(toProgress) - ScenicMotionProfile.Progress(fromProgress)));
+        return (float)(length * (plan.MotionFraction(toProgress) - plan.MotionFraction(fromProgress)));
     }
 
     /// <summary>Propose a finite shot through measured readable native poses.
@@ -168,7 +168,7 @@ internal sealed class ScenicSplinePath : IDisposable
 
     // Short smooth ramps and a steady cruise apply to distance, not knot parameter. Unequal
     // knot spacing therefore cannot produce accidental acceleration or stalls.
-    private static float Ease(float value) => (float)ScenicMotionProfile.Progress(value);
+    private float Ease(float value) => (float)plan!.MotionFraction(value);
     private AutonomyPosition AimAtDistance(float distance)
     {
         int segment = 0;

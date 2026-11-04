@@ -48,8 +48,8 @@ public sealed class ReplayEngine
             if (kind == "header")
             {
                 string? version = row.GetProperty("version").GetString();
-                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31" || version == "0.8.32" || version == "0.8.33" || version == "0.8.34" || version == "0.8.35" || version == "0.8.36";
-                if (!compatible) Bad("Replay reads captures from 0.8.29 through 0.8.36 and checks their recorded coverage/deadline decisions; unsupported build");
+                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31" || version == "0.8.32" || version == "0.8.33" || version == "0.8.34" || version == "0.8.35" || version == "0.8.36" || version == "0.8.37";
+                if (!compatible) Bad("Replay reads captures from 0.8.29 through 0.8.37 and checks their recorded coverage/deadline decisions; unsupported build");
                 string current = row.GetProperty("utc").GetString()!;
                 if (session != current) { previousSequence = 0; session = current; unavailableSince = null; scenicTravel = false; }
                 return;

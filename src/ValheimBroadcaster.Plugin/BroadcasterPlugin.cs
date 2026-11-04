@@ -17,15 +17,18 @@ namespace ValheimBroadcaster.Plugin;
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
-public sealed class BroadcasterPlugin : BaseUnityPlugin
+public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.36";
+    public const string PluginVersion = "0.8.37";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
     private DiagnosticCapture? diagnosticCapture;
+    private TimelapseCapture? timelapseCapture;
+    private CameraFixtureController? cameraFixtures;
+    private ScenicEnvironmentController? scenicEnvironment;
     private StreamRecovery? output;
     private ConnectionRecovery? connection;
     private AutonomousBroadcast? automatic;
@@ -95,6 +98,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         settings = new BroadcastSettings(Config);
         ScenicTrace.Initialize(BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
+        cameraFixtures = new CameraFixtureController(BepInEx.Paths.ConfigPath);
+        scenicEnvironment = new ScenicEnvironmentController(remote, message => Logger.LogInfo(message));
         rig.RemoteContext = remote;
         rig.PictureMonitor = pictureMonitor;
         pictureMonitor.IsProgramGenerationCurrent = frameHold.IsGenerationCurrent;
@@ -128,6 +133,11 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             diagnosticCapture.Configure(frameHold,
                 () => enabled && director.IsEnabled && settings.DiagnosticVideo.Value && ScenicTrace.Enabled &&
                     Player.m_localPlayer && ZNet.instance && activeWorld == ZNet.instance,
+                () => settings.FFmpegPath.Value, BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
+            timelapseCapture = gameObject.AddComponent<TimelapseCapture>();
+            timelapseCapture.Configure(frameHold,
+                () => enabled && director.IsEnabled && !probe.Active && Player.m_localPlayer &&
+                    ZNet.instance && activeWorld == ZNet.instance && (!remote.Isolated || remote.Approved),
                 () => settings.FFmpegPath.Value, BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
             output = new StreamRecovery(stream, frameHold, BuildStreamOptions, FindAudioListener, message => Logger.LogInfo(message));
             MethodInfo? listenerMethod = AccessTools.Method(typeof(GameCamera), "UpdateListner", Type.EmptyTypes);
@@ -176,6 +186,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         ScenicTrace.Tick();
         try { remote.Tick(); }
         catch (Exception error) { remote.Fail("Observer connection error: " + error.GetType().Name); }
+        cameraFixtures?.SetWorld(ZNet.instance ? ZNet.instance.GetWorldUID() : 0);
+        scenicEnvironment?.Configure(settings.EnvironmentCycleSeconds.Value, settings.EnvironmentWeather.Value);
+        scenicEnvironment?.Tick(enabled && director.IsEnabled && !selfTest && !probe.Active &&
+            observer.Active && observer.Phase == ObserverPhase.Watching && activeWorld == ZNet.instance &&
+            coverage.Mode == CoverageMode.Scenic && (scenicEnvironment.Active || cameraReady &&
+                Time.frameCount - presentedFrame <= 2 && frameHold.CurrentPresentation == FramePresentation.Live),
+            Time.realtimeSinceStartupAsDouble);
         if (remote.TerminalFailure && !terminalReported)
         { terminalReported = true; connection?.Reject(remote.Status); CancelIntent(); }
         if (remote.Approved) terminalReported = false;
@@ -233,8 +250,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 Logger.LogInfo("Observer session ended; owned state restored.");
                 return;
             }
+            if (previousPhase == ObserverPhase.Travelling && observer.Phase == ObserverPhase.Watching)
+                ResetShot();
             if (Time.unscaledTime >= nextRosterRefresh)
             { RefreshRoster(); nextRosterRefresh = Time.unscaledTime + 0.5f; }
+            if (observer.Phase != ObserverPhase.Watching && observer.Phase != ObserverPhase.Travelling && cameraFixtures?.PendingPlayback == true)
+                cameraFixtures.CancelPending("Fixture interrupted by observer state " + observer.Phase, idle);
+            cameraFixtures?.Update(ZNet.instance.GetWorldUID(), false, idle);
             if (probe.Active || observer.Active && observer.Phase != ObserverPhase.Watching) playerShots.Reset();
             bool recentPicture = cameraReady && Time.frameCount - presentedFrame <= 2;
             bool currentIdlePresentation = presentedMode == coverage.Mode && presentedRevision == coverage.Revision &&
@@ -300,7 +322,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 coverage.Mode == CoverageMode.Creature && usableIdlePicture, idle.DestinationSubjectShown, idle.DestinationSubjectUnavailable, idle.DestinationSubjectSatisfied,
                 coverage.Mode == CoverageMode.Scenic && idle.ContentExhausted,
                 recentPicture && frameHold.HasRecentLiveFrame && presentedRelatedPlayerView &&
-                    presentedPlayerId == CurrentTarget()?.Identity.Id);
+                    presentedPlayerId == CurrentTarget()?.Identity.Id,
+                coverage.Mode == CoverageMode.Scenic && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true),
+                cameraFixtures?.AwaitingStart == true || idle.FixturePreparing);
             idle.SetDestinationSubject(automatic?.ScenicInterest);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
@@ -308,8 +332,6 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (previousPhase == ObserverPhase.Returning && observer.Phase == ObserverPhase.Parked)
             { Stop(true, true); Logger.LogInfo("Observer parked; read-only role remains until disconnect. F8 resumes coverage."); return; }
             if (!director.IsEnabled) return;
-            if (previousPhase == ObserverPhase.Travelling && observer.Phase == ObserverPhase.Watching)
-                ResetShot();
             if (observer.Active && observer.Phase != ObserverPhase.Watching)
             {
                 cameraReady = false;
@@ -353,7 +375,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             if (!preserveShot)
                 coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
                     roster.ConnectedOthers, !selfTest && (coverage.IsWildlifeCutaway ? readyPlayer : idle.SceneReady),
-                    ReadyCreatureShots(), director.IsHolding, usableIdlePicture,
+                    !coverage.IsWildlifeCutaway && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true)
+                        ? Array.Empty<string>() : ReadyCreatureShots(), director.IsHolding, usableIdlePicture,
                     coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id,
                     scenicSearchExhausted: idle.RecoveryExhausted);
             if (coverage.Revision != lastRevision)
@@ -366,11 +389,18 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             }
             if (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature && !coverage.IsWildlifeCutaway)
             {
+                cameraFixtures?.Update(ZNet.instance.GetWorldUID(), observer.Active && observer.Phase == ObserverPhase.Watching &&
+                    coverage.Mode == CoverageMode.Scenic && !probe.Active && !selfTest && (!remote.Isolated || remote.Approved), idle);
                 // The environmental director prepares and edits its own shots.
                 // Coverage's independent clock still permits wildlife cutaways.
                 if (idle.Search(settings, observer.Active, director.IsHolding,
                     allowActivate: coverage.Mode == CoverageMode.Scenic) && coverage.Mode == CoverageMode.Scenic)
                     presentedIdleUsable = false;
+            }
+            else if (coverage.Mode == CoverageMode.Player)
+            {
+                if (cameraFixtures?.PendingPlayback == true) cameraFixtures.CancelPending("Player coverage preempted the fixture", idle);
+                if (idle.JourneyActive) idle.StopJourney();
             }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
@@ -560,6 +590,9 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop(bool force = false, bool parked = false)
     {
+        scenicEnvironment?.Stop();
+        timelapseCapture?.StopCapture("Broadcast stopped");
+        cameraFixtures?.Reset();
         pictureMonitor.Clear();
         wildlife.Reset();
         playerShots.Reset();
@@ -790,6 +823,13 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             plugin.presentedIdleUsable = !plugin.probe.Active && plugin.cameraReady && plugin.rig.LastPictureUsable &&
                 (plugin.coverage.Mode == CoverageMode.Scenic || plugin.coverage.Mode == CoverageMode.Creature);
             plugin.presentedFrame = Time.frameCount;
+            if (plugin.cameraReady && plugin.rig.OutputCamera)
+            {
+                RenderedPictureContext? picture = plugin.rig.PictureContext;
+                plugin.frameHold.RecordApplied(plugin.rig.OutputCamera!, plugin.rig.AcceptedRenderPose,
+                    plugin.presentedMode == CoverageMode.Scenic ? plugin.presentedScenicPlan : plugin.rig.PresentedActorShotId,
+                    plugin.presentedRevision, picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1);
+            }
             plugin.rig.HideHud(plugin.settings.HideHud.Value);
         }
         catch (Exception error) { plugin.FailClosed(error); }
@@ -897,6 +937,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
         }
+        if (presentation == FramePresentation.Live && rig.OutputCamera)
+            cameraFixtures?.Draw(rig.OutputCamera!, idle.Plan, presentedScenicProgress);
         if (programPresentation == FramePresentation.Slate || settings.ShowStatus.Value || selfTest || probe.Active)
         {
             GUI.color = Color.white;
@@ -1078,7 +1120,6 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 context?.AddString("Observer travel marker saved at " + probeMarker.Value.ToString("F1"));
                 return;
             case "travel":
-                automatic?.PauseForManual(); SetHolding(true);
                 if (args.Length == 5)
                 {
                     var values = new float[3];
@@ -1086,11 +1127,15 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                         if (!float.TryParse(args[i + 2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out values[i]) ||
                             float.IsNaN(values[i]) || float.IsInfinity(values[i]) || Math.Abs(values[i]) > 20000)
                         { context?.AddString("Use finite x y z coordinates within +/-20000 metres."); return; }
+                    cameraFixtures?.CancelPending("Manual observer travel replaced fixture playback", idle);
+                    idle.StopJourney(); scenicEnvironment?.Stop(); automatic?.PauseForManual(); SetHolding(true);
                     observer.TravelTo(new Vector3(values[0], values[1], values[2])); cameraReady = false; rig.ResetPose();
                     context?.AddString(observer.Diagnostics); return;
                 }
                 if (!observer.Active || !probeMarker.HasValue || probeWorld != ZNet.instance)
                 { context?.AddString("Mark a destination with broadcast observer mark, then start observer mode first."); return; }
+                cameraFixtures?.CancelPending("Manual observer travel replaced fixture playback", idle);
+                idle.StopJourney(); scenicEnvironment?.Stop(); automatic?.PauseForManual(); SetHolding(true);
                 observer.TravelTo(probeMarker.Value);
                 cameraReady = false; rig.ResetPose();
                 break;
@@ -1103,6 +1148,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 
     private void SuspendObserver(string reason)
     {
+        scenicEnvironment?.Stop();
+        cameraFixtures?.CancelPending("Observer suspended: " + reason, idle);
         if (observer.Phase != ObserverPhase.Suspended) Logger.LogError(reason);
         observer.Suspend(reason);
         cameraReady = false;
@@ -1128,6 +1175,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         connection?.Dispose(); CancelIntent(); remote?.Close();
         Stop(true);
         pictureMonitor.Dispose();
+        scenicEnvironment?.Dispose();
+        cameraFixtures?.Dispose();
         ScenicTrace.Stop();
         harmony?.UnpatchSelf();
         RestoreBackground();
@@ -1138,7 +1187,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + timelapseCapture?.Status + "\n" + scenicEnvironment?.Status + "\n" + cameraFixtures?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {
@@ -1265,7 +1314,8 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+        public override string Help => "broadcast journey start|stop|on|off|status|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse start [interval] [duration] [fps]|stop|status | environment list|cycle <seconds>|weather <name>|off|status\n" +
+            "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1276,6 +1326,10 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
                 switch (action)
                 {
                     case "camera": plugin.CameraCommand(args, context); return;
+                    case "timelapse": plugin.TimelapseCommand(args, context); return;
+                    case "environment": plugin.EnvironmentCommand(args, context); return;
+                    case "fixture": plugin.FixtureCommand(args, context); return;
+                    case "journey": plugin.JourneyCommand(args, context); return;
                     case "wildlife":
                         if (args.Length != 2) { context?.AddString("broadcast wildlife on|off|status"); return; }
                         switch (args[1].ToLowerInvariant())

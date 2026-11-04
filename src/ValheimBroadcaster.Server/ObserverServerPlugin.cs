@@ -12,10 +12,10 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.36")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.37")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
-public sealed class ObserverServerPlugin : BaseUnityPlugin
+public sealed partial class ObserverServerPlugin : BaseUnityPlugin
 {
     private static ObserverServerPlugin? instance;
     private Harmony? harmony;
@@ -50,6 +50,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         activityEnabled = Config.Bind("Observer", "ActivityEnabled", true, "Optional observed-idle evidence for all ordinary players, for wildlife cutaways. Uses existing replicated movement, actions and heartbeat; cannot prove absence of local menu/input activity. Does not alter observer admission or simulate regions.");
         eventsEnabled = Config.Bind("Observer", "EventsEnabled", true, "Optional timestamped movement, generic action, crafting and health-loss evidence for activity-aware coverage. Generic action/health loss does not prove combat. Reads the existing activity samples; no ordinary-player mod or simulation changes. Respects SharePrivatePlayerPositions.");
         interestsEnabled = Config.Bind("Observer", "WorldInterestEnabled", true, "Optional metadata-only discovery of natural landscapes/coasts, player bases and already-placed landmarks, with destination feedback. Requires observer authorization and DiscoveryEnabled. Does not simulate regions or change admission.");
+        InitializeEnvironment();
         interests = new ObserverWorldInterestService(message => Logger.LogInfo(message), () => discovery.NaturalDestinations);
         instance = this;
         try
@@ -73,7 +74,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.36 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.37 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {
@@ -106,7 +107,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
 
     private void EnsureWorld()
     {
-        if (world != ZNet.instance) { reserved.Clear(); admissions.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); context.Reset(); activity.Reset(); interests.Reset(); discoveryFailed = contextFailed = activityFailed = eventsFailed = interestsFailed = false; world = ZNet.instance; }
+        if (world != ZNet.instance) { reserved.Clear(); admissions.Clear(); leases.Clear(); nextReply.Clear(); discovery.Reset(); context.Reset(); activity.Reset(); interests.Reset(); ResetEnvironment(); discoveryFailed = contextFailed = activityFailed = eventsFailed = interestsFailed = false; world = ZNet.instance; }
     }
     private void Bind(ZNetPeer peer)
     {
@@ -124,6 +125,9 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         if (!Serving) return;
         ObserverServerPlugin plugin = instance!;
         plugin.EnsureWorld();
+        // A newly connecting peer is not known to be an observer yet. Revoke
+        // before authentication/admission rather than waiting for player data.
+        plugin.RevokeEnvironment(1);
         if (plugin.configured != plugin.identities.Value) plugin.ReloadAllowlist();
         // Membership grants permission, not a role. Vanilla peers send no request.
         plugin.admissions[__0] = new ObserverAdmission();
@@ -137,6 +141,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         __0.m_rpc.Register<int>(WorldInterestProtocol.Request2, plugin.InterestRequest2);
         __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Feedback, plugin.InterestFeedback);
         __0.m_rpc.Register<ZPackage>(WorldInterestProtocol.Feedback2, plugin.InterestFeedback2);
+        __0.m_rpc.Register<ZPackage>(ObserverEnvironmentProtocol.Request, plugin.EnvironmentRequest);
     }
     private void Request(ZRpc rpc, int version)
     {
@@ -159,6 +164,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
         if (!Serving || Find(__0) is not ZNetPeer peer) return;
         if (!instance!.admissions.TryGetValue(peer, out ObserverAdmission admission))
             instance.admissions[peer] = admission = new ObserverAdmission();
+        if (!instance.Protected(peer)) instance.RevokeEnvironment(1);
         admission.BeginAdmission();
     }
     private static void PeerReady(ZRpc __0)
@@ -407,6 +413,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
     {
         if (!Serving) return;
         EnsureWorld();
+        TickEnvironment();
         if (!interestsFailed)
         {
             try { interests.Tick(Time.realtimeSinceStartup, allow.Value && discoveryEnabled.Value && interestsEnabled.Value && leases.Values.Any(lease => lease.Confirmed)); }
@@ -464,6 +471,7 @@ public sealed class ObserverServerPlugin : BaseUnityPlugin
     }
     private void OnDisable()
     {
+        RevokeEnvironment(0, true);
         interests?.Save();
         if (ZNet.instance && ZNet.instance.IsServer() && ZNet.instance.IsDedicated()) foreach (ZNetPeer peer in ZNet.instance.GetPeers().Where(Protected).ToArray()) ZNet.instance.Disconnect(peer);
         Logger.LogInfo($"Observer server stopped; rejected {blockedWrites} world-write packets and {blockedRpcs} gameplay routed calls.");

@@ -47,8 +47,8 @@ internal static class ScenicDirectorTests
     private static void Reject(Action action)
     { try { action(); } catch (ArgumentException) { return; } throw new Exception("Invalid input was accepted."); }
     private static void Observe(ScenicDirector d, int first, int last, bool live = true, bool readable = true,
-        bool blocked = false, bool held = false)
-    { for (int i = first; i <= last; i++) d.Observe(d.Current!.Id, i / 10d, d.Progress, live, readable, blocked, held); }
+        bool blocked = false, bool held = false, bool movement = true)
+    { for (int i = first; i <= last; i++) d.Observe(d.Current!.Id, i / 10d, d.Progress, live, readable, blocked, held, movement); }
 
     private static void ImmutableRoute()
     {
@@ -164,7 +164,7 @@ internal static class ScenicDirectorTests
     }
     private static void StaticComparison()
     {
-        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 300);
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); Observe(d, 0, 300, movement: false);
         Check(d.NeedsReplacement && d.ElapsedSeconds >= d.Current!.DurationSeconds,
             "A steady comparison disabled normal shot variety indefinitely.");
     }

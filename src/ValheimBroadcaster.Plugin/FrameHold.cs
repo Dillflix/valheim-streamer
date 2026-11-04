@@ -27,6 +27,12 @@ internal sealed class FrameHold
     private string sourceSubject = "";
     private int sourceFrame = -1;
     private float sourceTime;
+    private CameraRenderPose acceptedPose, appliedPose, preRenderPose;
+    private int appliedFrame = -1, preRenderFrame = -1, appliedCamera;
+    private long appliedGeneration, appliedShot, appliedRevision, appliedScene;
+    private int appliedCandidate = -1;
+    private readonly CameraRenderAuditEvents auditEvents = new CameraRenderAuditEvents();
+    internal CameraRenderAudit LastRenderAudit { get; private set; }
     internal long Generation => program.Generation;
     // Read-only presentation state for commands/status outside IMGUI. Metadata
     // belongs to the captured source, including when that source is held.
@@ -36,7 +42,60 @@ internal sealed class FrameHold
     internal string OperatorSubject => sourceSubject;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
     internal string LastFailure { get; set; } = "none";
-    internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; clean program epoch {program.Generation}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}.";
+    internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; clean program epoch {program.Generation}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}. " + PoseAuditDiagnostics;
+    internal string PoseAuditDiagnostics => $"Pose audit: {LastRenderAudit.Status}; {auditEvents.Observed} live captures, {auditEvents.Changed} changed, {auditEvents.Incomplete} unmatched; " +
+        "applied/render " + Describe(LastRenderAudit.AppliedToPreRender) + "; render/capture " + Describe(LastRenderAudit.PreRenderToCapture) + ".";
+    private static string Describe(CameraPoseDifference delta) => delta.Known
+        ? $"{delta.PositionMetres:F3}m / {delta.RotationDegrees:F3}deg / lens {delta.FovDegrees:F3}deg / projection {delta.ProjectionMaximum:F5}" : "unavailable";
+
+    // Called after a successful final camera solve and before Unity renders.
+    // Numeric shot identity is captured now, never inferred by a GPU callback.
+    internal void RecordApplied(Camera output, CameraRenderPose accepted, long shot, long revision, long scene, int candidate)
+    {
+        SynchronizeBoundary();
+        if (!output || output != camera || !active() || hardFailure()) return;
+        acceptedPose = accepted; appliedPose = CameraPoseSampler.Sample(output);
+        appliedFrame = Time.frameCount; appliedCamera = output.GetInstanceID(); appliedGeneration = program.Generation;
+        appliedShot = shot; appliedRevision = revision; appliedScene = scene; appliedCandidate = candidate;
+    }
+
+    internal void BeforeRender(FrameHoldRenderer source)
+    {
+        if (!ReferenceEquals(source, renderer) || !camera || !active() || hardFailure()) return;
+        preRenderPose = CameraPoseSampler.Sample(camera); preRenderFrame = Time.frameCount;
+    }
+
+    private CameraRenderAudit CaptureAudit(DiagnosticPictureContext context)
+    {
+        if (!camera) return default;
+        var audit = new CameraRenderAudit(program.Generation, appliedShot, appliedRevision, appliedScene, appliedCandidate,
+            camera.GetInstanceID(), appliedFrame, preRenderFrame, Time.frameCount,
+            acceptedPose, appliedPose, preRenderPose, CameraPoseSampler.Sample(camera),
+            appliedCamera == camera.GetInstanceID() && appliedGeneration == program.Generation &&
+            appliedShot == context.Shot && appliedRevision == context.Revision &&
+            appliedScene == context.PictureScene && appliedCandidate == context.Candidate,
+            appliedGeneration, appliedCamera);
+        LastRenderAudit = audit;
+        float now = Time.unscaledTime;
+        auditEvents.Observe(audit, now);
+        FlushPoseAudit(now);
+        return audit;
+    }
+
+    private void FlushPoseAudit(double now, bool final = false)
+    {
+        // Retaining one anomaly across the cooldown matters: a one-frame late
+        // writer may be absent from the 12fps video and already healthy next frame.
+        try
+        {
+            if (ScenicTrace.Enabled && auditEvents.TryTake(now, out CameraRenderAudit audit, out double observedAt, final))
+                ScenicTrace.Record(audit.Append(ScenicTrace.Row("pose-audit")).Field("poseObservedAt", observedAt)
+                    .Field("auditedFrames", auditEvents.Observed).Field("changedFrames", auditEvents.Changed).Field("unmatchedFrames", auditEvents.Incomplete)
+                    .Field("maximumPositionMetres", auditEvents.MaximumPositionMetres).Field("maximumRotationDegrees", auditEvents.MaximumRotationDegrees)
+                    .Field("maximumFovDegrees", auditEvents.MaximumFovDegrees).Field("maximumProjectionDelta", auditEvents.MaximumProjectionDelta));
+        }
+        catch { } // Diagnostic I/O must not affect the broadcast compositor.
+    }
 
     internal void Configure(Func<bool> isActive, Func<bool> isReady, Func<bool> isHardFailure, Action<string> reportWarning)
     { active = isActive; ready = isReady; hardFailure = isHardFailure; warning = reportWarning; }
@@ -63,6 +122,7 @@ internal sealed class FrameHold
     internal void Render(RenderTexture source, RenderTexture destination)
     {
         SynchronizeBoundary();
+        FlushPoseAudit(Time.unscaledTime);
         if (!active()) { Blit(source, destination); return; }
         float now = Time.unscaledTime;
         bool hard = hardFailure();
@@ -91,6 +151,8 @@ internal sealed class FrameHold
                 Blit(source, frame!);
                 try { sourceContext = DescribePicture?.Invoke() ?? default; }
                 catch { sourceContext = new DiagnosticPictureContext("Unknown", 0, 0, false, "Diagnostic context unavailable"); }
+                try { sourceContext = sourceContext.WithRenderAudit(CaptureAudit(sourceContext)); }
+                catch { LastRenderAudit = default; sourceContext = sourceContext.WithRenderAudit(default); }
                 try { sourceSubject = DescribeOperatorSubject?.Invoke() ?? ""; }
                 catch { sourceSubject = ""; }
                 sourceFrame = Time.frameCount; sourceTime = now;
@@ -178,6 +240,7 @@ internal sealed class FrameHold
         if (hard && !hardBoundary)
         {
             continuity.Reset(); program.Invalidate(); testAt = -1;
+            ClearPoseEvidence();
             NotifyUnavailable();
         }
         hardBoundary = hard;
@@ -226,6 +289,7 @@ internal sealed class FrameHold
     internal void LostRenderer(FrameHoldRenderer lost)
     {
         if (!ReferenceEquals(renderer, lost)) return;
+        FlushPoseAudit(Time.unscaledTime, true);
         lost.Owner = null;
         // Retire a temporarily disabled camera's component as well; otherwise
         // reactivation would accumulate abandoned pass-through image effects.
@@ -233,12 +297,15 @@ internal sealed class FrameHold
         renderer = null; camera = null;
         Release(); renderedFrame = -1; testAt = -1;
         sourceContext = default; sourceSubject = ""; sourceFrame = -1;
+        ClearPoseEvidence();
     }
 
     internal void Reset()
     {
+        FlushPoseAudit(Time.unscaledTime, true);
         Detach(); holds = slates = 0; captureFailed = false; reportedFrame = -1;
         hardBoundary = false;
+        auditEvents.Reset();
         lastPresentation = FramePresentation.Slate; LastFailure = "none";
         slate.Dispose();
     }
@@ -253,6 +320,7 @@ internal sealed class FrameHold
         }
         renderer = null; camera = null;
         Release(); renderedFrame = -1; testAt = -1;
+        ClearPoseEvidence();
     }
 
     private void Release()
@@ -260,5 +328,13 @@ internal sealed class FrameHold
         continuity.Reset(); program.Invalidate(); NotifyUnavailable();
         if (frame) { frame.Release(); UnityEngine.Object.Destroy(frame); }
         frame = null;
+    }
+
+    private void ClearPoseEvidence()
+    {
+        acceptedPose = appliedPose = preRenderPose = default;
+        appliedFrame = preRenderFrame = -1; appliedCamera = 0; appliedGeneration = -1;
+        appliedShot = appliedRevision = appliedScene = 0; appliedCandidate = -1;
+        LastRenderAudit = default;
     }
 }

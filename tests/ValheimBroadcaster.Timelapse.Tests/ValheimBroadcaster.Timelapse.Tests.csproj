@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>disable</ImplicitUsings></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ValheimBroadcaster.Core/ValheimBroadcaster.Core.csproj" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/TimelapseVideoWriter.cs" Link="TimelapseVideoWriter.cs" />
+  </ItemGroup>
+</Project>

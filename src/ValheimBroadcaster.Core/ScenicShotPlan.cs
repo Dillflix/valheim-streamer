@@ -30,7 +30,7 @@ namespace ValheimBroadcaster.Core
     /// </summary>
     public sealed class ScenicShotPlan
     {
-        public long Id { get; }
+        public long Id { get; private set; }
         public ScenicShotStyle Style { get; }
         public bool IsDirected { get; }
         /// <summary>A single independently measured live composition. It does
@@ -44,7 +44,14 @@ namespace ValheimBroadcaster.Core
         public string FeatureId { get; } = string.Empty;
         public ScenicFeatureKind FeatureKind { get; }
         public ScenicShotRole Role { get; }
-        public double DurationSeconds { get; } = 45;
+        public double DurationSeconds { get; private set; } = 45;
+        public long JourneyId { get; private set; }
+        public long ContinuationOf { get; private set; }
+        public bool IsJourney => JourneyId > 0;
+        public bool ConstantSpeed { get; private set; }
+        public bool JourneyEaseIn { get; private set; }
+        public bool JourneyEaseOut { get; private set; }
+        public AutonomyPosition? CameraControl => curved ? cameraControl : (AutonomyPosition?)null;
         public float FieldOfView { get; } = 75;
         public double TravelMetres { get; }
         /// <summary>Approximate screen-width change from parallax, perspective
@@ -216,6 +223,43 @@ namespace ValheimBroadcaster.Core
             DurationSeconds = Math.Max(8, Math.Min(30, Math.Max(TravelMetres / speed, visualSeconds)));
         }
 
+        /// <summary>Immutable retiming preserves the complete authored geometry.
+        /// Capture fixtures may run for up to seven days without changing the path.</summary>
+        public ScenicShotPlan WithDuration(double seconds)
+        {
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 1 || seconds > 604800)
+                throw new ArgumentOutOfRangeException(nameof(seconds));
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.DurationSeconds = seconds; return copy;
+        }
+
+        public ScenicShotPlan WithIdentity(long id)
+        {
+            if (id <= 0) throw new ArgumentOutOfRangeException(nameof(id));
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.Id = id; return copy;
+        }
+
+        /// <summary>A bounded, validated window belonging to one continuous
+        /// environmental journey. The predecessor is checked again at the live
+        /// seam; this flag is not permission to jump to an arbitrary new path.</summary>
+        public ScenicShotPlan AsJourney(long journeyId, long predecessor, double seconds)
+        {
+            if (!IsSpatial || IsPictureOnly || journeyId <= 0 || predecessor <= 0 || predecessor == Id)
+                throw new ArgumentOutOfRangeException(nameof(journeyId));
+            var copy = WithDuration(seconds); copy.JourneyId = journeyId; copy.ContinuationOf = predecessor; copy.ConstantSpeed = true; return copy;
+        }
+
+        public ScenicShotPlan WithConstantSpeed(bool enabled = true)
+        { var copy = (ScenicShotPlan)MemberwiseClone(); copy.ConstantSpeed = enabled; return copy; }
+
+        public ScenicShotPlan AsStandalone()
+        { var copy = (ScenicShotPlan)MemberwiseClone(); copy.JourneyId = copy.ContinuationOf = 0; return copy; }
+
+        public ScenicShotPlan WithJourneyRamps(bool easeIn, bool easeOut)
+        { var copy = (ScenicShotPlan)MemberwiseClone(); copy.JourneyEaseIn = easeIn; copy.JourneyEaseOut = easeOut; return copy; }
+
+        public double MotionFraction(double progress) => ConstantSpeed ?
+            ScenicJourneyMotion.Progress(progress, JourneyEaseIn, JourneyEaseOut) : ScenicMotionProfile.Progress(progress);
+
         public AutonomyPosition CameraWaypoint(int index) => spatialBody != null && index >= 0 && index < spatialBody.Length
             ? spatialBody[index] : throw new ArgumentOutOfRangeException(nameof(index));
         public AutonomyPosition AimWaypoint(int index) => spatialAim != null && index >= 0 && index < spatialAim.Length
@@ -255,7 +299,7 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(startFraction));
             if (double.IsNaN(endFraction) || double.IsInfinity(endFraction) || endFraction <= startFraction || endFraction > 1)
                 throw new ArgumentOutOfRangeException(nameof(endFraction));
-            double from = ScenicMotionProfile.Progress(startFraction), to = ScenicMotionProfile.Progress(endFraction);
+            double from = MotionFraction(startFraction), to = MotionFraction(endFraction);
             if (IsSpatial)
             {
                 var body = new List<AutonomyPosition>(WaypointCount) { Body(from) };
@@ -292,18 +336,22 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(metres));
             if (metres == 0) return this;
             if (IsPictureOnly)
-                return Picture(Id, Feature!, Role, Raised(cameraStart, metres), start, FieldOfView, screenX, screenY);
-            if (IsPan) return Pan(Id, Feature!, Role, Raised(cameraStart, metres), start, end, FieldOfView, screenX, screenY);
+                return RetainPlayback(Picture(Id, Feature!, Role, Raised(cameraStart, metres), start, FieldOfView, screenX, screenY));
+            if (IsPan) return RetainPlayback(Pan(Id, Feature!, Role, Raised(cameraStart, metres), start, end, FieldOfView, screenX, screenY));
             if (IsSpatial)
             {
                 var body = new AutonomyPosition[WaypointCount];
                 for (int i = 0; i < body.Length; i++) body[i] = Raised(spatialBody![i], metres);
-                return Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline);
+                var raised = Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline).WithDuration(DurationSeconds);
+                return (IsJourney ? raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds) : raised.WithConstantSpeed(ConstantSpeed)).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut);
             }
-            return Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
+            return RetainPlayback(Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
                 start, end, FieldOfView, screenX, screenY,
-                curved ? Raised(cameraControl, metres) : (AutonomyPosition?)null, UseNativeSpline);
+                curved ? Raised(cameraControl, metres) : (AutonomyPosition?)null, UseNativeSpline));
         }
+
+        private ScenicShotPlan RetainPlayback(ScenicShotPlan replacement) => replacement.WithDuration(DurationSeconds)
+            .WithConstantSpeed(ConstantSpeed).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut);
 
         /// <summary>Bounded non-looping movement starts/ends at rest. A paused
         /// caller samples the same progress; previews never advance state.
@@ -313,7 +361,7 @@ namespace ValheimBroadcaster.Core
             if (double.IsNaN(progress) || double.IsInfinity(progress) || !Finite(strength) || strength < 0)
                 throw new ArgumentOutOfRangeException(nameof(progress));
             double t = Math.Max(0, Math.Min(1, progress));
-            double ease = ScenicMotionProfile.Progress(t);
+            double ease = MotionFraction(t);
             if (IsDirected)
             {
                 if (IsPictureOnly)

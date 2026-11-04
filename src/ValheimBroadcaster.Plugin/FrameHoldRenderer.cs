@@ -7,6 +7,7 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed class FrameHoldRenderer : MonoBehaviour
 {
     internal FrameHold? Owner;
+    private void OnPreRender() => Owner?.BeforeRender(this);
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
         if (Owner != null) Owner.Render(source, destination);

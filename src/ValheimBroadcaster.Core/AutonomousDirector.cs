@@ -222,7 +222,7 @@ namespace ValheimBroadcaster.Core
             AutonomyPosition currentPosition, string? presentedPlayerId, bool idleShotReady, bool travelBusy = false,
             bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
             bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool? scenicFootageReady = null, double? scenicFootageDelta = null,
-            bool scenicContentExhausted = false, bool relatedPlayerView = false)
+            bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (scenicFootageDelta.HasValue) Time(scenicFootageDelta.Value, nameof(scenicFootageDelta));
@@ -413,12 +413,12 @@ namespace ValheimBroadcaster.Core
             }
             TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady,
                 idleSceneAvailable ?? idleShotReady, idleSearchExpired, scenicFootageReady ?? idleShotReady, scenicFootageDelta.HasValue ? Math.Min(footage, scenicFootageDelta.Value) : footage,
-                scenicContentExhausted);
+                scenicContentExhausted, scenicJourneyActive, scenicPreparationActive);
         }
 
         private void TickScenery(double now, double footage, int connected, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, bool ready, bool available, bool searchExpired, bool scenicPicture, double scenicFootage,
-            bool contentExhausted)
+            bool contentExhausted, bool journeyActive, bool preparationActive)
         {
             // Useful footage advances dwell. A live picture recovering its
             // composition is not evidence that its loaded region is unavailable.
@@ -461,6 +461,13 @@ namespace ValheimBroadcaster.Core
             // live picture stays on air. It is neither missing world data nor
             // an unavailable picture, and never overrides player/hold control.
             bool seekFreshContent = ready && contentExhausted;
+            // A validated finite journey or explicit camera fixture owns its
+            // local editorial time. It cannot suppress player acquisition above
+            // or the missing-picture/scene exhaustion evaluated here.
+            if (preparationActive)
+            { Reason = "Preparing the explicitly requested camera fixture within its bounded acquisition deadline"; return; }
+            if (journeyActive && ready && !exhausted)
+            { Reason = "Following a continuous scenic journey or camera fixture"; return; }
             if (idleDwell < RegionSeconds && !exhausted && !seekFreshContent) return;
             if (now - lastTravelAt < MinimumTravelSeconds) { Reason = "Waiting for the travel cooldown"; return; }
             scenicCandidates.Clear();

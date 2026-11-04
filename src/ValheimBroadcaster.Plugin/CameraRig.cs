@@ -35,6 +35,8 @@ internal sealed class CameraRig
     internal float PrimaryActorOcclusion => proceduralActive && !scenicActive ? ActorCamera.PrimaryActorOcclusion : 0;
     internal float FieldOfView => camera ? camera.fieldOfView : 75f;
     internal Quaternion Rotation => camera ? camera.transform.rotation : Quaternion.identity;
+    internal Camera? OutputCamera => camera;
+    internal CameraRenderPose AcceptedRenderPose { get; private set; }
     internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive && !scenicActive && !creatureActive && !complementaryActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();
     internal RemoteObserverClient? RemoteContext { set => shotCamera.RemoteContext = value; }
     internal CameraSceneFrame? CurrentPlayerScene => proceduralActive && !scenicActive && !creatureActive ? shotCamera.CurrentPlayerScene : null;
@@ -97,6 +99,7 @@ internal sealed class CameraRig
     internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false, Character? creatureTarget = null, ScenicShotPlan? scenicPlan = null, float scenicProgress = 0, ScenicVisibility? scenicVisibility = null)
     {
         presentationNotice = null; LastPictureUsable = StoryContinuityReady = false;
+        AcceptedRenderPose = default;
         obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
         if (!next) next = gameCamera.GetComponentInChildren<Camera>();
@@ -129,6 +132,7 @@ internal sealed class CameraRig
                 return Unready(scenicCamera.LastFailure);
             camera.transform.SetPositionAndRotation(scenicPosition, scenicRotation);
             camera.fieldOfView = scenicFov;
+            AcceptedRenderPose = CameraPoseSampler.Sample(camera, scenicPosition, scenicRotation, scenicFov);
             if (skyCamera) skyCamera.fieldOfView = scenicFov;
             LastPictureUsable = scenicCamera.LastPictureUsable; LastFailure = "none"; hasPose = false;
             return true;
@@ -159,6 +163,7 @@ internal sealed class CameraRig
             }
             camera.transform.SetPositionAndRotation(position, rotation);
             camera.fieldOfView = fov;
+            AcceptedRenderPose = CameraPoseSampler.Sample(camera, position, rotation, fov);
             if (skyCamera) skyCamera.fieldOfView = fov;
             LastPictureUsable = ActorCamera.LastPictureUsable;
             LastFailure = "none";
@@ -204,6 +209,8 @@ internal sealed class CameraRig
             return Unready(continuousPlayer ? "Visible camera geometry unavailable" : "Acquiring visible camera area");
         camera.transform.SetPositionAndRotation(visiblePosition, Quaternion.LookRotation(focus - visiblePosition, Vector3.up));
         camera.fieldOfView = settings.FieldOfView.Value;
+        AcceptedRenderPose = CameraPoseSampler.Sample(camera, visiblePosition,
+            Quaternion.LookRotation(focus - visiblePosition, Vector3.up), settings.FieldOfView.Value);
         if (skyCamera) skyCamera.fieldOfView = settings.FieldOfView.Value;
         LastPictureUsable = true; LastFailure = "none";
         return true;

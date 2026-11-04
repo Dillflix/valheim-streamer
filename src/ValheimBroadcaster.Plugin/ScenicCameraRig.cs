@@ -72,16 +72,22 @@ internal sealed class ScenicCameraRig : IDisposable
         // the proposed pose, retaining the same fixed focal length and geometry.
         aspect = cameraAspect; nearClip = cameraNearClip;
         ScenicPose wanted = solver.Solve(path, shot, progress, aspect, nearClip);
-        bool safe = ScenicPoseValidation.Check(wanted, shot, visibility, aspect, nearClip,
-            continuous && !changed, moveCarrier, out float score, out ScenicRejectionKind failure, out string reason);
-        if (safe && hasPose && !changed)
+        bool joined = changed && shot.ContinuationOf > 0 && hasPose && plan?.Id == shot.ContinuationOf &&
+            accepted.Progress >= .999999f && Vector3.Distance(accepted.Position, wanted.Position) <= .01f &&
+            Vector3.Distance(accepted.Focus, wanted.Focus) <= .01f && Quaternion.Angle(accepted.Rotation, wanted.Rotation) <= .1f &&
+            Mathf.Abs(accepted.FieldOfView - wanted.FieldOfView) <= .001f;
+        float score = 0; ScenicRejectionKind failure = ScenicRejectionKind.InvalidPlan;
+        string reason = "A journey continuation must join the exact accepted end pose";
+        bool safe = (!changed || shot.ContinuationOf == 0 || joined) && ScenicPoseValidation.Check(wanted, shot, visibility, aspect, nearClip,
+            joined || continuous && !changed, moveCarrier, out score, out failure, out reason);
+        if (safe && hasPose && (!changed || joined))
         {
             // A director proposal is normally one bounded frame of travel. A
             // large discontinuity must be prepared as a new cut, not accelerated
             // through an unexamined slice of the path in one rendered frame.
             if (Vector3.Distance(accepted.Position, wanted.Position) > 1.5f ||
                 shot.IsSpatial && progress >= accepted.Progress && path.SpatialTravelBetween(accepted.Progress, progress) > .75f ||
-                Quaternion.Angle(accepted.Rotation, wanted.Rotation) > 6f || progress < accepted.Progress - .0001f)
+                Quaternion.Angle(accepted.Rotation, wanted.Rotation) > 6f || !joined && progress < accepted.Progress - .0001f)
             { safe = false; failure = ScenicRejectionKind.SamplingBudget; reason = "Scenic proposal exceeds one continuous movement step"; }
             else safe = ScenicPoseValidation.Corridor(accepted, wanted, visibility, aspect, nearClip, out failure, out reason);
         }
