@@ -35,6 +35,9 @@ internal sealed class FrameHold
     private long appliedGeneration, appliedShot, appliedRevision, appliedScene;
     private int appliedCandidate = -1;
     private readonly CameraRenderAuditEvents auditEvents = new CameraRenderAuditEvents();
+    private readonly JourneyPresentationPolicy journeyPresentation = new JourneyPresentationPolicy();
+    private JourneyPresentationSample journeyCapture;
+    private double appliedScenicProgress = double.NaN;
     internal CameraRenderAudit LastRenderAudit { get; private set; }
     internal long Generation => program.Generation;
     // Read-only presentation state for commands/status outside IMGUI. Metadata
@@ -44,6 +47,16 @@ internal sealed class FrameHold
     internal DiagnosticPictureContext OperatorPicture => sourceContext;
     internal string OperatorSubject => sourceSubject;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
+    internal bool TryTakeScenicCapture(long shot, long revision, long scene, int expectedFrame, out JourneyPresentationSample sample)
+    {
+        sample = default;
+        if (!active() || hardFailure() || !camera || !renderer || !renderer.isActiveAndEnabled ||
+            !frame || !frame.IsCreated() || captureFailed || sourceContext.Mode != "Scenic" || !sourceContext.Usable)
+            return false;
+        return journeyPresentation.TryTake(journeyCapture, renderedPresentation, renderedFrame, sourceFrame,
+            Time.frameCount, Time.unscaledTimeAsDouble, program.Generation, shot, revision, scene,
+            camera.GetInstanceID(), expectedFrame, out sample);
+    }
     internal string LastFailure { get; set; } = "none";
     internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; clean program epoch {program.Generation}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}. " + PoseAuditDiagnostics;
     internal string PoseAuditDiagnostics => $"Pose audit: {LastRenderAudit.Status}; {auditEvents.Observed} live captures, {auditEvents.Changed} changed, {auditEvents.Incomplete} unmatched; " +
@@ -53,13 +66,15 @@ internal sealed class FrameHold
 
     // Called after a successful final camera solve and before Unity renders.
     // Numeric shot identity is captured now, never inferred by a GPU callback.
-    internal void RecordApplied(Camera output, CameraRenderPose accepted, long shot, long revision, long scene, int candidate)
+    internal void RecordApplied(Camera output, CameraRenderPose accepted, long shot, long revision, long scene, int candidate,
+        double scenicProgress = double.NaN)
     {
         SynchronizeBoundary();
         if (!output || output != camera || !active() || hardFailure()) return;
         acceptedPose = accepted; appliedPose = CameraPoseSampler.Sample(output);
         appliedFrame = Time.frameCount; appliedCamera = output.GetInstanceID(); appliedGeneration = program.Generation;
         appliedShot = shot; appliedRevision = revision; appliedScene = scene; appliedCandidate = candidate;
+        appliedScenicProgress = scenicProgress;
     }
 
     internal void BeforeRender(FrameHoldRenderer source)
@@ -79,6 +94,8 @@ internal sealed class FrameHold
             appliedScene == context.PictureScene && appliedCandidate == context.Candidate,
             appliedGeneration, appliedCamera);
         LastRenderAudit = audit;
+        journeyCapture = context.Mode == "Scenic" && context.Usable
+            ? new JourneyPresentationSample(audit, Time.unscaledTimeAsDouble, appliedScenicProgress) : default;
         float now = Time.unscaledTime;
         auditEvents.Observe(audit, now);
         FlushPoseAudit(now);
@@ -341,5 +358,6 @@ internal sealed class FrameHold
         appliedFrame = preRenderFrame = -1; appliedCamera = 0; appliedGeneration = -1;
         appliedShot = appliedRevision = appliedScene = 0; appliedCandidate = -1;
         LastRenderAudit = default;
+        journeyCapture = default; appliedScenicProgress = double.NaN; journeyPresentation.Reset();
     }
 }

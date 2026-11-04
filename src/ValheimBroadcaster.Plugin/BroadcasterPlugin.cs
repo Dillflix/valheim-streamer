@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.41";
+    public const string PluginVersion = "0.8.42";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -277,7 +277,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 idle.ReportPresentation(presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                     recentPicture && frameHold.HasRecentLiveFrame,
                     recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
-                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus, CapturedScenicPosition());
+                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus, CapturedScenicSample());
             if (!probe.Active && !director.IsHolding && coverage.Mode == CoverageMode.Scenic &&
                 presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                 recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable &&
@@ -321,6 +321,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 coverage.Tick(0, priorTarget.Identity.Id, roster.ConnectedOthers, true, ReadyCreatureShots(),
                     false, false, true);
             }
+            automatic?.SynchronizeScenicJourney(idle);
             automatic?.Tick(Time.unscaledDeltaTime, roster, recentPicture ? presentedPlayerId : null,
                 (usableIdlePicture || idle.HasUsableScenicPicture) && !coverage.IsWildlifeCutaway, coverage.IsWildlifeCutaway && cutawayAllowed,
                 localActivities, usablePlayerPicture, idleSceneAvailable, idle.RecoveryExpired,
@@ -526,12 +527,11 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         idle.Search(settings, moveCarrier: true, held: false, allowActivate: false);
         scenicArrivalStatus = "Preparing destination off air: " + idle.ScenicSearchStatus;
     }
-    private Vector3? CapturedScenicPosition()
+    private JourneyPresentationSample? CapturedScenicSample()
     {
-        CameraRenderAudit audit = frameHold.LastRenderAudit;
-        if (frameHold.CurrentPresentation != FramePresentation.Live || audit.Shot != presentedScenicPlan ||
-            audit.Revision != presentedRevision || audit.CaptureFrame != presentedFrame || !audit.Captured.Valid) return null;
-        return new Vector3((float)audit.Captured.X, (float)audit.Captured.Y, (float)audit.Captured.Z);
+        long scene = rig.PictureContext?.Key.SceneEpoch ?? 0;
+        return frameHold.TryTakeScenicCapture(presentedScenicPlan, presentedRevision, scene, presentedFrame,
+            out JourneyPresentationSample sample) ? sample : (JourneyPresentationSample?)null;
     }
 
     private void RecordVisibleCoverage(bool recentPicture)
@@ -900,7 +900,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 RenderedPictureContext? picture = plugin.rig.PictureContext;
                 plugin.frameHold.RecordApplied(plugin.rig.OutputCamera!, plugin.rig.AcceptedRenderPose,
                     plugin.presentedMode == CoverageMode.Scenic ? plugin.presentedScenicPlan : plugin.rig.PresentedActorShotId,
-                    plugin.presentedRevision, picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1);
+                    plugin.presentedRevision, picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1,
+                    plugin.presentedMode == CoverageMode.Scenic ? plugin.presentedScenicProgress : double.NaN);
             }
             plugin.rig.HideHud(plugin.settings.HideHud.Value);
         }

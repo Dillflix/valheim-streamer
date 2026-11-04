@@ -267,6 +267,16 @@ namespace ValheimBroadcaster.Core
             var copy = WithDuration(seconds); copy.JourneyId = journeyId; copy.ContinuationOf = predecessor; copy.ConstantSpeed = true; return copy;
         }
 
+        /// <summary>A separately composed and fully validated departure cut.
+        /// It belongs to the journey without claiming continuity with the
+        /// preceding ordinary shot's position, gaze or motion tangent.</summary>
+        public ScenicShotPlan AsJourneyDeparture(long journeyId, double seconds)
+        {
+            if (!IsSpatial || IsPictureOnly || journeyId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(journeyId));
+            var copy = WithDuration(seconds); copy.JourneyId = journeyId; copy.ContinuationOf = 0; copy.ConstantSpeed = true; return copy;
+        }
+
         public ScenicShotPlan WithConstantSpeed(bool enabled = true)
         { var copy = (ScenicShotPlan)MemberwiseClone(); copy.ConstantSpeed = enabled; return copy; }
 
@@ -377,7 +387,8 @@ namespace ValheimBroadcaster.Core
                 var body = new AutonomyPosition[WaypointCount];
                 for (int i = 0; i < body.Length; i++) body[i] = Raised(spatialBody![i], metres);
                 var raised = Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline);
-                return IsJourney ? RetainEndEvidence(raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds)
+                return IsJourney ? RetainEndEvidence((ContinuationOf == 0 ? raised.AsJourneyDeparture(JourneyId, DurationSeconds) :
+                    raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds))
                     .WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1) : RetainPlayback(raised);
             }
             return RetainPlayback(Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
