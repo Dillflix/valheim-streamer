@@ -45,6 +45,8 @@ namespace ValheimBroadcaster.Core
         public ScenicFeatureKind FeatureKind { get; }
         public ScenicShotRole Role { get; }
         public double DurationSeconds { get; private set; } = 45;
+        public bool HasExplicitDuration { get; private set; }
+        public ScenicPacingProfile? PacingProfile { get; private set; }
         public long JourneyId { get; private set; }
         public long ContinuationOf { get; private set; }
         public bool IsJourney => JourneyId > 0;
@@ -115,12 +117,7 @@ namespace ValheimBroadcaster.Core
             if ((!pan && travel < 1) || travel > 80 || pan && travel > .001) throw new ArgumentOutOfRangeException(nameof(bodyEnd), "Directed routes require bounded, meaningful movement.");
             TravelMetres = travel;
             VisualChange = EstimateVisualChange();
-            // The route and its perceptual development determine duration. Long
-            // routes retain a speed bound rather than being accelerated to fit
-            // the ordinary 8–20 second scenic editing range.
-            double speed = role == ScenicShotRole.Detail ? .7 : role == ScenicShotRole.Establish ? 1.35 : 1.1;
-            double visualSeconds = VisualChange / (role == ScenicShotRole.Detail ? .035 : .045);
-            DurationSeconds = Math.Max(8, Math.Max(travel / 2.0, Math.Min(20, Math.Max(travel / speed, visualSeconds))));
+            DurationSeconds = ScenicPacingPolicy.ProposedSeconds(feature, role, travel, VisualChange);
             if (pan)
             {
                 double ax = start.X - cameraStart.X, ay = start.Y - cameraStart.Y, az = start.Z - cameraStart.Z;
@@ -223,9 +220,7 @@ namespace ValheimBroadcaster.Core
                     throw new ArgumentOutOfRangeException(nameof(aims), "Spatial routes need a finite, separated environmental aim.");
             }
             VisualChange = EstimateVisualChange();
-            double speed = role == ScenicShotRole.Detail ? .7 : role == ScenicShotRole.Establish ? 1.35 : 1.1;
-            double visualSeconds = VisualChange / (role == ScenicShotRole.Detail ? .035 : .045);
-            DurationSeconds = Math.Max(8, Math.Min(30, Math.Max(TravelMetres / speed, visualSeconds)));
+            DurationSeconds = ScenicPacingPolicy.ProposedSeconds(feature, role, TravelMetres, VisualChange);
         }
 
         /// <summary>Immutable retiming preserves the complete authored geometry.
@@ -234,7 +229,20 @@ namespace ValheimBroadcaster.Core
         {
             if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 1 || seconds > 604800)
                 throw new ArgumentOutOfRangeException(nameof(seconds));
-            var copy = (ScenicShotPlan)MemberwiseClone(); copy.DurationSeconds = seconds; return copy;
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.DurationSeconds = seconds; copy.HasExplicitDuration = true; return copy;
+        }
+
+        /// <summary>Attach measured pre-admission timing without changing a
+        /// camera point, aim or lens. An authored duration always remains the
+        /// owner's choice; a restored fixture retains its recorded profile.</summary>
+        public ScenicShotPlan WithPacingProfile(ScenicPacingProfile profile)
+        {
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+            if (!IsDirected || IsPictureOnly || IsPan || IsJourney)
+                throw new InvalidOperationException("Only ordinary moving scenery accepts measured pacing.");
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.PacingProfile = profile;
+            if (!HasExplicitDuration) copy.DurationSeconds = profile.DurationSeconds;
+            return copy;
         }
 
         public ScenicShotPlan WithIdentity(long id)
@@ -268,8 +276,23 @@ namespace ValheimBroadcaster.Core
         public ScenicShotPlan WithJourneyRamps(bool easeIn, bool easeOut)
         { var copy = (ScenicShotPlan)MemberwiseClone(); copy.JourneyEaseIn = easeIn; copy.JourneyEaseOut = easeOut; return copy; }
 
-        public double MotionFraction(double progress) => ConstantSpeed ?
-            ScenicJourneyMotion.Progress(progress, JourneyEaseIn, JourneyEaseOut) : ScenicMotionProfile.Progress(progress);
+        public double MotionFraction(double progress)
+        {
+            if (ConstantSpeed) return ScenicJourneyMotion.Progress(progress, JourneyEaseIn, JourneyEaseOut);
+            double fraction = ScenicMotionProfile.Progress(progress);
+            return PacingProfile?.DistanceAt(fraction) ?? fraction;
+        }
+
+        /// <summary>Geometry-only distance/parameter sample. Native trajectory
+        /// construction and timing measurement must not reshape a path by
+        /// accidentally applying its presentation speed profile to knot input.</summary>
+        public ScenicShotSample RouteSampleAt(double fraction)
+        {
+            if (!IsDirected || double.IsNaN(fraction) || double.IsInfinity(fraction))
+                throw new ArgumentOutOfRangeException(nameof(fraction));
+            double u = Math.Max(0, Math.Min(1, fraction));
+            return new ScenicShotSample(Body(u), Aim(u), screenX, screenY, "Measured route geometry");
+        }
 
         public AutonomyPosition CameraWaypoint(int index) => spatialBody != null && index >= 0 && index < spatialBody.Length
             ? spatialBody[index] : throw new ArgumentOutOfRangeException(nameof(index));
@@ -353,16 +376,27 @@ namespace ValheimBroadcaster.Core
             {
                 var body = new AutonomyPosition[WaypointCount];
                 for (int i = 0; i < body.Length; i++) body[i] = Raised(spatialBody![i], metres);
-                var raised = Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline).WithDuration(DurationSeconds);
-                return RetainEndEvidence((IsJourney ? raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds) : raised.WithConstantSpeed(ConstantSpeed)).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1);
+                var raised = Spatial(Id, Feature!, Role, body, spatialAim!, FieldOfView, screenX, screenY, UseNativeSpline);
+                return IsJourney ? RetainEndEvidence(raised.AsJourney(JourneyId, ContinuationOf, DurationSeconds)
+                    .WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1) : RetainPlayback(raised);
             }
             return RetainPlayback(Directed(Id, Feature!, Role, Raised(cameraStart, metres), Raised(cameraEnd, metres),
                 start, end, FieldOfView, screenX, screenY,
                 curved ? Raised(cameraControl, metres) : (AutonomyPosition?)null, UseNativeSpline));
         }
 
-        private ScenicShotPlan RetainPlayback(ScenicShotPlan replacement) => RetainEndEvidence(replacement.WithDuration(DurationSeconds)
-            .WithConstantSpeed(ConstantSpeed).WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1);
+        private ScenicShotPlan RetainPlayback(ScenicShotPlan replacement)
+        {
+            // A newly fitted automatic route must measure its new view angles.
+            // Explicit fixtures keep both the authored duration and speed map.
+            if (HasExplicitDuration)
+            {
+                replacement = replacement.WithDuration(DurationSeconds);
+                if (PacingProfile != null) replacement = replacement.WithPacingProfile(PacingProfile);
+            }
+            return RetainEndEvidence(replacement.WithConstantSpeed(ConstantSpeed)
+                .WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1);
+        }
 
         private ScenicShotPlan RetainEndEvidence(ScenicShotPlan replacement, double endFraction) =>
             HasRejectedContinuation && endFraction >= 1 - .000001 ? replacement.WithRejectedContinuation(ContinuationRejection) : replacement;

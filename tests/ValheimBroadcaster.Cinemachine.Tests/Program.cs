@@ -26,6 +26,7 @@ internal static class Program
         foreach (var test in JourneyTerrainProfileTests.Cases()) yield return test;
         foreach (var test in NativeJourneyDistanceTests.Cases()) yield return test;
         foreach (var test in NativeJourneySamplingTests.Cases()) yield return test;
+        foreach (var test in NativeScenicPacingTests.Cases()) yield return test;
         foreach (ScenicShotStyle style in Enum.GetValues(typeof(ScenicShotStyle)))
         {
             ScenicShotStyle captured = style;
@@ -178,6 +179,7 @@ internal static class Program
         var plan = Directed(role);
         using var path = new ScenicSplinePath();
         Check(path.Prepare(plan, 1) && path.Ready, "Directed native path was not prepared.");
+        plan = path.PreparedPlan!;
         Near(path.Sample(0).CameraPosition, plan.Sample(0).CameraPosition);
         Near(path.Sample(1).CameraPosition, plan.Sample(1).CameraPosition);
         for (int i = 0; i <= 100; i++)
@@ -217,7 +219,8 @@ internal static class Program
     }
     private static void DirectedEarlyMovement()
     {
-        var plan = Directed(); using var path = new ScenicSplinePath(); path.Prepare(plan, 1);
+        var plan = Directed(); plan = plan.WithDuration(plan.DurationSeconds);
+        using var path = new ScenicSplinePath(); path.Prepare(plan, 1);
         float early = (float)Math.Min(1, 2 / plan.DurationSeconds);
         Check(path.Distance(early) > path.Length * .04f, "Directed shot spends its opening effectively still.");
         float cruise = path.Distance(.35f) - path.Distance(.25f);
@@ -229,6 +232,7 @@ internal static class Program
         var plan = Directed(ScenicShotRole.Reveal, false);
         using var path = new ScenicSplinePath();
         Check(path.Prepare(plan, 1), "Authored scenic route could not be prepared.");
+        plan = path.PreparedPlan!;
         foreach (float progress in new[] { 0f, .015f, .08f, .17f, .35f, .52f, .73f, .92f, .99f, 1f })
         {
             ScenicShotSample authored = plan.Sample(progress), output = path.Sample(progress);
@@ -249,14 +253,17 @@ internal static class Program
         Near(path.Sample(0).CameraPosition, original.Sample(0).CameraPosition, 0);
         Near(path.Sample(1).CameraPosition, original.Sample(.63).CameraPosition, .0001);
         Near(path.Sample(1).AimPosition, original.Sample(.63).AimPosition, .0001);
-        Near(path.Sample(.37f).CameraPosition, prefix.Sample(.37f).CameraPosition, 0);
+        Near(path.Sample(.37f).CameraPosition, path.PreparedPlan!.Sample(.37f).CameraPosition, 0);
     }
 
     private static void RaisedNativeRoutes()
     {
         foreach (ScenicShotRole role in Enum.GetValues(typeof(ScenicShotRole)))
         {
-            ScenicShotPlan source = Directed(role), fitted = source.RaiseCamera(23);
+            ScenicShotPlan source = Directed(role);
+            // This case tests rigid geometry under the same authored clock.
+            source = source.WithDuration(source.DurationSeconds);
+            ScenicShotPlan fitted = source.RaiseCamera(23);
             using var original = new ScenicSplinePath();
             using var raised = new ScenicSplinePath();
             Check(original.Prepare(source, 1) && raised.Prepare(fitted, 1), "Raised native route did not prepare.");
@@ -295,7 +302,7 @@ internal static class Program
             float progress = i / 100f;
             float normalized = path.Spline!.ConvertIndexUnit(path.Distance(progress), PathIndexUnit.Distance, PathIndexUnit.Normalized);
             Vector3 native = path.Spline.EvaluatePosition(normalized);
-            ScenicShotSample actual = path.Sample(progress), authored = slice.Sample(progress);
+            ScenicShotSample actual = path.Sample(progress), authored = path.PreparedPlan!.Sample(progress);
             Near(actual.CameraPosition, P(native.x, native.y, native.z));
             Near(actual.AimPosition, authored.AimPosition, .0001);
             Check(actual.ScreenX == authored.ScreenX && actual.ScreenY == authored.ScreenY,
@@ -315,8 +322,8 @@ internal static class Program
         for (int i = 0; i <= 100; i++)
         {
             float p = i / 100f;
-            Near(path.Sample(p).CameraPosition, slice.Sample(p).CameraPosition, 0);
-            Near(path.Sample(p).AimPosition, slice.Sample(p).AimPosition, 0);
+            Near(path.Sample(p).CameraPosition, path.PreparedPlan!.Sample(p).CameraPosition, 0);
+            Near(path.Sample(p).AimPosition, path.PreparedPlan!.Sample(p).AimPosition, 0);
         }
     }
 
@@ -334,8 +341,8 @@ internal static class Program
         Near(section.Sample(1).CameraPosition, last.CameraPosition, .0001);
         Near(section.Sample(0).AimPosition, first.AimPosition, 0);
         Near(section.Sample(1).AimPosition, last.AimPosition, .0001);
-        Vector3 middle = original.Spline!.EvaluatePosition((float)((ScenicMotionProfile.Progress(firstProgress) +
-            ScenicMotionProfile.Progress(lastProgress)) * .5));
+        Vector3 middle = original.Spline!.EvaluatePosition((float)((original.PreparedPlan!.MotionFraction(firstProgress) +
+            original.PreparedPlan.MotionFraction(lastProgress)) * .5));
         Near(section.Sample(.5).CameraPosition, P(middle.x, middle.y, middle.z), .0001);
         Check(section.Id == source.Id && section.Role == source.Role && section.Feature == source.Feature &&
             section.FieldOfView == source.FieldOfView && section.UseNativeSpline == source.UseNativeSpline &&
@@ -361,7 +368,7 @@ internal static class Program
         var source = Directed(ScenicShotRole.Reveal, false);
         path.Prepare(source, 1);
         var proposal = path.ProposeMeasuredSlice(.2f, .8f);
-        var exact = source.Slice(.2f, .8f);
+        var exact = path.PreparedPlan!.Slice(.2f, .8f);
         Check(!proposal.UseNativeSpline, "An authored section silently enabled native Dolly.");
         for (int i = 0; i <= 100; i++)
         {

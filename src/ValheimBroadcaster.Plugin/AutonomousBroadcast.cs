@@ -14,7 +14,7 @@ internal sealed class AutonomousBroadcast
     private readonly ObserverController observer;
     private readonly PlayerShotReadiness playerShots;
     private readonly Func<TargetRoster.Target, Vector3, double> requiredPlayerCameraMovement;
-    private readonly Action resetShot;
+    private readonly Action<AutonomyTravelRequest?> resetShot;
     private readonly Action<string> log;
     private readonly AutonomousDirector policy = new AutonomousDirector();
     private readonly List<AutonomyPlayer> players = new List<AutonomyPlayer>(64);
@@ -47,6 +47,8 @@ internal sealed class AutonomousBroadcast
     internal string? TargetId => ControlsSelection ? policy.TargetId : null;
     internal bool Holding => policy.Held;
     internal bool RouteActive => policy.RouteTestActive;
+    internal AutonomyTravelRequest? ActiveTravel => policy.ActiveTravel;
+    internal WorldInterestSite? ActiveTravelInterest => policy.ActiveTravel?.Token == interestTravelToken ? interestTravelSite : null;
     internal bool WildlifeCutawayActive => policy.WildlifeCutawayActive;
     internal bool CanStartWildlifeCutaway => ControlsSelection && observer.Active &&
         observer.Phase == ObserverPhase.Watching && !recovering && policy.CanStartWildlifeCutaway;
@@ -61,11 +63,12 @@ internal sealed class AutonomousBroadcast
         "; known " + regions.Count + "; recent " + policy.VisitedRegionCount + "; completed travel " + policy.CompletedTravels + "; failed " + policy.FailedTravels +
         "\nLast travel failure: " + (policy.LastFailure ?? "none") + "; protected returns " + recoveries + "/3" +
         "\nDestination variety: " + policy.ScenicSelectionReason +
+        "; finishing scenic shot " + policy.ScenicDepartureWaiting +
         "\nDestination feedback: " + destinationFeedback + "; visit footage " + destinationVisit.FootageSeconds.ToString("F1") + "s" +
         "\nSolo route: " + policy.RouteTestResult + "; marked " + route.Count;
 
     internal AutonomousBroadcast(BroadcastSettings settings, RemoteObserverClient remote, ObserverController observer, PlayerShotReadiness playerShots,
-        Func<TargetRoster.Target, Vector3, double> requiredPlayerCameraMovement, Action resetShot, Action<string> log)
+        Func<TargetRoster.Target, Vector3, double> requiredPlayerCameraMovement, Action<AutonomyTravelRequest?> resetShot, Action<string> log)
     {
         this.settings = settings; this.remote = remote; this.observer = observer; this.playerShots = playerShots;
         this.requiredPlayerCameraMovement = requiredPlayerCameraMovement; this.resetShot = resetShot; this.log = log;
@@ -111,7 +114,8 @@ internal sealed class AutonomousBroadcast
 
     internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true,
         bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool scenicPicture = false, bool creaturePicture = false, bool destinationSubjectShown = false, bool destinationSubjectUnavailable = false, bool destinationSubjectSatisfied = false,
-        bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false)
+        bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false,
+        bool scenicEditBoundary = true)
     {
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
@@ -151,14 +155,15 @@ internal sealed class AutonomousBroadcast
         {
             if (observer.Phase == ObserverPhase.Watching)
             {
+                AutonomyTravelRequest completed = policy.ActiveTravel;
                 if (interestTravelId != null && interestTravelToken == policy.ActiveTravel.Token)
                 {
                     currentInterest = interestTravelSite;
                     destinationVisit.Begin(interestTravelId, currentInterest != null && (currentInterest.Kind != WorldInterestKind.Natural || currentInterest.Landscape == ScenicLandscape.Coast));
                     interestTravelId = null; interestTravelSite = null; justArrived = true;
                 }
-                policy.TravelCompleted(policy.ActiveTravel.Token, true, now);
-                resetShot();
+                policy.TravelCompleted(completed.Token, true, now);
+                resetShot(completed);
             }
             else if (observer.Phase == ObserverPhase.Suspended)
             {
@@ -170,7 +175,7 @@ internal sealed class AutonomousBroadcast
         }
         if (recovering && observer.Phase == ObserverPhase.Parked)
         {
-            observer.Resume(); recovering = false; resetShot();
+            observer.Resume(); recovering = false; resetShot(null);
             log("Automatic recovery returned to the starting region; resuming coverage with failed destinations on cooldown.");
         }
         if (observer.Phase == ObserverPhase.Suspended)
@@ -246,7 +251,8 @@ internal sealed class AutonomousBroadcast
             presentedId, idleReady, observer.Phase == ObserverPhase.Travelling,
             wildlifeCutaway && observer.Phase == ObserverPhase.Watching, activity, usablePlayerFootage, idleSceneAvailable, idleSearchExpired,
             scenicFootageReady: scenicPicture && (ScenicInterest == null || destinationSubjectShown), scenicFootageDelta: Math.Min(dt, .25),
-            scenicContentExhausted: scenicContentExhausted, relatedPlayerView: relatedPlayerView, scenicJourneyActive: scenicJourneyActive, scenicPreparationActive: scenicPreparationActive);
+            scenicContentExhausted: scenicContentExhausted, relatedPlayerView: relatedPlayerView, scenicJourneyActive: scenicJourneyActive, scenicPreparationActive: scenicPreparationActive,
+            scenicEditBoundary: scenicEditBoundary);
         if (destinationVisit.Id != null && !justArrived)
         {
             // A player/creature takeover or operator interruption is not a failed destination.

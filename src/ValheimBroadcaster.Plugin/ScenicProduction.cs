@@ -133,6 +133,9 @@ internal sealed class ScenicProduction
     internal Vector3 RegionOrigin => origin;
     internal ScenicShotPlan? Plan => usingIndependentPicture ? pictures.Current : director.Current;
     internal bool ContentExhausted => pictures.ContentExhausted;
+    internal bool RelocationBoundary => usingIndependentPicture
+        ? pictures.CanYield(Time.unscaledTime)
+        : director.Current == null || director.Progress >= .999999 || director.BlocksMovement;
     private double ShownSeconds => usingIndependentPicture ? pictures.ShownSeconds : director.ElapsedSeconds;
     internal bool Searching => HasRegion && (!survey.Complete || searching);
     internal bool NeedsReplacement => forceReplacement || director.Current == null || director.NeedsReplacement;
@@ -187,7 +190,7 @@ internal sealed class ScenicProduction
         // current picture can remain on air while its purposeful replacement is prepared.
         director.TakePrepared(); testing = best = null; searching = planning = false;
         evaluator.Reset(); spatial.Reset(); subjectRetry.Clear(); retryAt = 0;
-        if (Plan != null && destinationSubject.Prioritize) director.RequestReplacement("Preparing coverage of the selected destination");
+        if (Plan != null && destinationSubject.Prioritize) director.RequestEdit("Preparing coverage of the selected destination");
     }
     internal void Clear()
     {
@@ -210,7 +213,7 @@ internal sealed class ScenicProduction
     internal void RequestShot()
     {
         forceReplacement = true; retryAt = 0;
-        if (Plan != null) director.RequestReplacement("Entering fresh scenic coverage");
+        if (Plan != null) director.RequestEdit("Entering fresh scenic coverage");
     }
     internal void ResumeShot()
     {
@@ -272,7 +275,7 @@ internal sealed class ScenicProduction
         if (planId != Plan.Id) { live = readable = blocked = false; progress = (float)director.Progress; }
         if (live && validFocus)
         { lastAdmittedFocus = actualFocus!.Value; readiness.Presented(Plan.Id, lastAdmittedFocus); }
-        bool requested = director.NeedsReplacement;
+        bool movementBlocked = director.BlocksMovement;
         ScenicShotPlan? route = director.Current;
         if (route != null)
             director.Observe(route.Id, Time.unscaledTime, planId == route.Id ? Mathf.Clamp01(progress) : (float)director.Progress,
@@ -282,7 +285,7 @@ internal sealed class ScenicProduction
                 new AutonomyPosition(actualCamera.Value.x, actualCamera.Value.y, actualCamera.Value.z) : (AutonomyPosition?)null);
         if (live && readable && !NeedsReplacement) RecoveryExhausted = false;
         if (blocked || !readable) { lastRejection = reason; Reason = reason; }
-        if (!requested && director.NeedsReplacement)
+        if (!movementBlocked && director.BlocksMovement)
         {
             retryAt = 0;
             // A graph route can pass preflight repeatedly yet never supply
@@ -291,7 +294,7 @@ internal sealed class ScenicProduction
             if (route != null && (planId != route.Id || !live || !readable || blocked)) pictures.RouteUnavailable();
         }
         TraceReplacement();
-        return !requested && director.NeedsReplacement;
+        return !movementBlocked && director.BlocksMovement;
     }
 
     private long pixelReplannedId;
@@ -300,7 +303,7 @@ internal sealed class ScenicProduction
         if (!reconsider || planId <= 0 || planId == pixelReplannedId ||
             Plan?.Id != planId) return false;
         pixelReplannedId = planId;
-        director.RequestReplacement("Measured picture concern; prepare a different local composition: " + reason);
+        director.RequestEdit("Measured picture concern; prepare a different local composition: " + reason);
         retryAt = 0;
         // Darkness, fog and poor contrast never invalidate the scene lease,
         // erase the readable current view, or request autonomous relocation.
@@ -830,7 +833,10 @@ internal sealed class ScenicProduction
     }
     private bool TryIndependentPictureBudgeted(bool moveCarrier)
     {
-        bool protectCurrent = HasUsablePicture && (pictures.Current != null || !NeedsReplacement);
+        // A requested editorial improvement must not discard a valid moving
+        // shot for the first static graph node encountered during preparation.
+        // Actual blocked/completed routes retain independent-picture fallback.
+        bool protectCurrent = HasUsablePicture && (pictures.Current != null || !director.BlocksMovement);
         if (!pictures.WantsCandidate(protectCurrent)) return false;
         ScenicShotPlan? candidate = spatial.TakePictureCandidate(++nextId, out long epoch, out float observedAt);
         if (candidate == null || epoch != CameraSpatialScene.Shared.Epoch || Time.unscaledTime - observedAt > .5f) return false;

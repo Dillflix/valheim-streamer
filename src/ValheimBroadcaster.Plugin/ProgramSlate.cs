@@ -9,6 +9,12 @@ internal sealed class ProgramSlate : IDisposable
 {
     private Texture2D? texture;
     internal Texture Texture => texture ? texture : Create();
+    internal bool ScenicTransition { get; private set; }
+    internal void SetScenicTransition(bool value)
+    {
+        if (ScenicTransition == value) return;
+        ScenicTransition = value; Dispose();
+    }
 
     private Texture2D Create()
     {
@@ -27,7 +33,7 @@ internal sealed class ProgramSlate : IDisposable
         Line(pixels, width, 250, 194, 140, 2, gold);
         Text(pixels, width, height, "VALHEIM", 218, 4, white);
         Text(pixels, width, height, "BROADCAST", 163, 2, gold);
-        Text(pixels, width, height, "RETURNING TO THE WORLD", 111, 2, muted);
+        Text(pixels, width, height, ScenicTransition ? "EXPLORING THE WORLD" : "RETURNING TO THE WORLD", 111, 2, muted);
         texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
         { name = "Broadcaster clean recovery card", filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
         texture.SetPixels32(pixels);
@@ -74,12 +80,14 @@ internal sealed class ProgramSlate : IDisposable
         'M' => "10001" + "11011" + "10101" + "10101" + "10001" + "10001" + "10001",
         'N' => "10001" + "11001" + "10101" + "10011" + "10001" + "10001" + "10001",
         'O' => "01110" + "10001" + "10001" + "10001" + "10001" + "10001" + "01110",
+        'P' => "11110" + "10001" + "10001" + "11110" + "10000" + "10000" + "10000",
         'R' => "11110" + "10001" + "10001" + "11110" + "10100" + "10010" + "10001",
         'S' => "01111" + "10000" + "10000" + "01110" + "00001" + "00001" + "11110",
         'T' => "11111" + "00100" + "00100" + "00100" + "00100" + "00100" + "00100",
         'U' => "10001" + "10001" + "10001" + "10001" + "10001" + "10001" + "01110",
         'V' => "10001" + "10001" + "10001" + "10001" + "10001" + "01010" + "00100",
         'W' => "10001" + "10001" + "10001" + "10101" + "10101" + "10101" + "01010",
+        'X' => "10001" + "10001" + "01010" + "00100" + "01010" + "10001" + "10001",
         _ => "00000" + "00000" + "00000" + "00000" + "00000" + "00000" + "00000"
     };
 

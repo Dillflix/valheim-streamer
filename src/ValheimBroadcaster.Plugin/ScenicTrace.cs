@@ -48,6 +48,8 @@ internal static class ScenicTrace
             .Field("parent", plan.Feature?.ParentId).Field("scope", plan.Feature?.ScopeLabel)
             .Field("featureKind", plan.FeatureKind.ToString()).Field("role", plan.Role.ToString())
             .Field("duration", plan.DurationSeconds).Field("travel", plan.TravelMetres)
+            .Field("explicitDuration", plan.HasExplicitDuration).Field("paced", plan.PacingProfile != null)
+            .Field("pacingPoints", plan.PacingProfile?.Count ?? 0)
             .Field("fov", plan.FieldOfView).Field("spatial", plan.IsSpatial).Field("pan", plan.IsPan)
             .Field("picture", plan.IsPictureOnly).Field("journey", plan.JourneyId)
             .Field("rejectedContinuation", plan.HasRejectedContinuation).Field("continuationReason", plan.ContinuationRejection);

@@ -37,11 +37,11 @@ internal static class SpatialTrajectoryMathTests
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
     private static void Near(AutonomyPosition actual, AutonomyPosition expected, double tolerance = .003) =>
         Check(actual.Distance(expected) <= tolerance, "Position error " + actual.Distance(expected));
-    private static float TimeAtDistance(double fraction)
+    private static float TimeAtDistance(double fraction, ScenicShotPlan plan)
     {
         double lo = 0, hi = 1;
         for (int i = 0; i < 40; i++)
-        { double middle = (lo + hi) * .5; if (ScenicMotionProfile.Progress(middle) < fraction) lo = middle; else hi = middle; }
+        { double middle = (lo + hi) * .5; if (plan.MotionFraction(middle) < fraction) lo = middle; else hi = middle; }
         return (float)((lo + hi) * .5);
     }
 
@@ -53,7 +53,7 @@ internal static class SpatialTrajectoryMathTests
         {
             Near(P((Vector3)path.Spline[i].Position), plan.CameraWaypoint(i));
             float distance = path.Spline.CurveToSplineT(i);
-            Near(path.Sample(TimeAtDistance(distance)).CameraPosition, plan.CameraWaypoint(i));
+            Near(path.Sample(TimeAtDistance(distance, path.PreparedPlan!)).CameraPosition, plan.CameraWaypoint(i));
         }
         Check(path.Length > 24 && path.Length < 28, "Native travel collapsed winding corridors into an endpoint chord.");
     }
@@ -83,14 +83,14 @@ internal static class SpatialTrajectoryMathTests
         var plan = Plan(); using var path = new ScenicSplinePath(); path.Prepare(plan, 1);
         for (int i = 0; i < plan.WaypointCount; i++)
         {
-            float progress = TimeAtDistance(path.Spline!.CurveToSplineT(i));
+            float progress = TimeAtDistance(path.Spline!.CurveToSplineT(i), path.PreparedPlan!);
             Near(path.Sample(progress).CameraPosition, plan.CameraWaypoint(i));
             Near(path.Sample(progress).AimPosition, plan.AimWaypoint(i));
         }
         for (int i = 0; i < plan.WaypointCount - 1; i++)
         {
             double middleDistance = (path.Spline!.CurveToSplineT(i) + path.Spline.CurveToSplineT(i + 1)) * .5;
-            var actual = path.Sample(TimeAtDistance(middleDistance)).AimPosition;
+            var actual = path.Sample(TimeAtDistance(middleDistance, path.PreparedPlan!)).AimPosition;
             var expected = plan.RouteAimAt((plan.WaypointFraction(i) + plan.WaypointFraction(i + 1)) * .5);
             Near(actual, expected);
         }
@@ -139,7 +139,8 @@ internal static class SpatialTrajectoryMathTests
 
     private static void RaisedCache()
     {
-        var plan = Plan(); var raised = plan.RaiseCamera(7);
+        var plan = Plan(); plan = plan.WithDuration(plan.DurationSeconds);
+        var raised = plan.RaiseCamera(7);
         using var path = new ScenicSplinePath(); path.Prepare(plan, 1); var oldSpline = path.Spline;
         var before = path.Sample(.4f); float length = path.Length;
         Check(path.Prepare(raised, 1) && !ReferenceEquals(oldSpline, path.Spline), "Same-ID immutable replacement reused stale geometry.");
@@ -156,7 +157,7 @@ internal static class SpatialTrajectoryMathTests
         var plan = Plan(false); using var path = new ScenicSplinePath(); path.Prepare(plan, 1);
         for (int i = 0; i <= 100; i++)
         {
-            var expected = plan.Sample(i / 100f); var actual = path.Sample(i / 100f);
+            var expected = path.PreparedPlan!.Sample(i / 100f); var actual = path.Sample(i / 100f);
             Near(actual.CameraPosition, expected.CameraPosition); Near(actual.AimPosition, expected.AimPosition);
         }
         var slice = path.ProposeMeasuredSlice(.08f, .92f);

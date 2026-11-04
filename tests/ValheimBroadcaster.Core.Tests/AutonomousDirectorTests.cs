@@ -23,6 +23,12 @@ internal static class AutonomousDirectorTests
         ("Scenic selection enforces minimum and maximum travel distances", ScenicBounds),
         ("Unavailable scenery triggers a bounded search independent of footage dwell", ScenicRecovery),
         ("Scenic region dwell requires useful rendered footage", ScenicFootage),
+        ("Ordinary Scenic relocation completes a developing shot before departure", ScenicDepartureBoundary),
+        ("Scenic relocation cannot extend an unfinished shot indefinitely", ScenicDepartureDeadline),
+        ("Scenic missing-picture and content recovery bypass an editorial departure wait", ScenicDepartureRecovery),
+        ("Ready and distant players preempt a pending Scenic edit", ScenicDeparturePlayerPriority),
+        ("Holding resets the pending Scenic edit deadline without catch-up", ScenicDepartureHold),
+        ("Journey ownership and world reset clear pending Scenic relocation timing", ScenicDepartureOwnership),
         ("Failed scenic destinations yield to alternatives", ScenicFailure),
         ("Multi-hour scenery history remains bounded", BoundedHistory),
         ("Full scenic history preserves unexpired revisit exclusions", FullHistoryCooldown),
@@ -266,6 +272,71 @@ internal static class AutonomousDirectorTests
         long revision = d.Revision;
         Step(d, 2, new[] { P("a"), new AutonomyPlayer("b", "Renamed", Origin, 100, true) }, shown: "b");
         Eq("b", d.TargetId); Eq("Renamed", d.TargetName); Eq(revision, d.Revision); Eq(2d, d.ReadyDwellSeconds);
+    }
+    private static ScenicRegion[] DepartureRegions() => new[] { R("local", 0), R("fresh", 300) };
+    private static void DepartureStep(AutonomousDirector d, double now, bool boundary = false,
+        bool ready = true, bool expired = false, bool exhausted = false, bool journey = false,
+        IReadOnlyList<AutonomyPlayer>? players = null, string? shown = null) =>
+        d.Tick(now, 1, players ?? Array.Empty<AutonomyPlayer>(), DepartureRegions(), Origin, shown, ready,
+            idleSearchExpired: expired, scenicContentExhausted: exhausted, scenicJourneyActive: journey,
+            scenicEditBoundary: boundary);
+    private static AutonomousDirector WaitingDeparture()
+    {
+        var d = New(); DepartureStep(d, 0); DepartureStep(d, 1);
+        Assert(d.PendingTravel == null && d.ScenicDepartureWaiting, "Dwell interrupted a developing scenic shot");
+        return d;
+    }
+    private static void ScenicDepartureBoundary()
+    {
+        var d = WaitingDeparture(); DepartureStep(d, 5);
+        Assert(d.PendingTravel == null, "Waiting for an editorial boundary issued a travel token");
+        DepartureStep(d, 6, boundary: true);
+        Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+        Eq("Scenic footage dwell completed", Request(d).Reason);
+        Assert(!d.ScenicDepartureWaiting);
+    }
+    private static void ScenicDepartureDeadline()
+    {
+        var d = WaitingDeparture();
+        DepartureStep(d, 15.99); Assert(d.PendingTravel == null);
+        DepartureStep(d, 16); Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+        Assert(!d.ScenicDepartureWaiting, "Expired window remained armed after departure");
+    }
+    private static void ScenicDepartureRecovery()
+    {
+        var missing = WaitingDeparture(); DepartureStep(missing, 2, ready: false, expired: true);
+        Eq("Scenic picture-recovery budget exhausted", Request(missing).Reason);
+        var exhausted = WaitingDeparture(); DepartureStep(exhausted, 2, exhausted: true);
+        Eq("Local scenic coverage exhausted; seeking fresh subject", Request(exhausted).Reason);
+    }
+    private static void ScenicDeparturePlayerPriority()
+    {
+        var ready = WaitingDeparture(); DepartureStep(ready, 2, players: new[] { P("a") }, shown: "a");
+        Eq(AutonomyState.Following, ready.State); Eq("a", ready.TargetId);
+        Assert(ready.PendingTravel == null && !ready.ScenicDepartureWaiting);
+        var distant = WaitingDeparture(); DepartureStep(distant, 2, players: new[] { P("a", 1000, false) });
+        Eq(AutonomyTravelKind.Player, Request(distant).Kind);
+        Assert(!distant.ScenicDepartureWaiting);
+    }
+    private static void ScenicDepartureHold()
+    {
+        var d = WaitingDeparture(); d.SetHolding(true); DepartureStep(d, 100, boundary: true);
+        Assert(d.PendingTravel == null && !d.ScenicDepartureWaiting);
+        d.SetHolding(false); DepartureStep(d, 101); DepartureStep(d, 115.99);
+        Assert(d.PendingTravel == null, "Held time consumed the new unheld edit deadline");
+        DepartureStep(d, 116); Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+    }
+    private static void ScenicDepartureOwnership()
+    {
+        var d = WaitingDeparture(); DepartureStep(d, 100, journey: true);
+        Assert(d.PendingTravel == null && !d.ScenicDepartureWaiting);
+        DepartureStep(d, 101); Assert(d.PendingTravel == null && d.ScenicDepartureWaiting);
+        d.Reset(); d.SetEnabled(true); DepartureStep(d, 0); DepartureStep(d, 1);
+        Assert(d.PendingTravel == null && d.ScenicDepartureWaiting, "Old world's deadline leaked across reset");
+        DepartureStep(d, 2, boundary: true); Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+        var window = new ScenicRelocationWindow();
+        Throws(() => window.CanDepart(double.NaN, false));
+        window.CanDepart(10, false); Throws(() => window.CanDepart(9, false));
     }
     private static void ScenicNovelty()
     {

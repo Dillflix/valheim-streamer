@@ -36,6 +36,9 @@ internal static class ScenicDirectorTests
         yield return ("Recovered matching scenery cancels obsolete missing-output replacement", RecoveredMissingPicture);
         yield return ("Recovered readable scenery resumes instead of cutting to a prepared replacement", RecoveredUnreadablePicture);
         yield return ("Picture recovery preserves blocked completed and operator-requested edits", DurableReplacementRequests);
+        yield return ("Editorial scenic edits retain validated movement and the prepared successor", EditorialMovement);
+        yield return ("Editorial scenic edits still escalate blocked and completed routes", EditorialMotionFailure);
+        yield return ("Editorial intent survives transient picture recovery without restarting failed motion", EditorialPictureRecovery);
     }
 
     private static AutonomyPosition P(float x = 0, float y = 20, float z = 0) => new AutonomyPosition(x, y, z);
@@ -197,8 +200,10 @@ internal static class ScenicDirectorTests
         var d = new ScenicDirector(); var feature = Feature(); d.Accept(Plan(), 0);
         Check(d.PreferredRole(feature) == ScenicShotRole.Establish, "Unshown plan consumed the establishing beat.");
         d.Stage(Plan(2)); Check(d.PreferredRole(feature) == ScenicShotRole.Establish, "Staging consumed a sequence beat.");
-        Observe(d, 0, 21); Check(d.PreferredRole(feature) == ScenicShotRole.Reveal && d.RememberedShots == 1,
-            "Actual establishing footage did not advance the ridge sequence.");
+        Observe(d, 0, 21); Check(d.PreferredRole(feature) == ScenicShotRole.Establish && d.RememberedShots == 1,
+            "Brief footage confused view memory with completed establishing context.");
+        Observe(d, 22, 61); Check(d.PreferredRole(feature) == ScenicShotRole.Reveal,
+            "Sustained actual establishing footage did not advance the ridge sequence.");
     }
     private static void ViewMemory()
     {
@@ -420,5 +425,53 @@ internal static class ScenicDirectorTests
         d.Observe(3, 4.7, 0, true, true, false);
         Check(d.NeedsReplacement && d.Reason == "Operator selected next scene",
             "Recovering an earlier picture failure cancelled the operator's later edit.");
+    }
+
+    private static void EditorialMovement()
+    {
+        var d = new ScenicDirector(); var first = Plan(); var next = Plan(2, "shore");
+        d.Accept(first, 0); d.Observe(1, 0, .2, true, true, false); d.Stage(next);
+        d.RequestEdit("Prefer another local composition");
+        for (int i = 1; i <= 10; i++)
+        {
+            double nextProgress = d.Propose(.1);
+            Check(nextProgress > d.Progress, "A desired edit froze the still-valid current trajectory.");
+            d.Observe(1, i * .1, nextProgress, true, true, false);
+        }
+        Check(d.NeedsReplacement && !d.BlocksMovement && d.Current == first && d.Prepared == next &&
+            d.Reason == "Prefer another local composition", "Preparation consumed the current shot or lost its editorial request.");
+        Near(d.Propose(.1, false), d.Progress, "Editorial preparation overrode an operator hold.");
+        d.Accept(d.TakePrepared()!, 1.1);
+        Check(!d.NeedsReplacement && !d.BlocksMovement, "A fulfilled edit leaked into the new shot.");
+        Reject(() => d.RequestEdit(""));
+    }
+
+    private static void EditorialMotionFailure()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); d.Observe(1, 0, .2, true, true, false);
+        d.RequestEdit("Prefer another local composition"); Observe(d, 1, 22, blocked: true);
+        Check(d.BlocksMovement && d.Reason.Contains("blocked"), "A pending editorial request hid persistent motion failure.");
+        d.RequestEdit("New destination subject"); d.Observe(1, 2.3, .2, true, true, false);
+        Near(d.Propose(.1), d.Progress, "A soft request restarted a persistently rejected movement path.");
+        Check(d.Reason.Contains("blocked"), "A soft edit erased the physical failure reason.");
+        d.Accept(Plan(2), 3); d.Observe(2, 3, .9, true, true, false); d.RequestEdit("New view");
+        d.Observe(2, 3.1, 1, true, true, false);
+        Check(d.BlocksMovement && d.Reason.Contains("completed"), "Editorial preparation prevented completed-route detection.");
+        d.Reset(); Check(!d.NeedsReplacement && !d.BlocksMovement, "Reset retained pending edit state.");
+    }
+
+    private static void EditorialPictureRecovery()
+    {
+        var d = new ScenicDirector(); d.Accept(Plan(), 0); d.Observe(1, 0, .2, true, true, false);
+        d.RequestEdit("Measured picture concern"); Observe(d, 1, 7, live: false, readable: false);
+        Check(d.BlocksMovement, "Editorial preparation concealed actual output loss.");
+        d.Observe(1, .8, .2, true, true, false);
+        Check(d.NeedsReplacement && !d.BlocksMovement && d.Propose(.1) > d.Progress &&
+            d.Reason == "Measured picture concern", "Picture recovery lost the pending composition improvement or left motion frozen.");
+        Observe(d, 9, 30, readable: false);
+        Check(d.BlocksMovement && d.Reason.Contains("unreadable"), "Editorial preparation concealed persistent unreadability.");
+        d.RequestReplacement("Operator stopped camera"); d.RequestEdit("New preference");
+        d.Observe(1, 3.1, .2, true, true, false);
+        Check(d.BlocksMovement && d.Reason == "Operator stopped camera", "A soft preference defeated an explicit stop.");
     }
 }

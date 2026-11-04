@@ -18,6 +18,7 @@ internal static class ScenicSiteSequenceTests
         yield return ("NPC portrait without camp context cannot fulfil destination", PortraitOnly);
         yield return ("Trader context without actor coverage expires honestly", MissingActor);
         yield return ("Construction site progression preserves parent and child context", ConstructionHierarchy);
+        yield return ("An interrupted establishing view cannot prematurely advance a site sequence", InterruptedContext);
     }
     private static ScenicFeature Site(string id = "camp", string identity = "$npc_haldor") =>
         new ScenicFeature(id, ScenicFeatureKind.Structure, new AutonomyPosition(0, 10, 0), new AutonomyPosition(0, 0, 1),
@@ -130,5 +131,19 @@ internal static class ScenicSiteSequenceTests
             parentId: "building", scopeLabel: "Room");
         for (int i = 0; i < 63; i++) sequence.Observe(i * .1, building, ScenicShotRole.Establish, true, false);
         Assert(sequence.Priority(room) > 0);
+    }
+
+    private static void InterruptedContext()
+    {
+        var director = new ScenicDirector(); var site = Site();
+        director.Accept(Plan(1, site).WithDuration(4), 0); Feed(director, 1, 0, 4);
+        Assert(director.RememberedShots == 1 && !director.CanDevelopSubject(Actor()));
+        Assert(director.PreferredRole(site) == ScenicShotRole.Establish);
+        var second = ScenicShotFactory.Create(2, site, director.PreferredRole(site), 2);
+        Assert(director.CanOffer(second));
+        director.Accept(second, 4.1); Feed(director, 2, 4.1, 2.2);
+        Assert(director.CanDevelopSubject(Actor()) && director.PreferredRole(site) != ScenicShotRole.Establish);
+        Assert(director.SubjectPriority(Actor()) > director.SubjectPriority(site));
+        director.Reset(); Assert(director.PreferredRole(site) == ScenicShotRole.Establish);
     }
 }

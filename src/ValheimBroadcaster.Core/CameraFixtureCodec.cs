@@ -44,6 +44,13 @@ public static class CameraFixtureCodec
                 w.Write(p.CameraControl.HasValue); if (p.CameraControl.HasValue) Point(w, p.CameraControl.Value);
             }
             Text(w, p.ContinuationRejection, MaximumContinuationReason);
+            w.Write(p.PacingProfile != null);
+            if (p.PacingProfile != null)
+            {
+                ScenicPacingProfile pace = p.PacingProfile;
+                w.Write(pace.DurationSeconds); w.Write((ushort)pace.Count);
+                for (int i = 0; i < pace.Count; i++) { w.Write(pace.TimeFraction(i)); w.Write(pace.DistanceFraction(i)); }
+            }
         }
         if (payload.Length > MaximumBytes - DigestBytes) throw new ArgumentException("Camera fixture is too large.", nameof(fixture));
         byte[] body = payload.ToArray();
@@ -68,7 +75,7 @@ public static class CameraFixtureCodec
             using var r = new BinaryReader(stream, Utf8, true);
             if (r.ReadInt32() != Magic) throw new InvalidDataException("Not a broadcaster camera fixture.");
             int schema = r.ReadInt32();
-            if (schema != 1 && schema != CameraFixture.SchemaVersion) throw new InvalidDataException("Unsupported camera fixture schema.");
+            if (schema < 1 || schema > CameraFixture.SchemaVersion) throw new InvalidDataException("Unsupported camera fixture schema.");
             long world = r.ReadInt64();
             if (world == 0 || world != expectedWorldId) throw new InvalidDataException("Camera fixture world UID does not match this world.");
             string name = Text(r, 48), version = Text(r, 128), settings = Text(r, 4096);
@@ -106,6 +113,15 @@ public static class CameraFixtureCodec
             {
                 string continuationRejection = Text(r, MaximumContinuationReason);
                 if (continuationRejection.Length != 0) plan = plan.WithRejectedContinuation(continuationRejection);
+            }
+            if (schema >= 3 && Flag(r))
+            {
+                double pacingSeconds = r.ReadDouble(); int count = r.ReadUInt16();
+                if (count < 2 || count > ScenicPacingProfile.MaximumPoints || plan.IsPan)
+                    throw new InvalidDataException("Invalid fixture pacing table.");
+                var times = new double[count]; var distances = new double[count];
+                for (int i = 0; i < count; i++) { times[i] = r.ReadDouble(); distances[i] = r.ReadDouble(); }
+                plan = plan.WithPacingProfile(ScenicPacingProfile.Restore(pacingSeconds, times, distances));
             }
             if (stream.Position != stream.Length) throw new InvalidDataException("Camera fixture contains unexpected trailing data.");
             return new CameraFixture(world, name, version, settings, created, motion, dynamic, plan, journeyId, predecessor);

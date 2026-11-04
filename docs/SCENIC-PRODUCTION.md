@@ -1,4 +1,6 @@
-# Scenic journeys, camera fixtures and timelapse — 0.8.40
+# Scenic journeys, camera fixtures and timelapse — 0.8.41
+
+Version 0.8.41 adds measured ordinary-shot pacing, uninterrupted soft editorial preparation, context-qualified site sequences and preparation of loaded destinations during native travel. It preserves the 0.8.40 departure repair and existing journey/timelapse timing ownership. See [the ordinary Scenic quality changes and limits](SCENIC-0.8.41-QUALITY.md).
 
 Version 0.8.40 retains the distance objective and independent cruise introduced in 0.8.39, and repairs departure admission using the supplied failure capture. A speculative journey no longer takes over ordinary coverage before its first section is ready. Routes salvaged immediately before rejected geometry retain that provenance and cannot launch back toward the known failed tail. See [the evidence and repair limits](SCENIC-0.8.40-REPAIR.md).
 
@@ -9,7 +11,7 @@ Camera fixtures, operator previews, render-pose auditing, interval recordings an
 ## Install and compatibility
 
 - Replace the **three client DLLs and included ThirdParty notices together**, preserving the existing configuration.
-- Journey, fixture, preview, pose-audit and recorded-timelapse features work with an existing compatible **protocol-3** companion. **No server update is required for 0.8.40.**
+- Journey, fixture, preview, pose-audit and recorded-timelapse features work with an existing compatible **protocol-3** companion. **No server update is required for 0.8.41.**
 - Install the **0.8.37 server/core pair** for the new optional empty-server `Environment1` permission. Earlier companions leave remote environment overrides inactive. Ordinary players need no mod update.
 - `Observer.CinematicEnvironmentEnabled=true` permits an already-authorized observer to request this optional capability. Client environment overrides default off.
 - Admission, pre-admission opt-in and observer isolation remain protocol 3. No new game, Unity, BepInEx or Jötunn binaries belong in either payload.
@@ -58,6 +60,10 @@ broadcast journey on
 
 ## Correct motion and editorial clocks
 
+Ordinary Scenic plans now share one role-aware timing policy. During preparation, up to 257 paired camera/aim samples describe the actual path. A monotone time-to-distance profile spends more time on close-subject turns while allowing low-change stretches to progress. The accepted geometry and fixed lens remain unchanged. NPCs, rooms and openings use restrained rates; difficult motion can legitimately require a longer shot. Explicit fixture durations, timelapses and constant-speed journeys retain their own timing contract.
+
+Soft requests for improved picture composition do not pause otherwise valid movement or allow an unranked static picture to displace it. Physical blockage and unavailable/unreadable output retain their recovery behavior. Ordinary region dwell can wait up to 15 unheld seconds for a real edit boundary; destination preparation can overlap native travel after actual loading readiness, without changing native completion or final picture validation.
+
 Previously, `ShotMotion=0.5` could end an 18.18-second planned route after 18.18 seconds while only half the route had been traversed. Movement now completes from actual presented route progress. A deliberately stationary shot has a separate dwell outcome and is not reported as a completed movement. Operator holds and unavailable/held pictures do not accumulate catch-up motion.
 
 Every newly accepted route first presents its exact starting pose before advancement. This is also necessary for continuous section joins at 30/60 fps: advancing one step before certifying the seam could otherwise reject a valid continuation.
@@ -92,7 +98,7 @@ broadcast fixture delete coast-pass
 
 Data lives under `BepInEx/config/ValheimBroadcaster/CameraFixtures/<world UID>/`. Files use a bounded, versioned, checksummed format. A world supports up to 64 fixtures, each at most 32 KiB. Replacement is atomic and retains a `.bak`; no silent delete-and-rewrite fallback is used if atomic replacement is unavailable. Names are normalized and cannot select arbitrary filesystem paths.
 
-Version 0.8.40 writes fixture schema 2, which preserves a bounded rejected-continuation reason. It still reads schema-1 fixtures, treating their continuation provenance as unknown; loading an old fixture does not rewrite it. Explicit replacement keeps the existing backup behavior. **Downgrading to 0.8.39 cannot load newly written schema-2 fixtures**; retain the original schema-1 file or its backup if rollback is needed. Existing files, live configuration and saves are not migrated automatically.
+Version 0.8.41 writes fixture schema 3, which preserves the bounded timing-to-distance profile and the rejected-continuation provenance introduced in schema 2. It reads schemas 1, 2 and 3; loading an old fixture does not rewrite it. Schema 1 retains unknown continuation provenance, and legacy timing remains explicit rather than being silently retimed. Explicit replacement keeps the existing backup behavior. **Clients older than 0.8.41 cannot load newly written schema-3 fixtures**; retain the original file or its backup if rollback is needed. Existing files, live configuration and saves are not migrated automatically.
 
 ## Operator-only spatial preview
 

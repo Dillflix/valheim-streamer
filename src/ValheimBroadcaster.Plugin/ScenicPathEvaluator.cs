@@ -350,7 +350,15 @@ internal sealed class ScenicPathEvaluator : IDisposable
         return Complete;
     }
 
-    private bool PreparePath(ScenicShotPlan value) => value.IsPan || path.Prepare(value, 1);
+    private bool PreparePath(ScenicShotPlan value)
+    {
+        if (value.IsPan) return true;
+        if (!path.Prepare(value, 1)) return false;
+        // Native preparation may attach an immutable ordinary-shot pacing map.
+        // Preflight and the eventual on-air director must use that same plan.
+        plan = path.PreparedPlan;
+        return true;
+    }
 
     private void Fail(ScenicRejectionKind kind, string reason)
     { Complete = true; Accepted = false; FailureKind = kind; Reason = reason; pending.Clear(); }

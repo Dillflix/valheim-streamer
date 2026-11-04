@@ -15,6 +15,9 @@ internal static class CameraFixtureTests
         yield return ("Saved journey windows replay independently with the original constant-speed profile", JourneyWindow);
         yield return ("Saved scenic fixtures preserve bounded rejected-tail evidence", RejectedContinuation);
         yield return ("Schema 1 camera fixtures remain readable without modifying their saved bytes", LegacySchema);
+        yield return ("Camera fixtures preserve measured pace and authored duration exactly", PacingRoundTrip);
+        yield return ("Schema 2 camera fixtures retain rejected-tail evidence without rewriting", LegacySchema2);
+        yield return ("Camera fixtures reject corrupted pacing with a valid outer checksum", InvalidPacing);
         yield return ("Camera fixture parsing rejects corruption, truncation, trailing data and newer schema", Corruption);
         yield return ("Camera fixture parsing rejects non-finite playback settings even with a valid checksum", InvalidSettings);
         yield return ("Camera fixtures require matching world UID rather than a world display name", WorldIdentity);
@@ -140,9 +143,37 @@ internal static class CameraFixtureTests
         Check(File.ReadAllBytes(path).SequenceEqual(bytes), "Unapproved schema replacement changed the original file");
         Reject(() => CameraFixtureCodec.Decode(bytes, 1234568));
         store.Save(loaded, true);
-        Check(BitConverter.ToInt32(File.ReadAllBytes(path), 4) == 2 && File.ReadAllBytes(path + ".bak").SequenceEqual(bytes),
-            "Explicit replacement did not write schema 2 while preserving the legacy backup");
+        Check(BitConverter.ToInt32(File.ReadAllBytes(path), 4) == CameraFixture.SchemaVersion && File.ReadAllBytes(path + ".bak").SequenceEqual(bytes),
+            "Explicit replacement did not preserve the legacy backup");
     });
+    private static void PacingRoundTrip()
+    {
+        var pace = ScenicPacingProfile.Restore(14, new[] { 0d, .3, .7, 1 }, new[] { 0d, .5, .7, 1 });
+        CameraFixture source = Fixture(Curved().WithPacingProfile(pace).WithDuration(300));
+        CameraFixture loaded = RoundTrip(source); SamePlan(source.Plan, loaded.Plan);
+        Check(loaded.Plan.HasExplicitDuration && loaded.Plan.PacingProfile != null &&
+            loaded.Plan.PacingProfile.Count == 4 && loaded.Plan.PacingProfile.DurationSeconds == 14,
+            "Recorded pacing authority or exact timing-table metadata was lost.");
+        Check(CameraFixtureCodec.Encode(source).SequenceEqual(CameraFixtureCodec.Encode(loaded)), "Paced fixture encoding is not stable.");
+    }
+    private static void LegacySchema2()
+    {
+        // Fixed schema-2 fixture: source is the previous released byte layout,
+        // including its rejected continuation. No timing-table field existed.
+        byte[] bytes = Convert.FromBase64String("RkNCVgIAAACH1hIAAAAAAAwAbGVnYWN5LWNvYXN0BgAwLjguMzkAAAAg/iZrOt8IAAAAPwF7AAAAAAAAAAABAAAAAAAAAF5AAAB0Qo/C9T0pXI+9AAAAAAAAAAAAAAAAAAAAAAAAAAUAY29hc3QCAAAgQQAAQEAAACBBAACAPwAAAAAAAAAAAABAQQAAwEBmZmY/AAAAAAAAAAAAAAAAAAAAAEEAAHDBAACgQQAAEEEAAEDBAAAgQQAAQEAAACBBAABAQQAAoEAAACBBABcAS25vd24gZm9jdXMgb2JzdHJ1Y3Rpb25Y+tolqlloDjWGMLKuhFLhLnBeaB4nxc3WeF7W0EY/9w==");
+        CameraFixture loaded = CameraFixtureCodec.Decode(bytes, 1234567);
+        Check(loaded.Plan.HasExplicitDuration && loaded.Plan.PacingProfile == null && loaded.Plan.DurationSeconds == 120 &&
+            loaded.Plan.ContinuationRejection == "Known focus obstruction", "Schema 2 playback or rejected-tail provenance changed.");
+    }
+    private static void InvalidPacing()
+    {
+        var pace = ScenicPacingProfile.Restore(14, new[] { 0d, .3, .7, 1 }, new[] { 0d, .5, .7, 1 });
+        byte[] bytes = CameraFixtureCodec.Encode(Fixture(Curved().WithPacingProfile(pace)));
+        // Four (time,distance) pairs immediately precede the outer digest.
+        int table = bytes.Length - 32 - 4 * 16;
+        Array.Copy(BitConverter.GetBytes(.9), 0, bytes, table + 16, 8);
+        Rehash(bytes); Reject(() => CameraFixtureCodec.Decode(bytes, 1234567));
+    }
     private static void Corruption()
     {
         byte[] bytes = CameraFixtureCodec.Encode(Fixture());

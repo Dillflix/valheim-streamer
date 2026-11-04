@@ -17,9 +17,11 @@ internal sealed class ScenicSplinePath : IDisposable
 {
     private const int KnotCount = 17;
     private ScenicShotPlan? plan;
+    private ScenicShotPlan? preparedSource;
     private float shapeStrength;
     private float[]? knotDistance;
     internal Spline? Spline { get; private set; }
+    internal ScenicShotPlan? PreparedPlan => plan;
     internal bool Ready => plan != null && Spline != null && Length > .01f;
     internal float Length { get; private set; }
 
@@ -30,15 +32,17 @@ internal sealed class ScenicSplinePath : IDisposable
             throw new ArgumentOutOfRangeException(nameof(strength));
         // Motion settings affect the rig's progress clock after preparation,
         // never the already developed path shape or its cached distance table.
-        if (ReferenceEquals(plan, source)) return Ready;
-        Reset(); plan = source; shapeStrength = strength;
+        if (ReferenceEquals(plan, source) || ReferenceEquals(preparedSource, source)) return Ready;
+        Reset(); plan = preparedSource = source; shapeStrength = strength;
         // A measured corridor is already a sequence of deliberate viewpoints.
         // Re-sampling it into the legacy seventeen knots can omit a short turn
         // and replace clear adjoining corridors with an obstructed diagonal.
         int count = source.IsSpatial ? source.WaypointCount : KnotCount;
         var positions = new Vector3[count];
         for (int i = 0; i < count; i++)
-            positions[i] = FromCore(source.IsSpatial ? source.CameraWaypoint(i) :
+            positions[i] = FromCore(source.IsSpatial ? source.CameraWaypoint(i) : source.IsDirected ?
+                source.RouteSampleAt(source.ConstantSpeed ? source.MotionFraction(i / (double)(count - 1)) :
+                    ScenicMotionProfile.Progress(i / (double)(count - 1))).CameraPosition :
                 source.Sample(i / (double)(count - 1), strength).CameraPosition);
         var knots = new BezierKnot[count];
         for (int i = 0; i < count; i++)
@@ -80,6 +84,22 @@ internal sealed class ScenicSplinePath : IDisposable
             for (int i = 1; i < count - 1; i++) knotDistance[i] = spline.CurveToSplineT(i);
             knotDistance[count - 1] = 1;
         }
+        if (source.IsDirected && !source.IsPictureOnly && !source.IsPan && !source.IsJourney &&
+            !source.ConstantSpeed && !source.HasExplicitDuration && source.PacingProfile == null)
+        {
+            // Measure the actual native body plus its paired aim. No extra
+            // world queries or live camera damping are involved, and geometry
+            // remains identical before and after the timing map is attached.
+            var bodies = new AutonomyPosition[ScenicPacingProfile.MaximumPoints];
+            var aims = new AutonomyPosition[bodies.Length];
+            for (int i = 0; i < bodies.Length; i++)
+            {
+                ScenicShotSample sample = SampleAtDistance(i / (float)(bodies.Length - 1));
+                bodies[i] = sample.CameraPosition; aims[i] = sample.AimPosition;
+            }
+            plan = source.WithPacingProfile(ScenicPacingProfile.Measure(source.Role, source.FieldOfView,
+                ScenicPacingPolicy.Restrained(source.Feature!), bodies, aims));
+        }
         return true;
     }
 
@@ -91,7 +111,16 @@ internal sealed class ScenicSplinePath : IDisposable
         if (plan!.IsDirected && !plan.UseNativeSpline) return plan.Sample(p);
         float distance = Ease(p);
         Vector3 camera = SplineUtility.EvaluatePosition(Spline!, distance);
-        ScenicShotSample sample = plan!.Sample(p, shapeStrength).WithCameraPosition(ToCore(camera));
+        ScenicShotSample sample = plan.Sample(p, shapeStrength).WithCameraPosition(ToCore(camera));
+        return plan.IsSpatial ? sample.WithAimPosition(AimAtDistance(distance, camera)) : sample;
+    }
+
+    private ScenicShotSample SampleAtDistance(float distance)
+    {
+        ScenicShotSample sample = plan!.RouteSampleAt(distance);
+        if (!plan.UseNativeSpline) return sample;
+        Vector3 camera = SplineUtility.EvaluatePosition(Spline!, distance);
+        sample = sample.WithCameraPosition(ToCore(camera));
         return plan.IsSpatial ? sample.WithAimPosition(AimAtDistance(distance, camera)) : sample;
     }
 
@@ -197,7 +226,7 @@ internal sealed class ScenicSplinePath : IDisposable
         Math.Abs(value.x) <= 20000 && Math.Abs(value.y) <= 20000 && Math.Abs(value.z) <= 20000;
     private static Vector3 FromCore(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);
     private static AutonomyPosition ToCore(Vector3 value) => new AutonomyPosition(value.x, value.y, value.z);
-    internal void Reset() { plan = null; Spline = null; Length = 0; shapeStrength = 0; knotDistance = null; }
+    internal void Reset() { plan = preparedSource = null; Spline = null; Length = 0; shapeStrength = 0; knotDistance = null; }
     public void Dispose() => Reset();
 }
 

@@ -9,6 +9,9 @@ internal sealed class FrameHold
     private readonly FrameContinuity continuity = new FrameContinuity();
     private readonly ProgramFramePolicy program = new ProgramFramePolicy();
     private readonly ProgramSlate slate = new ProgramSlate();
+    internal bool ScenicTransition => slate.ScenicTransition;
+    internal Texture SlateTexture => slate.Texture;
+    internal void SetScenicTransition(bool value) => slate.SetScenicTransition(value);
     private Func<bool> active = () => false, ready = () => false, hardFailure = () => true;
     private Action<string> warning = _ => { };
     private Camera? camera;
@@ -137,6 +140,7 @@ internal sealed class FrameHold
             FramePresentation mode = continuity.Select(now, live, hard);
             if (mode == FramePresentation.Live && !captureFailed)
             {
+                slate.SetScenicTransition(false);
                 if (!frame)
                 {
                     var descriptor = source.descriptor;
@@ -307,6 +311,7 @@ internal sealed class FrameHold
         hardBoundary = false;
         auditEvents.Reset();
         lastPresentation = FramePresentation.Slate; LastFailure = "none";
+        slate.SetScenicTransition(false);
         slate.Dispose();
     }
 

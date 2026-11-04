@@ -34,6 +34,7 @@ internal sealed class IdleShots
     internal bool RecoveryExpired => scenic.RecoveryExpired;
     internal bool HasUsableScenicPicture => scenic.HasUsablePicture;
     internal bool ContentExhausted => scenic.ContentExhausted;
+    internal bool RelocationBoundary => scenic.RelocationBoundary;
     internal bool DestinationSubjectShown => scenic.DestinationSubjectShown;
     internal bool DestinationSubjectSatisfied => scenic.DestinationSubjectSatisfied;
     internal bool DestinationSubjectUnavailable => scenic.DestinationSubjectUnavailable;

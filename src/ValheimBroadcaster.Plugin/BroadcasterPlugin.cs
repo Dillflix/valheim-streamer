@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.40";
+    public const string PluginVersion = "0.8.41";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -59,6 +59,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private readonly BroadcastDirector acquisition = new BroadcastDirector();
     private readonly AcquisitionWindow acquisitionWindow = new AcquisitionWindow();
     private readonly IdleShots idle = new IdleShots();
+    private readonly ScenicArrivalPreparation scenicArrival = new ScenicArrivalPreparation();
+    private string scenicArrivalStatus = "No destination preparation";
     private readonly CreatureShotAdmission creatureAdmission = new CreatureShotAdmission();
     private readonly WildlifeCutaways wildlife = new WildlifeCutaways();
     private float nextCreatureRefresh;
@@ -253,7 +255,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 Logger.LogInfo("Observer session ended; owned state restored.");
                 return;
             }
-            if (previousPhase == ObserverPhase.Travelling && observer.Phase == ObserverPhase.Watching)
+            if (previousPhase == ObserverPhase.Travelling && observer.Phase == ObserverPhase.Watching &&
+                !(automatic?.ControlsSelection == true && automatic.ActiveTravel != null))
                 ResetShot();
             if (Time.unscaledTime >= nextRosterRefresh)
             { RefreshRoster(); nextRosterRefresh = Time.unscaledTime + 0.5f; }
@@ -327,8 +330,14 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 recentPicture && frameHold.HasRecentLiveFrame && presentedRelatedPlayerView &&
                     presentedPlayerId == CurrentTarget()?.Identity.Id,
                 coverage.Mode == CoverageMode.Scenic && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true),
-                cameraFixtures?.AwaitingStart == true || idle.FixturePreparing);
-            idle.SetDestinationSubject(automatic?.ScenicInterest);
+                cameraFixtures?.AwaitingStart == true || idle.FixturePreparing,
+                scenicEditBoundary: coverage.Mode != CoverageMode.Scenic || idle.RelocationBoundary);
+            idle.SetDestinationSubject(observer.Phase == ObserverPhase.Travelling
+                ? automatic?.ActiveTravelInterest : automatic?.ScenicInterest);
+            if (observer.Phase == ObserverPhase.Travelling)
+                frameHold.SetScenicTransition(automatic?.ActiveTravel?.Kind == AutonomyTravelKind.Scenic);
+            else if (observer.Active && observer.Phase != ObserverPhase.Watching)
+                frameHold.SetScenicTransition(false);
             string? reconnect = automatic?.TakeReconnectReason();
             if (reconnect != null && connection?.RequestRecovery(reconnect) == true) return;
             if (automatic?.ControlsSelection == true && automatic.TargetId != null) director.Select(automatic.TargetId);
@@ -338,6 +347,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             if (observer.Active && observer.Phase != ObserverPhase.Watching)
             {
                 cameraReady = false;
+                PrepareScenicArrival();
                 return;
             }
             director.DwellSeconds = settings.Dwell.Value;
@@ -456,20 +466,65 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             return gameCamera && rig.CanFrameCreature(gameCamera, actor, settings, coverage.Revision + 1, observer.Active);
         });
     private bool CanShow(TargetRoster.Target? target) => IsReady(target) && (!observer.RemoteSession || automatic?.CanFrame(target) == true);
-    private void ResetShot()
+    private void ResetShot(AutonomyTravelRequest? arrival = null)
     {
         presentedScenicFocus = null;
-        CameraSpatialScene.Shared.Invalidate();
+        bool preserveArrival = arrival?.Kind == AutonomyTravelKind.Scenic && Player.m_localPlayer &&
+            scenicArrival.CanAdopt(WorldIdentity.Current, arrival.Token, arrival.Position,
+                CameraSpatialScene.Shared.WorldEpoch, CorePoint(Player.m_localPlayer.transform.position), Time.unscaledTime);
+        if (!preserveArrival) CameraSpatialScene.Shared.Invalidate();
         pictureMonitor.Clear();
         wildlife.Reset();
         playerShots.Reset();
         creatureAdmission.Reset();
-        if (Player.m_localPlayer) idle.SetRegion(Player.m_localPlayer.transform.position);
+        if (Player.m_localPlayer && !preserveArrival) idle.SetRegion(Player.m_localPlayer.transform.position);
         idle.SetDestinationSubject(automatic?.ScenicInterest);
+        if (arrival != null)
+        {
+            scenicArrivalStatus = preserveArrival ? "Destination preparation retained; final picture validation pending" :
+                "Destination acquired; preparing its first readable picture";
+            ScenicTrace.Event("arrival-preparation", scenicArrivalStatus, arrival.Token);
+        }
+        scenicArrival.Reset();
         coverage.Reset(); rig.ResetPose(); cameraReady = false; presentedPlayerId = null; presentedPlayerUsable = false; presentedRelatedPlayerView = false;
         localActivities.Clear();
         nextCreatureRefresh = 0;
         creatureSearchPlayerId = null;
+    }
+
+    private static AutonomyPosition CorePoint(Vector3 point) => new AutonomyPosition(point.x, point.y, point.z);
+
+    private void PrepareScenicArrival()
+    {
+        AutonomyTravelRequest? request = automatic?.ActiveTravel;
+        if (observer.Phase != ObserverPhase.Travelling || request?.Kind != AutonomyTravelKind.Scenic ||
+            !Player.m_localPlayer || !ZNet.instance || activeWorld != ZNet.instance ||
+            !remote.Approved || !remote.Isolated || !settings.ProceduralPlayers.Value)
+        { scenicArrival.Reset(); return; }
+        long world = WorldIdentity.Current;
+        if (world == 0) { scenicArrival.Reset(); return; }
+        Vector3 destination = new Vector3(request.Position.X, request.Position.Y, request.Position.Z);
+        // Native teleport owns both movement and completion. Only start scene
+        // observation after the destination has actually loaded around the
+        // protected carrier; this cannot turn a coordinate into readiness.
+        if (!IdleShots.Ready(destination) || !PlayerShotReadiness.PositionReady(destination, true) ||
+            (Player.m_localPlayer.transform.position - destination).sqrMagnitude > 24f * 24f)
+        { scenicArrivalStatus = "Waiting for destination geometry before off-air preparation"; return; }
+        long epoch = CameraSpatialScene.Shared.WorldEpoch;
+        if (!scenicArrival.Matches(world, request.Token, request.Position, epoch))
+        {
+            CameraSpatialScene.Shared.Invalidate();
+            idle.SetRegion(destination);
+            idle.SetDestinationSubject(automatic?.ActiveTravelInterest);
+            scenicArrival.Begin(world, request.Token, request.Position, CameraSpatialScene.Shared.WorldEpoch, Time.unscaledTime);
+            ScenicTrace.Event("arrival-preparation", "Loaded destination preparation started during native travel", request.Token);
+        }
+        if (!scenicArrival.CanPrepare(world, request.Token, request.Position, CameraSpatialScene.Shared.WorldEpoch, Time.unscaledTime))
+        { scenicArrivalStatus = "Destination preparation budget reached; native travel still owns arrival"; return; }
+        // allowActivate=false stages measured coverage only. It never renders,
+        // advances a camera, moves the carrier or credits shown footage.
+        idle.Search(settings, moveCarrier: true, held: false, allowActivate: false);
+        scenicArrivalStatus = "Preparing destination off air: " + idle.ScenicSearchStatus;
     }
     private Vector3? CapturedScenicPosition()
     {
@@ -601,6 +656,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop(bool force = false, bool parked = false)
     {
+        scenicArrival.Reset(); scenicArrivalStatus = "No destination preparation";
         StopLiveTimelapse("Broadcast stopped");
         scenicEnvironment?.Stop();
         timelapseCapture?.StopCapture("Broadcast stopped");
@@ -949,9 +1005,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         Color old = GUI.color;
         if (presentation == FramePresentation.Slate)
         {
-            GUI.color = Color.black;
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
+            // Use the same upright, owned card as the clean programme. The
+            // old opaque black operator overlay concealed the rendered card.
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), frameHold.SlateTexture, ScaleMode.ScaleAndCrop);
         }
         if (presentation == FramePresentation.Live && rig.OutputCamera)
             cameraFixtures?.Draw(rig.OutputCamera!, idle.Plan, presentedScenicProgress);
@@ -986,8 +1043,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private string Status(FramePresentation presentation)
     {
         DiagnosticPictureContext shown = frameHold.OperatorPicture;
-        string state = presentation == FramePresentation.Live ? "LIVE" : presentation == FramePresentation.Hold ? "HELD" : "RECOVERY SLATE";
-        string onAir = presentation == FramePresentation.Slate ? StatusText(frameHold.LastFailure) :
+        string state = presentation == FramePresentation.Live ? "LIVE" : presentation == FramePresentation.Hold ? "HELD" :
+            frameHold.ScenicTransition ? "SCENIC TRANSITION" : "RECOVERY SLATE";
+        string onAir = presentation == FramePresentation.Slate ?
+            frameHold.ScenicTransition ? "Preparing the next landscape" : StatusText(frameHold.LastFailure) :
             StatusText(shown.Mode) + (frameHold.OperatorSubject.Length > 0 ? " — " + StatusText(frameHold.OperatorSubject) : "") +
             (shown.Perspective?.Length > 0 ? " | " + StatusText(shown.Perspective) : "") +
             (shown.Intent?.Length > 0 ? " | " + StatusText(shown.Intent) : "");
@@ -998,8 +1057,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             coverage.IsWildlifeCutaway ? "Wildlife cutaway; observing player activity" : coverage.AwaitingPlayers ?
                 "Waiting for a loaded player view" : "Automatic " + coverage.Mode + " coverage");
         if (liveTimelapse.Active) directing = LiveTimelapseStatus;
-        string planning = coverage.Mode == CoverageMode.Scenic && (idle.Searching || !idle.HasScenicPath)
-            ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
+        string planning = observer.Phase == ObserverPhase.Travelling && automatic?.ActiveTravel?.Kind == AutonomyTravelKind.Scenic
+            ? "\nPREPARING: " + StatusText(scenicArrivalStatus)
+            : coverage.Mode == CoverageMode.Scenic && (idle.Searching || !idle.HasScenicPath)
+                ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
         string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
         string discovery = observer.RemoteSession ? remote.DiscoveryStatus : roster.ConnectedOthers + " other connected; " + roster.Targets.Count + " known targets";
         return "ON AIR: " + state + " | " + onAir + "\nDIRECTOR: " + StatusText(directing) + planning +
@@ -1203,7 +1264,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\nArrival preparation: " + scenicArrivalStatus + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + timelapseCapture?.Status + "\n" + LiveTimelapseStatus + "\n" + scenicEnvironment?.Status + "\n" + cameraFixtures?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
