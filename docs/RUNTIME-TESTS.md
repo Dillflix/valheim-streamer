@@ -1,5 +1,36 @@
 # Validation and runtime test record
 
+## 0.8.39 distance-directed Scenic journeys
+
+Built on the complete 0.8.38 source tree. The former 180-second / 1 m/s default and decorative `ShotMotion` multiplier limited expected travel to about 180 m, or 90 m at half strength. This version uses a 1,000 m objective and independent 6 m/s cruise, goal-directed local sections, gradual observed-terrain clearance and earlier preparation. The protected loading anchor can lead on the current accepted route while preserving existing carrier/world readiness checks. New configuration keys prevent a preserved old speed from retaining that mismatch. Observer protocol stays 3; no companion update is required for these journey changes.
+
+Automated regressions cover measured kilometre traversal at 30/60 fps, native distance-based path execution, independence from decorative motion strength, exact section seams, bounded per-frame displacement, actual versus authored distance, stale/held/missing samples, loop rejection, false short completions, distance-aware remaining windows and terrain-clearance envelopes. These checks do not execute Unity scene loading, physics, rendering or the production frame loop. Local validation passed **1,039/1,039 Core cases**, **77/77 native camera-math cases**, and the competing-deadlines replay fixture with zero mismatches. Client, server and replay compiled with warnings treated as errors against the pinned real game/dependency assemblies using the isolated SDK compiler. The normal project builds and Windows/Linux media checks run in CI. Actual Valheim journey footage remains **not run here**.
+
+Use protected-observer Scenic coverage with the existing synchronized capture enabled:
+
+```text
+broadcast capture on
+broadcast camera dynamic
+broadcast journey distance 1000
+broadcast journey speed 6
+broadcast journey start
+broadcast journey status
+```
+
+After completion or failure, preserve the matching Scenic JSONL, footage MP4/JSONL and `BepInEx/LogOutput.log` from the broadcaster installation/profile. The [capture guide](EDITORIAL-CAPTURE.md#capture-the-picture-and-its-decisions) explains their locations and bounded rotation; collect them promptly. A diagnostic screenshot of the retained journey status is useful alongside the footage.
+
+| Scenario | Required evidence |
+| --- | --- |
+| Open coast/ridge, 1,000 m at 6 m/s, sustained 30 then 60 fps | Actual travel reaches approximately 1 km and forward advance reaches at least 650 m before `Completed`; nominal cruise remains near 6 m/s between ramps, with no repeated section cuts or brief velocity spikes. A known obstruction may legitimately produce an explicitly incomplete outcome. |
+| Repeat with `broadcast camera motion 0`, `0.5` and `1.5` | Active journey cruise remains independent of decorative strength. Restore the preferred value afterwards. New configuration keys retain 1,000 m / 6 m/s even when old journey settings remain in the file. |
+| Hold during a pending continuation or at a section endpoint, wait over 12 seconds, then resume | No elapsed pause becomes catch-up motion or an instant planning/endpoint timeout. Held output earns no distance; the route resumes only from valid current evidence. |
+| Ridge rise, coast descent, loaded-edge approach and dense forest | No terrain/water penetration, unchecked corridor jump or behind-camera carrier teleport. Loading evidence waits are distinct from known physical obstruction; any short failure retains distance and its real reason. |
+| Temporary picture loss, stale render identity or missing captured pose | No invented travel credit or successful completion; the retained outcome and diagnostics expose the gap. |
+| Player becomes available, operator stop/return, world exit and reconnect | Prompt ownership handoff, no stale successor/world reuse, no false completion or changed observer admission/isolation. |
+| RTMP audio throughout a long journey and several region boundaries | Continuous camera/listener alignment, unchanged A/V transport, bounded query/frame cost and no recurring recovery churn. |
+
+A successful policy/native test is not evidence of successful in-game kilometre streaming. The measured runtime results above determine whether the new journey family meets its intended behavior.
+
 ## 0.8.38 live Scenic timelapse
 
 Built on the complete 0.8.37 source tree. Meaningful regressions cover matching rendered-plan progress, stale/held output, permission/owner preemption, bounded preparation and picture loss, editorial spacing, and joining the moving natural clock at both phase endpoints. Matching real-game-reference builds and existing policy/native/media CI remain required. Actual Valheim lighting, native sky smoothing, dark-scene fallback and player-join restoration remain **not run here**. See [runtime acceptance](LIVE-TIMELAPSE.md#runtime-acceptance).

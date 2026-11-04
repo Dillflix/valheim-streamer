@@ -23,6 +23,9 @@ internal static class Program
 
     private static IEnumerable<(string Name, Action Run)> Cases()
     {
+        foreach (var test in JourneyTerrainProfileTests.Cases()) yield return test;
+        foreach (var test in NativeJourneyDistanceTests.Cases()) yield return test;
+        foreach (var test in NativeJourneySamplingTests.Cases()) yield return test;
         foreach (ScenicShotStyle style in Enum.GetValues(typeof(ScenicShotStyle)))
         {
             ScenicShotStyle captured = style;

@@ -429,6 +429,9 @@ namespace ValheimBroadcaster.Core
         {
             if (!IsSpatial) return Lerp(start, end, u);
             int segment = SpatialSegment(u, out double fraction);
+            // Journey body and aim advance together. Per-knot aim easing would
+            // oscillate even a constant camera-to-aim offset during a traverse.
+            if (IsJourney) return Lerp(spatialAim![segment], spatialAim[segment + 1], fraction);
             // Bounded C1 interpolation avoids an abrupt pan at a waypoint and
             // cannot overshoot the measured aim endpoints.
             double eased = fraction * fraction * (3 - 2 * fraction);

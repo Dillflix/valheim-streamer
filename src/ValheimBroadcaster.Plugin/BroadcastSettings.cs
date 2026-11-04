@@ -11,7 +11,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> WildlifeCutaways;
     internal readonly ConfigEntry<bool> ScenicJourneys, LiveTimelapse;
     internal readonly ConfigEntry<float> LiveTimelapseSeconds;
-    internal readonly ConfigEntry<float> ScenicJourneySeconds, ScenicJourneySpeed;
+    internal readonly ConfigEntry<float> ScenicJourneyDistance, ScenicJourneySpeed;
     internal readonly ConfigEntry<float> EnvironmentCycleSeconds;
     internal readonly ConfigEntry<string> EnvironmentWeather;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
@@ -61,8 +61,8 @@ internal sealed class BroadcastSettings
         LiveTimelapse = config.Bind("ScenicTimelapse", "Enabled", true, "Autonomously select restrained live daylight-passage shots on an authorized empty server. No recording or simulation acceleration.");
         LiveTimelapseSeconds = config.Bind("ScenicTimelapse", "DurationSeconds", 90f, Range("Live shot duration for one visual day, returning to current natural time.", 45f, 180f));
         ScenicJourneys = config.Bind("Idle", "ScenicJourneys", true, "Offer continuous scenic journeys through successively validated local route sections. Players and unavailable geometry can interrupt a journey; no teleport occurs within a journey shot.");
-        ScenicJourneySeconds = config.Bind("Idle", "ScenicJourneySeconds", 180f, Range("Maximum developed journey duration in seconds before returning to varied scenic coverage.", 30f, 900f));
-        ScenicJourneySpeed = config.Bind("Idle", "ScenicJourneySpeed", 1f, Range("Target scenic journey travel speed in metres per second before the Camera.ShotMotion multiplier. Actual progress requires a validated route and usable live output.", .25f, 2f));
+        ScenicJourneyDistance = config.Bind("Idle", "JourneyDistanceMetres", 1000f, Range("Measured travel objective with substantial forward progress; partial/blocked attempts are not completed journeys.", 256f, 5000f));
+        ScenicJourneySpeed = config.Bind("Idle", "JourneyCruiseMetresPerSecond", 6f, Range("Independent journey cruise speed. Decorative Camera.ShotMotion does not scale travel. Runtime may be slower if valid frames cannot sustain the requested speed.", 2f, 12f));
         EnvironmentCycleSeconds = config.Bind("ScenicEnvironment", "DayCycleSeconds", 0f, Range("Optional visual day-cycle duration, 30–86400 real seconds; zero preserves normal time. Requires the companion's fresh empty-server permission. Changes lighting presentation only, never simulation time.", 0f, 86400f));
         EnvironmentWeather = config.Bind("ScenicEnvironment", "Weather", "", "Optional existing Valheim environment name for scenic filming while the companion confirms no ordinary players are connected. Empty preserves normal weather. Owned overrides restore when permission or Scenic coverage ends.");
         CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Seconds of usable creature footage. Wildlife cutaways return to players and also use this as a wall-time limit.", 5f, 300f));

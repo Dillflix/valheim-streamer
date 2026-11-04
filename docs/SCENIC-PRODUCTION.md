@@ -1,8 +1,8 @@
-# Scenic journeys, camera fixtures and timelapse — 0.8.37
+# Scenic journeys, camera fixtures and timelapse — 0.8.39
 
-Built directly on 0.8.36 (`0de075d3213e76e3abd41c4ce627c4f071ed49a7`). This version adds longer continuous Scenic journeys, persistent camera fixtures, operator-only path previews, render-pose verification, interval timelapse recording and optional empty-server environment control. It also fixes reduced-speed Scenic routes being reported complete before reaching their endpoint.
+Version 0.8.39 builds on the complete 0.8.38 implementation. It replaces the original short, slow journey policy with a persistent distance objective and independent cruise speed. The earlier default of 180 seconds at 1 m/s could cover only about 180 m before the decorative motion multiplier; at `ShotMotion=0.5`, that was about 90 m. Naming that a long journey did not make it long-distance traversal.
 
-The previous director primarily chose short local camera moves. Native Dolly support supplied a way to execute those moves; it did not by itself supply long-distance planning, continuing world acquisition or long-shot editorial ownership. These additions address that distinction.
+Camera fixtures, operator previews, render-pose auditing, interval recordings and empty-server environment controls remain available. Autonomous live timelapse shots added in 0.8.38 are documented in [LIVE-TIMELAPSE.md](LIVE-TIMELAPSE.md).
 
 ## Install and compatibility
 
@@ -16,31 +16,39 @@ Compilation and automated tests do not establish in-game camera quality, graphic
 
 ## Continuous Scenic journeys
 
-The journey family extends a suitable readable natural shot through successive **32-meter maximum route sections**. Each section is prepared and validated ahead of presentation. The native execution path joins only the exact accepted predecessor endpoint, aim, lens and orientation. Interior joins retain cruise motion; the initial/final sections can use acceleration ramps. The camera's protected carrier follows continuously, so newly nearby world regions can stream without an in-shot teleport.
+A journey now requests **1,000 m of measured travel at a 6 m/s cruise speed by default**. The cruise speed is independent of `Camera.ShotMotion`, which still controls decorative movement in ordinary shots. A straight unobstructed kilometre would take about 167 seconds plus ramps and preparation; this is a nominal calculation, not a promise that loading or geometry will permit that journey.
 
-Default automatic behavior offers journeys after at least two shown Scenic shots, with a three-minute cooldown after a journey ends. A suitable natural route and a validated continuation are required; the default duration is 180 seconds, with a target speed of 1 m/s before the existing `ShotMotion` multiplier. Duration can be configured from 30 to 900 seconds and speed from 0.25 to 2 m/s. A separate bound limits one journey to 64 sections / approximately 1,500 meters of credited motion.
+A persistent horizontal objective guides successive local route sections. Coastline starts use the measured shoreline direction; ridge starts use the observed ridge direction. The planner explores seven headings toward the objective and three gradual elevation profiles. Terrain/water measurements allow a climb to begin before a rise; they do not permit movement through unknown terrain or guarantee that a distant coastline remains straight.
 
-Journeys are one member of the Scenic portfolio. Building/site sequences, finite pans, ordinary local shots and player coverage remain available. Player acquisition and missing-picture recovery retain priority. Ordinary region-dwell travel and idle wildlife cuts do not interrupt an active useful journey simply because their shorter timers expire.
+Execution sections scale from **32 to 64 m** with speed, with an 8 m minimum for a short final remainder. Up to two prepared successors provide a desired speed-scaled lookahead. The actual available horizon remains limited by loaded geometry, foliage observation and the existing carrier range. The next section joins the exact accepted predecessor endpoint, aim, lens and orientation; intermediate joins retain cruise movement. A section boundary is not an editorial cut. Cruise timing uses the actual native spline length. Journey aim follows the moving camera with the authored view offset, avoiding the old separate ease at every waypoint. Validation budgets each fitting/readability pass separately; a journey cannot raise its entire route and move the accepted seam to obtain clearance.
 
-The future world is not assumed clear. Terrain, water, near-plane/corridor clearance, foliage and readability still apply. If no usable continuation is found, the camera finishes the currently valid section and returns to ordinary local coverage. A pending continuation can retain the readable endpoint for at most six seconds. Journey preparation has its own bounded work/deadline. The configured duration is a goal/limit for a usable journey, not a guarantee that every biome supports that much uninterrupted movement.
+The protected loading anchor may move up to 24 m ahead along the **current validated route**. Its intermediate and destination carrier geometry must already be loaded, and the camera stays on the accepted route. The observer body, network reference and interest position remain together. This is continuous loading support, not teleportation into an unobserved corridor. Missing loading evidence is retried within a bounded preparation window; a known obstruction instead sends the planner to another candidate.
+
+Automatic journeys are offered after at least two shown Scenic shots, with a three-minute cooldown after one ends. A readable eligible natural route and a validated continuation are required. Building/site sequences, pans, ordinary local scenery and player coverage remain available. Player acquisition and missing-picture recovery retain priority. Ordinary region-dwell travel and idle wildlife cuts do not interrupt an active useful journey solely because their shorter timers expire.
+
+Completion requires both the requested **actual rendered-camera travel distance** and at least **65% of that distance as forward displacement along the objective direction**. This prevents looping near the start from satisfying a long-distance objective. Held frames, prepared paths, stale render identities and missing captured-position evidence earn no travel. Diagnostics retain measured distance, displacement, objective advance, achieved speed, shown time and the outcome after the journey ends. A short blocked attempt is `Blocked` or `Interrupted`, never a completed kilometre. Automatic Scenic JSONL includes a `journey` record at start, once per active second and at finish, with measured distance, achieved speed, prepared distance ahead, loading state and the exact ending reason.
+
+Terrain, water, near-plane/corridor clearance, foliage and readability remain authoritative. If no continuation can be validated, the camera finishes the available valid route and returns to ordinary local coverage. A pending continuation may retain its readable endpoint for up to six seconds of active operation. Journey effort is bounded by a distance-derived time budget and travel/section limits. A kilometre objective is not evidence that a kilometre of clear route exists.
 
 ```text
+broadcast journey distance 1000
+broadcast journey speed 6
 broadcast journey start
 broadcast journey status
-broadcast journey duration 180
-broadcast journey speed 1
 broadcast journey stop
 broadcast journey off
 broadcast journey on
 ```
 
-`start` requests an eligible journey from current protected-observer Scenic coverage; it does not cut immediately or bypass validation. `stop` ends the current request and resumes ordinary direction; `off` also disables future automatic journeys. The diagnostics report shown time, credited distance, section count and continuation status.
+`start` requests a journey from protected-observer Scenic coverage; it does not cut immediately or bypass validation. `stop` ends the current request and resumes ordinary direction; `off` also disables future automatic journeys. Distance and speed changes apply to the **next** journey. For compatibility, `broadcast journey duration <seconds>` sets distance to seconds multiplied by the current cruise speed, provided the result is 256–5,000 m. It no longer establishes a hard shot-duration goal.
 
 | Configuration | Default | Purpose |
 | --- | --- | --- |
 | `Idle.ScenicJourneys` | `true` | Offer automatic journeys |
-| `Idle.ScenicJourneySeconds` | `180` | Desired maximum developed journey time, 30–900 seconds |
-| `Idle.ScenicJourneySpeed` | `1` | Target m/s before `Camera.ShotMotion`, 0.25–2 |
+| `Idle.JourneyDistanceMetres` | `1000` | Requested actual travel distance, 256–5,000 m |
+| `Idle.JourneyCruiseMetresPerSecond` | `6` | Independent cruise speed, 2–12 m/s |
+
+**Configuration migration:** preserve the existing configuration file. The old `Idle.ScenicJourneySeconds` and `Idle.ScenicJourneySpeed` entries are no longer read. New keys give existing installations the new defaults instead of silently retaining the previous 1 m/s speed. An old `Camera.ShotMotion` value does not scale journey cruising. `Camera.DynamicShots=false` still disables moving journeys.
 
 ## Correct motion and editorial clocks
 
@@ -154,7 +162,7 @@ The following require Valheim runtime evidence and are not established by compil
 
 | Scenario | Required observation |
 | --- | --- |
-| Open coast/ridge, then forest | Longer useful travel without a stop/cut at each section; correct body/aim/lens continuity; constrained space ends locally without recovery churn |
+| Open coast/ridge, then forest | Measure distance and achieved speed with a 1,000 m / 6 m/s request; no stop/cut at section joins, correct body/aim/lens continuity, and an explicit incomplete outcome if constrained space ends the journey |
 | Region dwell expires during a journey | No unnecessary teleport; a newly ready player still preempts promptly |
 | Half-speed route and operator hold | Route reaches its endpoint; hold/resume does not jump; stationary mode reports a dwell outcome |
 | Saved local and distant fixture | Correct world/start acquisition, repeatable camera geometry, unchanged settings, bounded failure if construction/foliage invalidates the route |

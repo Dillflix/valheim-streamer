@@ -11,7 +11,7 @@ public sealed partial class BroadcasterPlugin
 {
     private void JourneyCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast journey start|stop|on|off|status|duration <30-900 seconds>|speed <0.25-2 metres/second>";
+        const string usage = "broadcast journey start|stop|on|off|status|distance <256-5000 metres>|duration <seconds>|speed <2-12 metres/second>";
         if (args.Length < 2) { context?.AddString(usage); return; }
         string action = args[1].ToLowerInvariant();
         if (action == "start" && args.Length == 2)
@@ -33,13 +33,15 @@ public sealed partial class BroadcasterPlugin
             if (action == "off") idle.StopJourney();
         }
         else if (action == "stop" && args.Length == 2) idle.StopJourney();
-        else if (action == "duration" && args.Length == 3 && CameraNumber(args[2], 30, 900, out float seconds))
-            settings.ScenicJourneySeconds.Value = seconds;
-        else if (action == "speed" && args.Length == 3 && CameraNumber(args[2], .25f, 2, out float speed))
+        else if (action == "distance" && args.Length == 3 && CameraNumber(args[2], 256, 5000, out float metres))
+            settings.ScenicJourneyDistance.Value = metres;
+        else if (action == "duration" && args.Length == 3 && CameraNumber(args[2], 1, 2500, out float seconds) && seconds * settings.ScenicJourneySpeed.Value >= 256 && seconds * settings.ScenicJourneySpeed.Value <= 5000)
+            settings.ScenicJourneyDistance.Value = seconds * settings.ScenicJourneySpeed.Value;
+        else if (action == "speed" && args.Length == 3 && CameraNumber(args[2], 2, 12, out float speed))
             settings.ScenicJourneySpeed.Value = speed;
         else if (action != "status" || args.Length != 2) { context?.AddString(usage); return; }
         context?.AddString(idle.JourneyStatus);
-        context?.AddString($"Automatic journeys {settings.ScenicJourneys.Value}; maximum {settings.ScenicJourneySeconds.Value:F0}s; target {settings.ScenicJourneySpeed.Value:F2}m/s before ShotMotion multiplier.");
+        context?.AddString($"Automatic journeys {settings.ScenicJourneys.Value}; distance objective {settings.ScenicJourneyDistance.Value:F0}m; independent cruise {settings.ScenicJourneySpeed.Value:F1}m/s; nominal {settings.ScenicJourneyDistance.Value / settings.ScenicJourneySpeed.Value:F0}s plus turns/ramps. Settings apply to the next journey.");
     }
 
     private void FixtureCommand(string[] args, Terminal context)

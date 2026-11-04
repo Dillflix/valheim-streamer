@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.38";
+    public const string PluginVersion = "0.8.39";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -274,7 +274,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 idle.ReportPresentation(presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                     recentPicture && frameHold.HasRecentLiveFrame,
                     recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
-                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus);
+                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus, CapturedScenicPosition());
             if (!probe.Active && !director.IsHolding && coverage.Mode == CoverageMode.Scenic &&
                 presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                 recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable &&
@@ -471,6 +471,14 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         nextCreatureRefresh = 0;
         creatureSearchPlayerId = null;
     }
+    private Vector3? CapturedScenicPosition()
+    {
+        CameraRenderAudit audit = frameHold.LastRenderAudit;
+        if (frameHold.CurrentPresentation != FramePresentation.Live || audit.Shot != presentedScenicPlan ||
+            audit.Revision != presentedRevision || audit.CaptureFrame != presentedFrame || !audit.Captured.Valid) return null;
+        return new Vector3((float)audit.Captured.X, (float)audit.Captured.Y, (float)audit.Captured.Z);
+    }
+
     private void RecordVisibleCoverage(bool recentPicture)
     {
         visibleCoverageIds.Clear();
@@ -796,7 +804,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 Vector3 carrier = camera ? camera.transform.position + Vector3.down * 2f : Vector3.zero;
                 bool reachable = camera && Player.m_localPlayer && TargetRoster.Finite(carrier) &&
                     Vector3.Distance(Player.m_localPlayer.transform.position, carrier) < 95f && PlayerShotReadiness.PositionReady(carrier, continuousShot);
-                plugin.cameraReady = reachable && plugin.observer.FollowCamera(camera!.transform.position, continuousShot);
+                plugin.cameraReady = reachable && plugin.observer.FollowCamera(camera!.transform.position, continuousShot,
+                    scenic && !plugin.director.IsHolding ? plugin.idle.JourneyLoadingPoint : null);
                 if (!reachable)
                 { plugin.rig.ResetPose(); presentationFailure = continuousShot ? "Camera carrier destination is out of range or has no loaded geometry" : "Acquiring camera carrier destination: out of range or awaiting area objects"; }
             }
@@ -1322,7 +1331,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast journey start|stop|on|off|status|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
+        public override string Help => "broadcast journey start|stop|on|off|status|distance <metres>|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
             "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {

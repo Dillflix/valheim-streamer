@@ -186,7 +186,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private int fitPasses;
     private float aspect, nearClip, minimumScore, surveyWaitSeconds;
     private float surveyWaitStarted = float.NegativeInfinity;
-    private int samples;
+    private int samples, passSamples;
     private long sceneEpoch;
     internal bool Complete { get; private set; }
     internal bool Accepted { get; private set; }
@@ -228,7 +228,11 @@ internal sealed class ScenicPathEvaluator : IDisposable
         for (int i = 0; i < sampleBudget && pending.Count > 0; i++)
         {
             if (!CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic)) return false;
-            if (++samples > MaximumSamples) { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route exceeds bounded survey effort"); return true; }
+            // A journey preserves its accepted seam and needs exactly one
+            // fitting pass plus one full validation pass. Long sections should
+            // not lose the second pass to samples spent on the first one.
+            if (++samples > MaximumSamples * (plan.IsJourney ? 2 : 1) || ++passSamples > MaximumSamples)
+            { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route exceeds bounded survey effort"); return true; }
             float fraction = pending.Pop();
             ScenicPose pose = solver.Solve(path, plan, fraction, aspect, nearClip);
             if (!TargetRoster.Finite(pose.Position) || !TargetRoster.Finite(pose.Focus) ||
@@ -253,6 +257,14 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 {
                     if (fitLift > .001f)
                     {
+                        if (plan.IsJourney)
+                        {
+                            // Raising the whole route would move the already
+                            // accepted predecessor endpoint. The journey planner
+                            // must instead find a gradual, connected climb.
+                            Fail(ScenicRejectionKind.SurfaceClearance, "Journey clearance requires moving the accepted seam; seek another connected elevation profile");
+                            return true;
+                        }
                         float adjustment = fitLift + .1f;
                         if (++fitPasses > 3 || totalLift + adjustment > 48f)
                         { Fail(ScenicRejectionKind.SurfaceClearance, "Scenic route cannot fit above the local surface within its elevation budget"); return true; }
@@ -292,7 +304,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
                     if (!Finite(surveyWaitStarted) || now < surveyWaitStarted) surveyWaitStarted = now;
                     if (surveyWaitSeconds + now - surveyWaitStarted < 2f)
                     {
-                        samples--; pending.Push(fraction);
+                        samples--; passSamples--; pending.Push(fraction);
                         Reason = "Waiting for scenic foliage survey coverage at the same route sample";
                         return false;
                     }
@@ -338,7 +350,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     { Complete = true; Accepted = false; FailureKind = kind; Reason = reason; pending.Clear(); }
     private void StartPass()
     {
-        pending.Clear(); hasPrevious = previousReadable = false; fitLift = 0;
+        pending.Clear(); hasPrevious = previousReadable = false; fitLift = 0; passSamples = 0;
         var boundaries = new List<float>(33);
         for (int i = 0; i <= 16; i++) boundaries.Add(i / 16f);
         // Uniform time samples alone can miss a short turn or an out-and-back
@@ -355,7 +367,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     internal void Reset()
     {
         pending.Clear(); path.Reset(); solver.Reset(); plan = null; visibility = null;
-        Complete = Accepted = hasPrevious = false; minimumScore = ValidatedFraction = 0; samples = 0;
+        Complete = Accepted = hasPrevious = false; minimumScore = ValidatedFraction = 0; samples = passSamples = 0;
         sceneEpoch = 0;
         fitting = false; fitLift = totalLift = 0; fitPasses = 0;
         routeRejected = previousReadable = false; measuredTravel = 0; SuggestedCanopyLift = 0; window.Reset();

@@ -14,7 +14,15 @@ internal static class ScenicJourneyTests
         yield return ("Fixture durations reject invalid and unbounded clocks", FixtureDurationBounds);
         yield return ("Journey windows retain finite ownership and distance only from matching live footage", JourneyEvidence);
         yield return ("Journey preparation never earns progress or extends its bounded lifetime", JourneyBounds);
+        yield return ("A distance-directed journey covers one kilometre at its own cruise speed at 30 and 60 fps", KilometreJourney);
+        yield return ("Journey lookahead scales with speed while live steps remain within validated sampling", SpeedAndLookahead);
+        yield return ("Thirty-two metres of blocked travel can never be reported as a completed kilometre", IncompleteOutcome);
+        yield return ("Journey distance is measured from accepted poses rather than authored progress", ActualDistance);
+        yield return ("Looping travel does not satisfy the forward journey objective", LoopingTravel);
+        yield return ("A relocation hidden by held missing rejected or stale footage cannot fulfill a journey", UnobservedGoalAdvance);
+        yield return ("Journey planning excludes distance already committed to its current route", CommittedDistance);
         yield return ("Journey windows use monotonic linear distance and compatible entry exit ramps", JourneyProfile);
+        yield return ("Authored journey fallback preserves its view offset without changing ordinary scenic aim easing", AuthoredJourneyAim);
         yield return ("Continuous Scenic ownership postpones editorial travel but not player acquisition", PlayerPreemption);
         yield return ("Continuous Scenic ownership never suppresses missing-picture recovery", RecoveryPreemption);
         yield return ("Bounded fixture preparation defers scenic recovery only until its owner expires", FixturePreparation);
@@ -84,28 +92,148 @@ internal static class ScenicJourneyTests
         foreach (double value in new[] { 0d, -1, double.NaN, double.PositiveInfinity, 604801 }) Reject(() => Plan().WithDuration(value));
         Near(Plan().WithDuration(604800).DurationSeconds, 604800);
     }
+    private static ScenicJourneyPolicy Journey(double target = 1000, double speed = 6)
+    { var p = new ScenicJourneyPolicy(); p.Start(1, target, speed, P(0), new AutonomyPosition(1, 0, 0)); return p; }
     private static void JourneyEvidence()
     {
-        var policy = new ScenicJourneyPolicy(); policy.Start(1, 180);
-        var plan = Plan(2).AsJourney(1, 1, 20);
-        policy.Observe(plan, 0, 0, true, false);
-        policy.Observe(plan, .1, .1, false, false); Near(policy.TravelMetres, 0);
-        policy.Observe(plan, .2, .1, true, true); Near(policy.TravelMetres, 0);
-        policy.Observe(plan, .3, .1, true, false); Near(policy.TravelMetres, 2); Near(policy.ShownSeconds, .1);
-        policy.Observe(plan, .3, .2, true, false); Near(policy.TravelMetres, 2);
-        policy.Observe(Plan(3).AsJourney(2, 1, 20), .4, .5, true, false); Near(policy.TravelMetres, 2);
+        var policy = Journey(); var plan = Plan(2).AsJourney(1, 1, 20);
+        policy.Observe(plan, 0, 0, true, false, P(0));
+        policy.Observe(plan, .1, .1, false, false, P(.6f)); Near(policy.TravelMetres, 0);
+        policy.Observe(plan, .2, .1, true, true, P(.6f)); Near(policy.TravelMetres, 0);
+        policy.Observe(plan, .3, .1, true, false, P(.6f)); Near(policy.TravelMetres, 0);
+        policy.Observe(plan, .4, .2, true, false, P(1.2f)); Near(policy.TravelMetres, .6); Near(policy.ShownSeconds, .1);
+        policy.Observe(plan, .4, .3, true, false, P(1.8f)); Near(policy.TravelMetres, .6);
+        policy.Observe(Plan(3).AsJourney(2, 1, 20), .5, .5, true, false, P(2)); Near(policy.TravelMetres, .6);
         policy.Reset(); Check(!policy.Active && policy.TravelMetres == 0, "Reset retained journey evidence");
     }
     private static void JourneyBounds()
     {
-        var policy = new ScenicJourneyPolicy(); policy.Start(1, 30);
-        Near(policy.NextWindowMetres(1, 1), 30); Near(policy.NextWindowMetres(1, .5), 15);
-        for (int i = 0; i < 500; i++) policy.NextWindowMetres(1, 1);
-        Near(policy.ShownSeconds, 0);
+        var policy = Journey(256, 2);
+        Near(policy.NextWindowMetres(), 32);
+        for (int i = 0; i < 500; i++) policy.NextWindowMetres();
+        Near(policy.ShownSeconds, 0); Near(policy.TravelMetres, 0);
         var plan = Plan(2).AsJourney(1, 1, 100);
-        for (int i = 0; i <= 1810; i++) policy.Observe(plan, i / 60d, i / 6000d, true, false);
-        Check(!policy.CanContinue && policy.NextWindowMetres(1, 1) == 0, "Journey exceeded finite editorial ownership");
+        for (int i = 0; i <= 15000; i++) policy.Observe(plan, i / 60d, 0, true, false, P(0));
+        Check(policy.BudgetExpired && !policy.CanContinue && policy.NextWindowMetres() == 0, "Motionless shown footage retained unlimited journey ownership");
         Check(!ScenicJourneyPolicy.Eligible(ScenicShotPlan.Picture(4, plan.Feature!, ScenicShotRole.Establish, P(0), P(0, 0, 0), 60)), "Recovery picture became a travel route");
+        Reject(() => Journey(double.NaN)); Reject(() => Journey(255)); Reject(() => Journey(5001)); Reject(() => Journey(1000, 1));
+    }
+    private static void KilometreJourney()
+    {
+        foreach (int fps in new[] { 30, 60 })
+        {
+            var policy = Journey(); double at = 0, position = 0; long id = 1;
+            while (policy.CanContinue)
+            {
+                double length = policy.NextWindowMetres();
+                Check(length >= 8 && length <= 64, "Invalid local window for a developed journey");
+                var plan = ScenicShotPlan.Spatial(++id,
+                    new ScenicFeature("coast", ScenicFeatureKind.Coastline, P((float)position, 2, 0), P(1, 0, 0), 8, 5, 1),
+                    ScenicShotRole.Traverse, new[] { P((float)position), P((float)(position + length / 2)), P((float)(position + length)) },
+                    new[] { P((float)position, 2, 0), P((float)(position + length / 2), 2, 0), P((float)(position + length), 2, 0) }, 65)
+                    .AsJourney(1, id - 1, length / policy.CruiseSpeed).WithJourneyRamps(false, false);
+                var director = new ScenicDirector(); director.Accept(plan, at); director.Observe(plan.Id, at, 0, true, true, false);
+                policy.Observe(plan, at, 0, true, false, P((float)position));
+                while (director.Progress < .999999)
+                {
+                    double dt = ScenicJourneyPolicy.SafeDeltaSeconds(1d / fps, policy.CruiseSpeed);
+                    double progress = director.Propose(dt);
+                    at += 1d / fps;
+                    director.Observe(plan.Id, at, progress, true, true, false);
+                    AutonomyPosition actual = plan.Sample(progress).CameraPosition;
+                    policy.Observe(plan, at, progress, true, false, actual);
+                    Check(policy.Active, "A valid moving journey was interrupted");
+                }
+                position += length;
+                Check(at < 180, "One kilometre at six metres per second took longer than its cinematic target");
+            }
+            Check(policy.TargetReached && policy.TravelMetres >= 999.5 && policy.DisplacementMetres >= 999.5,
+                "The completed journey did not actually traverse one kilometre");
+            Check(policy.AchievedMetresPerSecond > 5.9 && policy.AchievedMetresPerSecond <= 6.01,
+                "Achieved speed did not match the independently configured cruise speed");
+            policy.Finish(ScenicJourneyOutcome.Completed, "Distance objective reached");
+            Check(policy.Outcome == ScenicJourneyOutcome.Completed && !policy.Active && policy.TravelMetres >= 999.5,
+                "Final result lost the measured kilometre");
+        }
+    }
+    private static void SpeedAndLookahead()
+    {
+        foreach (double speed in new[] { 2d, 4, 6, 8, 12 })
+        {
+            double window = ScenicJourneyPolicy.WindowMetresForSpeed(speed);
+            Check(window >= 32 && window <= 64, "A single continuation exceeded locally certifiable geometry");
+            Near(ScenicJourneyPolicy.RequiredLookaheadMetres(speed) / speed, 12);
+            int sections = (int)Math.Ceiling(ScenicJourneyPolicy.RequiredLookaheadMetres(speed) / window);
+            Check(sections * window >= speed * 12, "The queue horizon is too short for its preparation interval");
+            foreach (double dt in new[] { 1d / 60, 1d / 30, .1, .5 })
+                Check(ScenicJourneyPolicy.SafeDeltaSeconds(dt, speed) * speed <= .750001,
+                    "High cruise speed proposed more movement than live corridor sampling can validate");
+        }
+        Reject(() => ScenicJourneyPolicy.SafeDeltaSeconds(double.NaN, 6));
+    }
+    private static void IncompleteOutcome()
+    {
+        var policy = Journey(); var plan = Plan(2).AsJourney(1, 1, 20);
+        for (int i = 0; i <= 64; i++) policy.Observe(plan, i / 12d, Math.Min(1, i / 64d), true, false, P(i * .5f));
+        Near(policy.TravelMetres, 32); Check(!policy.TargetReached, "A short local segment achieved a kilometre objective");
+        policy.Finish(ScenicJourneyOutcome.Completed, "Planner could not continue");
+        Check(policy.Outcome == ScenicJourneyOutcome.Blocked && policy.Reason.Contains("not reached") && policy.TravelMetres == 32,
+            "Failed continuation was mislabeled completed or its achieved distance discarded");
+    }
+    private static void ActualDistance()
+    {
+        var policy = Journey(); var plan = Plan(2).AsJourney(1, 1, 20);
+        policy.Observe(plan, 0, 0, true, false, P(0));
+        policy.Observe(plan, .1, 1, true, false, P(.5f));
+        Near(policy.TravelMetres, .5); // Authored progress would falsely claim20m.
+        policy.Observe(plan, .2, 1, true, false); Near(policy.TravelMetres, .5);
+        policy.Observe(plan, .3, 1, true, false, P(1)); Near(policy.TravelMetres, .5);
+        policy.Observe(plan, .4, 1, true, false, P(100));
+        Check(policy.Outcome == ScenicJourneyOutcome.Interrupted && policy.TravelMetres == .5,
+            "A teleport was counted as a cinematic journey");
+    }
+    private static void LoopingTravel()
+    {
+        var policy = Journey(256); var plan = Plan(2).AsJourney(1, 1, 200);
+        for (int i = 0; i <= 600; i++)
+        {
+            float x = (i % 40 <= 20 ? i % 40 : 40 - i % 40) * .5f;
+            policy.Observe(plan, i / 30d, i / 600d, true, false, P(x));
+        }
+        Check(policy.TravelMetres >= 256 && !policy.TargetReached && policy.ObjectiveAdvanceMetres < 20,
+            "Repeated local travel was reported as a developed distance objective");
+        policy.Finish(ScenicJourneyOutcome.Completed, "Loop ended");
+        Check(policy.Outcome == ScenicJourneyOutcome.Blocked, "A loop can be called a completed journey");
+    }
+    private static void CommittedDistance()
+    {
+        var policy = Journey(256); var plan = Plan(2).AsJourney(1, 1, 200);
+        for (int i = 0; i <= 400; i++) policy.Observe(plan, i / 30d, i / 400d, true, false, P(i * .5f));
+        Near(policy.NextWindowMetres(56), 0);
+        Near(policy.NextWindowMetres(30), 26);
+        Near(policy.NextWindowMetres(52), 8);
+        Reject(() => policy.NextWindowMetres(-1));
+    }
+    private static void UnobservedGoalAdvance()
+    {
+        for (int gapKind = 0; gapKind < 4; gapKind++)
+        {
+            var policy = Journey(256); var plan = Plan(2).AsJourney(1, 1, 200);
+            for (int i = 0; i <= 600; i++)
+            {
+                float x = (i % 40 <= 20 ? i % 40 : 40 - i % 40) * .5f;
+                policy.Observe(plan, i / 30d, i / 600d, true, false, P(x));
+            }
+            if (gapKind < 3)
+                policy.Observe(plan, 20.1, 1, gapKind != 2, gapKind == 0,
+                    gapKind == 1 ? (AutonomyPosition?)null : P(300));
+            policy.Observe(plan, 20.4, 1, true, false, P(300));
+            Near(policy.TravelMetres, 300); Near(policy.ObjectiveAdvanceMetres, 300);
+            Check(!policy.TargetReached && policy.RemainingMetres > 160,
+                "Unshown relocation supplied the missing forward objective");
+            policy.Finish(ScenicJourneyOutcome.Completed, "Resumed beyond the objective");
+            Check(policy.Outcome == ScenicJourneyOutcome.Blocked, "A hidden relocation completed the journey");
+        }
     }
     private static void JourneyProfile()
     {
@@ -119,6 +247,31 @@ internal static class ScenicJourneyTests
             double lastSpeed = (1 - ScenicJourneyMotion.Progress(.99999, entry, exit)) / .00001 * ScenicJourneyMotion.CruiseFraction(entry, exit);
             Near(firstSpeed, entry ? 0 : 1, .001); Near(lastSpeed, exit ? 0 : 1, .001);
         }
+    }
+    private static void AuthoredJourneyAim()
+    {
+        var body = new[] { P(0, 12, -20), P(8, 14, -18), P(40, 17, -12) };
+        var aim = new AutonomyPosition[body.Length];
+        for (int i = 0; i < body.Length; i++) aim[i] = P(body[i].X + 3, body[i].Y - 2, body[i].Z + 20);
+        var ordinary = ScenicShotPlan.Spatial(2, Plan().Feature!, ScenicShotRole.Traverse, body, aim, 65,
+            useNativeSpline: false).WithConstantSpeed();
+        var journey = ordinary.AsJourney(1, 1, ordinary.TravelMetres / 6).WithJourneyRamps(false, false);
+        Check(!journey.UseNativeSpline, "Fallback case unexpectedly uses native body execution");
+        for (int i = 0; i <= 200; i++)
+        {
+            ScenicShotSample actual = journey.Sample(i / 200d);
+            Near(actual.AimPosition.X - actual.CameraPosition.X, 3);
+            Near(actual.AimPosition.Y - actual.CameraPosition.Y, -2);
+            Near(actual.AimPosition.Z - actual.CameraPosition.Z, 20);
+        }
+        // At one quarter of the first leg the ordinary route keeps its original
+        // smoothstep aim, while a journey advances its aim with the body.
+        double progress = ordinary.WaypointFraction(1) * .25;
+        ScenicShotSample original = ordinary.Sample(progress);
+        Near(original.CameraPosition.X, 2);
+        Near(original.AimPosition.X, 3 + 8 * .15625);
+        Check(Math.Abs(original.AimPosition.X - original.CameraPosition.X - 3) > .5,
+            "Journey aim behavior leaked into ordinary scenic composition");
     }
     private static AutonomousDirector Automatic()
     { var d = new AutonomousDirector { RegionSeconds = 1, MinimumTravelSeconds = 1, MinimumScenicTravelDistance = 100 }; d.SetEnabled(true); return d; }

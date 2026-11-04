@@ -92,7 +92,7 @@ internal sealed class ScenicSplinePath : IDisposable
         float distance = Ease(p);
         Vector3 camera = SplineUtility.EvaluatePosition(Spline!, distance);
         ScenicShotSample sample = plan!.Sample(p, shapeStrength).WithCameraPosition(ToCore(camera));
-        return plan.IsSpatial ? sample.WithAimPosition(AimAtDistance(distance)) : sample;
+        return plan.IsSpatial ? sample.WithAimPosition(AimAtDistance(distance, camera)) : sample;
     }
 
     internal float Distance(float progress)
@@ -169,11 +169,22 @@ internal sealed class ScenicSplinePath : IDisposable
     // Short smooth ramps and a steady cruise apply to distance, not knot parameter. Unequal
     // knot spacing therefore cannot produce accidental acceleration or stalls.
     private float Ease(float value) => (float)plan!.MotionFraction(value);
-    private AutonomyPosition AimAtDistance(float distance)
+    private AutonomyPosition AimAtDistance(float distance, Vector3 camera)
     {
         int segment = 0;
         while (segment < knotDistance!.Length - 2 && distance > knotDistance[segment + 1]) segment++;
         double fraction = (distance - knotDistance[segment]) / (knotDistance[segment + 1] - knotDistance[segment]);
+        if (plan!.IsJourney)
+        {
+            // A journey's paired knots describe its view direction while the
+            // native body travels steadily. Easing a world-space aim to a stop
+            // at every knot makes even a straight constant-offset route wag
+            // back and forth. Interpolate the authored offsets instead, then
+            // apply them to the actual native body, preserving the exact seam.
+            Vector3 before = FromCore(plan.AimWaypoint(segment)) - FromCore(plan.CameraWaypoint(segment));
+            Vector3 after = FromCore(plan.AimWaypoint(segment + 1)) - FromCore(plan.CameraWaypoint(segment + 1));
+            return ToCore(camera + Vector3.Lerp(before, after, (float)Math.Max(0, Math.Min(1, fraction))));
+        }
         double from = plan!.WaypointFraction(segment), to = plan.WaypointFraction(segment + 1);
         return plan.RouteAimAt(Math.Max(0, Math.Min(1, from + (to - from) * fraction)));
     }
