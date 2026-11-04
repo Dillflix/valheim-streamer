@@ -18,9 +18,31 @@ internal static class ScenicTraceTests
         yield return ("Trace encoding preserves finite numeric inputs across locales and escapes text", Encoding);
         yield return ("Flight recorder rotates bounded files and preserves unrelated files", Rotation);
         yield return ("Flight recorder reports inaccessible storage without throwing into the producer", StorageFailure);
+        yield return ("Encounter source metadata survives held-frame reuse and current replay headers", EncounterCapture);
     }
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     private static string Header() => new CameraTraceRecord("header", 0).Field("version", "0.8.29").Field("utc", "test-session").ToString();
+    private static void EncounterCapture()
+    {
+        var source = new DiagnosticPictureContext("Player", 12, 4, true, "Readable fallback", intent: "Action",
+            encounter: "Developing", coverage: "Exchange unavailable; player retained", hostiles: 9,
+            participants: 12, framed: 2, visibleOpponents: 0, actorOcclusion: .2);
+        var held = source;
+        source = new DiagnosticPictureContext("Player", 13, 5, true, "Clear exchange", encounter: "Engaged",
+            hostiles: 8, participants: 11, framed: 5, visibleOpponents: 3);
+        string encoded = held.Append(Row("video-sample", 10, 1).Field("presentation", "Held")).ToString();
+        using JsonDocument row = JsonDocument.Parse(encoded);
+        Check(row.RootElement.GetProperty("shot").GetInt64() == 12 && row.RootElement.GetProperty("encounter").GetString() == "Developing" &&
+            row.RootElement.GetProperty("hostiles").GetInt32() == 9 && row.RootElement.GetProperty("visibleOpponents").GetInt32() == 0 &&
+            row.RootElement.GetProperty("actorOcclusion").GetDouble() == .2, "Held picture acquired later encounter metadata");
+        var replay = new ReplayEngine();
+        replay.Read(new CameraTraceRecord("header", 0).Field("version", "0.8.35").Field("utc", "encounter-test").ToString());
+        replay.Read(encoded);
+        replay.Read(Row("budget", 11.5, 2).Field("operation", "step").Field("started", 10).Field("waitingAt", 11.2)
+            .Field("urgent", true).Field("expired", true).ToString());
+        Check(replay.Invalid == 0 && replay.Divergences == 0 && replay.Replayed == 1,
+            "New encounter footage metadata broke existing scenic policy replay");
+    }
     private static CameraTraceRecord Row(string kind, double time, long seq) => new CameraTraceRecord(kind, time).Field("seq", seq);
     private static void SurveyReplay()
     {

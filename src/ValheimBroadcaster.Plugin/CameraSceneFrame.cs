@@ -18,7 +18,7 @@ internal sealed class CameraSceneSubject
 
 internal sealed class CameraSceneFrame
 {
-    internal readonly List<CameraSceneSubject> Subjects = new List<CameraSceneSubject>(6);
+    internal readonly List<CameraSceneSubject> Subjects = new List<CameraSceneSubject>(EncounterParticipantPolicy.MaximumParticipants);
     internal Vector3 PrimaryFocus, Focus, Velocity, GroupVelocity;
     // Body orientation is observable, but is not a claim about eye gaze or intent.
     internal Vector3 FacingDirection, InterestFocus;
@@ -28,6 +28,7 @@ internal sealed class CameraSceneFrame
     // Encounter evidence is separate from group bounds and the clamped aim
     // interest: a distant animal must not shrink all players to tiny figures.
     internal EncounterKind Encounter;
+    internal EncounterSituation EncounterSituation;
     internal Character? EncounterActor;
     internal ActionPhaseCue ActionPhase;
     internal Vector3 EncounterFocus, EncounterDirection;

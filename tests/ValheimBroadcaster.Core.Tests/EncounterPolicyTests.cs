@@ -89,7 +89,7 @@ internal static class EncounterPolicyTests
     private static void ResourceSwing()
     {
         var o = new EncounterObservation("passive", 5, 5, 0, 0);
-        Check(EncounterPolicy.Classify(o, false, true).Kind == EncounterKind.None);
+        Check(EncounterPolicy.Classify(o, false, true).Kind == EncounterKind.Threat);
         Check(EncounterPolicy.Classify(new EncounterObservation("hurt", 5, 5, 0, 0, damaged: true), false, true).Kind == EncounterKind.Combat);
     }
     private static void GroupEncounter()

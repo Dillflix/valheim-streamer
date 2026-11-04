@@ -14,6 +14,7 @@ internal sealed class PlayerSceneContext
         internal Character Actor = null!;
         internal Vector3 Position, Velocity;
         internal float LastAt, Health, DamageUntil, AttackUntil, OpponentUntil;
+        internal int MotionSamples;
         internal bool Connection;
     }
 
@@ -26,6 +27,9 @@ internal sealed class PlayerSceneContext
     private readonly List<Observation> opponents = new List<Observation>();
     private readonly ActionPhasePolicy actionPhases = new ActionPhasePolicy();
     private readonly EncounterPolicy encounters = new EncounterPolicy();
+    private readonly EncounterSituationPolicy situation = new EncounterSituationPolicy();
+    private readonly EncounterParticipantPolicy participantPolicy = new EncounterParticipantPolicy();
+    private readonly List<EncounterParticipant> participantObservations = new List<EncounterParticipant>(80);
     private readonly List<EncounterObservation> encounterObservations = new List<EncounterObservation>(64);
     private readonly List<Character> encounterActors = new List<Character>(64);
     private Character? encounterActor;
@@ -70,7 +74,7 @@ internal sealed class PlayerSceneContext
         {
             Reset(); frame.SceneId = ++nextSceneId;
         }
-        if (changedPrimary) { actionPhases.Reset(); frame.ActionPhase = actionPhases.Cue; rangedAim.Reset(); encounters.Reset(); ClearEncounter(); }
+        if (changedPrimary) { actionPhases.Reset(); frame.ActionPhase = actionPhases.Cue; rangedAim.Reset(); encounters.Reset(); situation.Reset(); frame.EncounterSituation = default; ClearEncounter(); }
         if (changedPrimary || primaryActor == null)
         { primaryActor = player; primaryId = primary.Identity.Id; primaryCharacter = characterId; world = ZNet.instance; surveyAt = -1; sampledFrame = -1; }
         if (sampledFrame == Time.frameCount) return frame;
@@ -182,7 +186,7 @@ internal sealed class PlayerSceneContext
         foreach (CameraSceneSubject subject in frame.Subjects)
             if (observations.TryGetValue(subject.CharacterId, out Observation? observation))
             { attack |= observation.AttackUntil > now; damaged |= observation.DamageUntil > now; }
-        SurveyEncounter(player, now, attack, old);
+        SurveyEncounter(player, now, attack, groupsEnabled, old);
 
         bool work = ObservedWork(player, primaryObservation, now, out string workEvidence,
             out Collider? resource, out Vector3 resourceFocus, out string resourceId);
@@ -218,6 +222,7 @@ internal sealed class PlayerSceneContext
         foreach (CameraSceneSubject subject in frame.Subjects) if (subject.Player) players++;
         string place = $"; {frame.Environment} {frame.EnvironmentConfidence:F2}; {frame.Locomotion}; scene {frame.SceneId}";
         frame.Description = $"{frame.Activity}; {players} player(s), {frame.EncounterOpponentCount} opponent(s); {evidence}{place}; encounter {frame.Encounter} ({frame.EncounterConfidence:F2}, {frame.EncounterDistance:F0}m); {frame.EncounterEvidence}" +
+            $"; hostile context {frame.EncounterSituation.Pressure}: {frame.EncounterSituation.HostileCount} observed, {frame.EncounterSituation.ApproachingCount} closing, {frame.EncounterSituation.OccupiedSectors}/8 sectors, surrounded {frame.EncounterSituation.Encircled}; cast {frame.Subjects.Count}/{EncounterParticipantPolicy.MaximumParticipants}" +
             (frame.HasInterest ? $"; {frame.InterestKind} interest {frame.InterestConfidence:F2}" : "");
         stale.Clear();
         foreach (KeyValuePair<string, Observation> pair in observations)
@@ -225,7 +230,7 @@ internal sealed class PlayerSceneContext
         foreach (string id in stale) observations.Remove(id);
     }
 
-    private void SurveyEncounter(Player player, float now, bool groupAttack,
+    private void SurveyEncounter(Player player, float now, bool groupAttack, bool groupsEnabled,
         Dictionary<string, CameraSceneSubject> old)
     {
         opponents.Clear(); encounterObservations.Clear(); encounterActors.Clear();
@@ -256,10 +261,15 @@ internal sealed class PlayerSceneContext
             Vector3 focus = Focus(actor), delta = focus - origin;
             float distance = delta.magnitude, nearest = distance;
             Vector3 nearestFocus = origin;
+            Observation nearestObservation = observations[primaryCharacter];
             foreach (CameraSceneSubject subject in frame.Subjects)
             {
                 float toMember = Vector3.Distance(subject.Focus, focus);
-                if (toMember < nearest) { nearest = toMember; nearestFocus = subject.Focus; }
+                if (toMember < nearest)
+                {
+                    nearest = toMember; nearestFocus = subject.Focus;
+                    if (observations.TryGetValue(subject.CharacterId, out Observation? memberObservation)) nearestObservation = memberObservation;
+                }
             }
             bool connected = nearest <= 40 && Connected(nearestFocus, focus);
             Vector3 flat = delta; flat.y = 0;
@@ -274,7 +284,9 @@ internal sealed class PlayerSceneContext
             Character? target = ai && view && view.IsOwner() ? ai.GetTargetCreature() : null;
             bool targetsGroup = false;
             foreach (CameraSceneSubject subject in frame.Subjects) if (target && target == subject.Actor) targetsGroup = true;
-            bool hostile = BaseAI.IsEnemy(player, actor);
+            // Flee-only AnimalAI wildlife is quarry, not surrounding hostile
+            // pressure merely because its faction is opposed to the player.
+            bool hostile = ai is MonsterAI && BaseAI.IsEnemy(player, actor);
             float health = actor.GetMaxHealth();
             float playerHealth = player.GetMaxHealth(), height = actor.GetHeight();
             float relative = Finite(health) ? health / (Finite(playerHealth) ? Mathf.Max(100, playerHealth) : 100) : 0;
@@ -283,9 +295,14 @@ internal sealed class PlayerSceneContext
             bool attacking = observed.AttackUntil > now, damaged = observed.DamageUntil > now;
             if (hostile && connected && ObservedEncounterEvidence.SupportsCombat(targetsGroup, attacking, groupAttack, damaged, nearest))
                 observed.OpponentUntil = now + 3;
+            Vector3 separation = Vector3.ProjectOnPlane(focus - nearestFocus, Vector3.up);
+            bool motionReliable = observed.MotionSamples >= 2 && nearestObservation.MotionSamples >= 2 && separation.sqrMagnitude > .1f;
+            float closing = motionReliable ? Mathf.Clamp(Vector3.Dot(nearestObservation.Velocity - observed.Velocity, separation.normalized), -40, 40) : 0;
             encounterObservations.Add(new EncounterObservation(actor.GetZDOID().ToString(), distance, nearest, alignment, prominence,
-                connected, hostile, drawing || actor.GetZDOID().ToString() == encounters.Selected.Id, targetsGroup, attacking, damaged, observed.OpponentUntil > now, aimLine));
+                connected, hostile, drawing || actor.GetZDOID().ToString() == encounters.Selected.Id, targetsGroup, attacking, damaged, observed.OpponentUntil > now, aimLine,
+                delta.x, delta.z, closing, motionReliable));
         }
+        frame.EncounterSituation = situation.Observe(now, encounterObservations, groupAttack);
         EncounterCandidate selected = encounters.Update(now, aiming, groupAttack, encounterObservations);
         ClearEncounter();
         if (selected.Kind == EncounterKind.None) return;
@@ -294,31 +311,35 @@ internal sealed class PlayerSceneContext
         if (!encounterActor) return;
         frame.Encounter = selected.Kind; frame.EncounterConfidence = selected.Confidence; frame.EncounterTargetId = selected.Id;
         frame.EncounterEvidence = selected.Kind == EncounterKind.Hunting ? (drawing ? "replicated ranged draw; target inferred from body-facing cone" : "recent qualified ranged aim; shot outcome unknown") :
-            selected.Kind == EncounterKind.Threat ? "nearby hostile prominence; danger inferred, aggression unconfirmed" :
+            selected.Kind == EncounterKind.Threat ? $"observed hostile {frame.EncounterSituation.Pressure.ToString().ToLowerInvariant()}; aggression and intent unconfirmed" :
             selected.Confidence > .9f ? "owner-observed opponent target belongs to group" : "nearby hostile action/damage; exact victim unknown";
-        // Selected actor comes first, then ranked nearby engaged opponents.
-        // Reserve their slots before companions so a group cannot hide its foe.
-        var admitted = new List<Observation>(3);
-        if (selected.Distance <= (frame.Interior ? 12 : 28) && observations.TryGetValue(selected.Id, out Observation? main)) admitted.Add(main);
-        int enemies = 0;
+        // Keep a broad observational cast. Per-shot framing chooses which of
+        // these actors fit its purpose; the complete pressure survey above is
+        // independent of this processing budget and of camera visibility.
+        participantObservations.Clear();
+        foreach (CameraSceneSubject subject in frame.Subjects)
+        {
+            Vector3 p = subject.Actor.transform.position;
+            participantObservations.Add(new EncounterParticipant(subject.CharacterId, new AutonomyPosition(p.x, p.y, p.z),
+                primary: subject.IsPrimary, retained: old.ContainsKey(subject.CharacterId)));
+        }
         foreach (EncounterCandidate candidate in encounters.Ranked)
         {
-            if (candidate.Kind == EncounterKind.Combat) enemies++;
-            if (admitted.Count >= 3 || candidate.Id == selected.Id || candidate.Kind != EncounterKind.Combat ||
-                candidate.Distance > (frame.Interior ? 12 : 28)) continue;
-            if (observations.TryGetValue(candidate.Id, out Observation? observation)) admitted.Add(observation);
+            if (!groupsEnabled || candidate.Distance > (frame.Interior ? 20 : 40) ||
+                !observations.TryGetValue(candidate.Id, out Observation? observation) || !Valid(observation.Actor)) continue;
+            Vector3 p = observation.Actor.transform.position;
+            participantObservations.Add(new EncounterParticipant(candidate.Id, new AutonomyPosition(p.x, p.y, p.z),
+                opponent: true, keyOpponent: candidate.Id == selected.Id, retained: old.ContainsKey(candidate.Id), relevance: candidate.Score));
         }
-        frame.EncounterOpponentCount = Mathf.Max(1, enemies);
-        while (frame.Subjects.Count + admitted.Count > 6) frame.Subjects.RemoveAt(frame.Subjects.Count - 1);
-        // Keep primary, then key opponent, then companions/other threats. This
-        // order is shared by all bounded visibility/group readers.
-        int insertAt = 1;
-        foreach (Observation observation in admitted)
+        frame.EncounterOpponentCount = Math.Max(1, frame.EncounterSituation.HostileCount);
+        IReadOnlyList<string> cast = participantPolicy.Select(participantObservations);
+        frame.Subjects.Clear();
+        foreach (string id in cast)
         {
-            Add(observation.Actor, observation.Actor.GetZDOID().ToString(), false, true, old);
-            CameraSceneSubject subject = frame.Subjects[frame.Subjects.Count - 1];
-            frame.Subjects.RemoveAt(frame.Subjects.Count - 1); frame.Subjects.Insert(insertAt++, subject);
-            opponents.Add(observation);
+            if (!observations.TryGetValue(id, out Observation? observation) || !Valid(observation.Actor)) continue;
+            bool isPrimary = observation.Actor == player, opponent = !(observation.Actor is Player);
+            Add(observation.Actor, isPrimary ? primaryId : id, isPrimary, opponent, old);
+            if (opponent) opponents.Add(observation);
         }
         UpdateEncounterFrame();
     }
@@ -400,10 +421,11 @@ internal sealed class PlayerSceneContext
         {
             Vector3 measured = (position - item.Position) / dt;
             item.Velocity = Vector3.Lerp(item.Velocity, Vector3.ClampMagnitude(measured, 20f), 1f - Mathf.Exp(-3f * dt));
+            item.MotionSamples = Math.Min(8, item.MotionSamples + 1);
             if (health < item.Health - .1f) item.DamageUntil = now + 4f;
         }
         else if (dt > 1 || Vector3.Distance(item.Position, position) > 16f)
-        { item.Velocity = Vector3.zero; item.DamageUntil = item.AttackUntil = item.OpponentUntil = 0; }
+        { item.Velocity = Vector3.zero; item.DamageUntil = item.AttackUntil = item.OpponentUntil = 0; item.MotionSamples = 0; }
         if (actor.InAttack()) item.AttackUntil = now + 1.5f;
         item.Position = position; item.LastAt = now; item.Health = health;
         return item;
@@ -536,6 +558,7 @@ internal sealed class PlayerSceneContext
             subject = new CameraSceneSubject { Actor = actor, Weight = primary ? 2f : .05f };
         subject.Id = id; subject.CharacterId = character; subject.Player = actor as Player;
         subject.IsPrimary = primary; subject.IsOpponent = opponent; subject.Focus = Focus(actor);
+        if (observations.TryGetValue(character, out Observation? observation)) subject.Velocity = observation.Velocity;
         float radius = actor.GetRadius();
         subject.Radius = actor is Player ? .6f : Finite(radius) ? Mathf.Clamp(radius, .45f, 8f) : .6f;
         float height = actor.GetHeight();
@@ -558,7 +581,8 @@ internal sealed class PlayerSceneContext
     internal void Reset()
     {
         actionPhases.Reset(); frame.ActionPhase = actionPhases.Cue;
-        grouping.Reset(); encounters.Reset(); encounterObservations.Clear(); encounterActors.Clear(); ClearEncounter(); rangedAim.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
+        grouping.Reset(); encounters.Reset(); situation.Reset(); participantObservations.Clear(); frame.EncounterSituation = default;
+        encounterObservations.Clear(); encounterActors.Clear(); ClearEncounter(); rangedAim.Reset(); observations.Clear(); companions.Clear(); stale.Clear(); opponents.Clear(); frame.Subjects.Clear();
         rooms.Reset(); locomotion.Reset(); frame.SceneId = 0;
         frame.Environment = ShotEnvironment.Unknown; frame.Locomotion = ShotLocomotion.Stationary;
         frame.EnvironmentConfidence = frame.LocomotionConfidence = frame.CeilingHeight = 0;

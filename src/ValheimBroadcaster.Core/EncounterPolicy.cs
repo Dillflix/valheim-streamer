@@ -28,18 +28,24 @@ namespace ValheimBroadcaster.Core
     {
         public readonly string Id;
         public readonly float Distance, GroupDistance, AimAlignment, Prominence;
+        public readonly float OffsetX, OffsetZ, ClosingSpeed;
+        public readonly bool MotionReliable;
         public readonly bool ClearConnection, ClearAimLine, Hostile, Huntable, TargetsGroup, Attacking, Damaged, RetainedCombat;
         public EncounterObservation(string id, float distance, float groupDistance, float aimAlignment, float prominence,
             bool clearConnection = true, bool hostile = true, bool huntable = true, bool targetsGroup = false,
-            bool attacking = false, bool damaged = false, bool retainedCombat = false, bool clearAimLine = true)
+            bool attacking = false, bool damaged = false, bool retainedCombat = false, bool clearAimLine = true,
+            float offsetX = 0, float offsetZ = 0, float closingSpeed = 0, bool motionReliable = false)
         {
             Id = id; Distance = distance; GroupDistance = groupDistance; AimAlignment = aimAlignment; Prominence = prominence;
             ClearConnection = clearConnection; ClearAimLine = clearAimLine; Hostile = hostile; Huntable = huntable; TargetsGroup = targetsGroup;
             Attacking = attacking; Damaged = damaged; RetainedCombat = retainedCombat;
+            OffsetX = offsetX; OffsetZ = offsetZ; ClosingSpeed = closingSpeed; MotionReliable = motionReliable;
         }
         public bool IsValid => !string.IsNullOrEmpty(Id) && Id.Length <= 128 && Finite(Distance) && Distance >= 0 && Distance <= 96 &&
             Finite(GroupDistance) && GroupDistance >= 0 && GroupDistance <= 96 && Finite(AimAlignment) && AimAlignment >= -1 &&
-            AimAlignment <= 1 && Finite(Prominence) && Prominence >= 0 && Prominence <= 1;
+            AimAlignment <= 1 && Finite(Prominence) && Prominence >= 0 && Prominence <= 1 &&
+            Finite(OffsetX) && Finite(OffsetZ) && Math.Abs(OffsetX) <= 96 && Math.Abs(OffsetZ) <= 96 &&
+            Finite(ClosingSpeed) && Math.Abs(ClosingSpeed) <= 40;
         private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
     }
 
@@ -119,9 +125,13 @@ namespace ValheimBroadcaster.Core
                 return new EncounterCandidate(value.Id, EncounterKind.Hunting,
                     2 + (value.AimAlignment - .985f) * 40 + (value.Damaged ? .2f : 0) + .1f * (1 - value.Distance / 96),
                     .65f, value.Distance);
-            if (value.Hostile && value.Prominence >= .5f && value.GroupDistance <= 20)
+            // Ordinary hostile presence deserves context before any attack.
+            // The situation policy separately distinguishes closing/crowding
+            // pressure; this category never asserts aggression or exact intent.
+            if (value.Hostile && value.GroupDistance <= 28)
                 return new EncounterCandidate(value.Id, EncounterKind.Threat,
-                    1 + value.Prominence * .4f + .3f * (1 - value.GroupDistance / 20), .65f, value.Distance);
+                    1 + value.Prominence * .35f + .3f * (1 - value.GroupDistance / 28) +
+                    (value.MotionReliable ? .2f * Math.Min(1, Math.Max(0, value.ClosingSpeed) / 4) : 0), .65f, value.Distance);
             return default;
         }
 

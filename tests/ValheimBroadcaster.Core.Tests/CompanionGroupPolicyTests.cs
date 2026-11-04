@@ -50,9 +50,9 @@ internal static class CompanionGroupPolicyTests
         Tick(p, 0, 3, O("a", 17), O("b", -17), O("c", 5), O("d", 6), O("e", 34));
         Check(p.Members.Count == 3 && !Contains(p.Members, "e"));
         Check(!(Contains(p.Members, "a") && Contains(p.Members, "b")));
-        // Existing coherent companions keep their membership when a slightly closer stranger arrives.
+        // A coherent fourth player is no longer discarded by a three-person cap.
         Tick(p, 3.25, 6, O("a", 17), O("c", 5), O("d", 6), O("new", 1));
-        Check(!Contains(p.Members, "new"));
+        Check(p.Members.Count == 4 && Contains(p.Members, "new"));
     }
     private static void ResetBindings()
     {

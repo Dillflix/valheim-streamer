@@ -38,6 +38,7 @@ internal sealed class PlayerComplementaryCamera
         bool related = candidate && candidate.isActiveAndEnabled && !candidate.IsDead() && !candidate.IsPlayer() &&
             !candidate.GetZDOID().IsNone() && scene.EncounterConfidence >= .6f &&
             scene.Encounter != EncounterKind.None && !scene.Interior && scene.Environment == ShotEnvironment.Open &&
+            EncounterPerspectivePolicy.AllowsInsert(scene.EncounterSituation) &&
             !scene.DoorwayTransition && TargetRoster.Finite(candidate.transform.position) &&
             !Character.InInterior(candidate.transform.position) &&
             Vector3.Distance(scene.PrimaryFocus, CreatureSceneContext.Focus(candidate)) <= 60;

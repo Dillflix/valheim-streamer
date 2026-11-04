@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.35 broader encounter and crowd coverage
+
+Built directly on 0.8.34 (`0df83a4798b3d40e8124e14fe440dba97aad4fdc`). Adds hostile presence/developing-pressure observation, a larger representative cast with per-shot framing, explicit encounter coverage preference, and actor-to-actor body occlusion. Source identities remain attached through prediction, actual player coverage and synchronized footage. No new server capability or observer protocol is introduced.
+
+Local validation passes **930/930 Core cases**, **64/64 native camera-math cases**, **31 real-assembly audits**, **91 diagnostic-capture/FFmpeg checks**, **5 footage-review tests**, and all three replay fixtures with zero mismatches. Client and companion compile with warnings treated as errors against real matching references. The isolated SDK compiler was used locally; normal project builds and Windows/Linux media tests run in repository CI. Actual Valheim crowded combat, body-silhouette accuracy, camera transitions, Sandboxie operation and frame cost remain **not run here**. Use the [encounter runtime matrix](ENCOUNTER-COVERAGE.md) and automatic paired footage/diagnostics.
+
 ## 0.8.34 synchronized capture and editorial coverage
 
 Built directly on 0.8.33 (`3a3f425dd1e70e521cff09e8aee3b807bea75320`). The change adds independently admitted Scenic pictures, local trader/context coverage, observed action phases, bounded opponent/quarry perspectives and paired diagnostic video/frame timelines. Client/server protocol behavior remains unchanged; no new companion deployment is required. Use the [capture instructions and runtime acceptance matrix](EDITORIAL-CAPTURE.md) to collect comparable footage and verify the picture, actual presentation credit, fallback duration, NPC framing, action timing, return continuity, resource bounds and unchanged RTMP audio.

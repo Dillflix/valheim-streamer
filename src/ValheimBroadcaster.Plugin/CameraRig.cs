@@ -29,6 +29,10 @@ internal sealed class CameraRig
     internal bool LastPictureUsable { get; private set; }
     internal bool IsProcedural => proceduralActive;
     internal string PictureReason => scenicActive ? scenicCamera.LastFailure : proceduralActive ? ActorCamera.PictureReason : LastFailure;
+    internal string EncounterCoverageDescription => proceduralActive && !scenicActive ? ActorCamera.EncounterCoverageDescription : "";
+    internal int FramedParticipantCount => proceduralActive && !scenicActive ? ActorCamera.FramedParticipantCount : 0;
+    internal int VisibleOpponentCount => proceduralActive && !scenicActive ? ActorCamera.VisibleOpponentCount : 0;
+    internal float PrimaryActorOcclusion => proceduralActive && !scenicActive ? ActorCamera.PrimaryActorOcclusion : 0;
     internal float FieldOfView => camera ? camera.fieldOfView : 75f;
     internal Quaternion Rotation => camera ? camera.transform.rotation : Quaternion.identity;
     internal IReadOnlyList<string> VisiblePlayerIds => proceduralActive && !scenicActive && !creatureActive && !complementaryActive ? shotCamera.VisiblePlayerIds : Array.Empty<string>();

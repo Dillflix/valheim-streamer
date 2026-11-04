@@ -20,7 +20,9 @@ namespace ValheimBroadcaster.Core
     /// <summary>Persistent, primary-anchored membership. Never grows a transitive chain of nearby players.</summary>
     public sealed class CompanionGroupPolicy
     {
-        public const int MaximumCompanions = 3;
+        // Observational membership. Each camera independently chooses a cast
+        // that fits its intended scale, so this is a processing budget only.
+        public const int MaximumCompanions = EncounterParticipantPolicy.MaximumParticipants - 1;
         public const double JoinDistance = 18, ExitDistance = 24, HardDistance = 30, MaximumSpan = 30;
         public const double JoinSeconds = 2, MovingJoinSeconds = 1, ExitGraceSeconds = 2;
         private readonly Dictionary<string, Entry> entries = new Dictionary<string, Entry>(StringComparer.Ordinal);

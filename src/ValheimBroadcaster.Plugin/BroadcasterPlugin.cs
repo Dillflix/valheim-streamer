@@ -21,7 +21,7 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.34";
+    public const string PluginVersion = "0.8.35";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -814,11 +814,15 @@ public sealed class BroadcasterPlugin : BaseUnityPlugin
         string intent = scenic ? idle.Plan?.Id == shot ?
             idle.Plan.FeatureKind + " / " + idle.Plan.Role + (idle.Plan.IsPictureOnly ? " / settled picture" : " / moving route") :
             "Retained previous scenic view" : rig.CurrentPlayerScene?.ActionPhase.Phase.ToString() ?? "";
+        CameraSceneFrame? encounterScene = scenic ? null : rig.CurrentPlayerScene;
         return new DiagnosticPictureContext(probe.Active ? "Probe" : presentedMode.ToString(),
             shot, presentedRevision, cameraReady && rig.LastPictureUsable,
             rig.PictureReason, position.x, position.y, position.z,
             euler.x, euler.y, euler.z, rig.FieldOfView, rig.PerspectiveDescription,
-            picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1, intent);
+            picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1, intent,
+            encounterScene?.EncounterSituation.Pressure.ToString() ?? "", rig.EncounterCoverageDescription,
+            encounterScene?.EncounterSituation.HostileCount ?? 0, encounterScene?.Subjects.Count ?? 0,
+            rig.FramedParticipantCount, rig.VisibleOpponentCount, rig.PrimaryActorOcclusion);
     }
 
     private void ToggleStream()

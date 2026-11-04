@@ -13,10 +13,10 @@ internal sealed class ActorSpatialPlanner
     private readonly ActorSpatialHorizon horizon = new ActorSpatialHorizon();
     private readonly ActorSpatialGuidance guidance = new ActorSpatialGuidance();
     private readonly AutonomyPosition[] nominal = new AutonomyPosition[ActorSpatialHorizon.Layers];
-    private readonly List<PlayerShotVisibility.Subject> observed = new List<PlayerShotVisibility.Subject>(6);
-    private readonly List<PlayerShotVisibility.Subject> predicted = new List<PlayerShotVisibility.Subject>(6);
-    private readonly Vector3[] velocities = new Vector3[6];
-    private readonly string[] subjectIds = new string[6];
+    private readonly List<PlayerShotVisibility.Subject> observed = new List<PlayerShotVisibility.Subject>(PlayerShotVisibility.MaximumSubjects);
+    private readonly List<PlayerShotVisibility.Subject> predicted = new List<PlayerShotVisibility.Subject>(PlayerShotVisibility.MaximumSubjects);
+    private readonly Vector3[] velocities = new Vector3[PlayerShotVisibility.MaximumSubjects];
+    private readonly string[] subjectIds = new string[PlayerShotVisibility.MaximumSubjects];
     private Vector3 camera, focus, poseFocus, sceneVelocity, priorVelocity, priorFocus;
     private Quaternion rotation;
     private AutonomyPosition goal;
@@ -42,7 +42,8 @@ internal sealed class ActorSpatialPlanner
             !TargetRoster.Finite(context.Velocity))
         { Suspend("spatial prediction paused; retaining the validated actor shot"); return; }
         for (int i = 0; i < subjects.Count; i++)
-            if (!TargetRoster.Finite(context.Subjects[i].Velocity) || !TargetRoster.Finite(subjects[i].Focus))
+            if (FindSubject(context, subjects[i]) is not CameraSceneSubject member ||
+                !TargetRoster.Finite(member.Velocity) || !TargetRoster.Finite(subjects[i].Focus))
             { Suspend("spatial subject motion evidence unavailable; retaining the validated actor shot"); return; }
         ObserveMotion(now, context, currentFocus);
         CameraSpatialScene scene = CameraSpatialScene.Shared;
@@ -144,8 +145,9 @@ internal sealed class ActorSpatialPlanner
         observed.Clear();
         for (int i = 0; i < subjects.Count && i < velocities.Length; i++)
         {
-            observed.Add(subjects[i]); velocities[i] = Vector3.ClampMagnitude(context.Subjects[i].Velocity, 20);
-            subjectIds[i] = context.Subjects[i].Id;
+            CameraSceneSubject member = FindSubject(context, subjects[i])!;
+            observed.Add(subjects[i]); velocities[i] = Vector3.ClampMagnitude(member.Velocity, 20);
+            subjectIds[i] = member.Id;
         }
         ShotTrajectoryState far = trajectory.PreviewCoverage(1.5);
         for (int i = 0; i < nominal.Length; i++)
@@ -185,7 +187,7 @@ internal sealed class ActorSpatialPlanner
             Vector3.Distance(currentFocus, focus + sceneVelocity * (now - started)) > .75f ||
             Vector3.Distance(Vector3.ClampMagnitude(context.Velocity, 20), sceneVelocity) > 2.5f) return false;
         for (int i = 0; i < observed.Count; i++)
-            if (subjectIds[i] != context.Subjects[i].Id ||
+            if (subjectIds[i] != FindSubject(context, subjects[i])?.Id ||
                 Vector3.Distance(subjects[i].Focus, observed[i].Focus + velocities[i] * (now - started)) > 1.2f) return false;
         return true;
     }
@@ -210,8 +212,18 @@ internal sealed class ActorSpatialPlanner
             // constant-velocity forecasts pinpoint a future actor exactly.
             float uncertainty = Mathf.Min(.6f, velocities[i].magnitude * seconds * .08f * (1 - PredictionConfidence(seconds)));
             predicted.Add(new PlayerShotVisibility.Subject(subject.Focus + velocities[i] * seconds, subject.Weight,
-                subject.Radius + uncertainty, subject.Primary, subject.Height, subject.BottomOffset, subject.Scale));
+                subject.Radius + uncertainty, subject.Primary, subject.Height, subject.BottomOffset, subject.Scale, subject.ActorId));
         }
+    }
+
+    // Each shot may frame a different subset. A prefix index into the observed
+    // encounter would attribute another actor's motion to this subject.
+    private static CameraSceneSubject? FindSubject(CameraSceneFrame context, PlayerShotVisibility.Subject subject)
+    {
+        foreach (CameraSceneSubject member in context.Subjects)
+            if (member.Actor && subject.ActorId != 0 && member.Actor.GetInstanceID() == subject.ActorId)
+                return member;
+        return null;
     }
 
     private static string? Building(PlaceNode? place)
