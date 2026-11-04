@@ -1,0 +1,175 @@
+using System;
+using UnityEngine;
+using ValheimBroadcaster.Core;
+
+namespace ValheimBroadcaster.Plugin;
+
+/// <summary>Execution-only scenic camera. The dedicated director supplies the
+/// immutable shot and proposed progress; this rig returns the accepted pose and
+/// progress. It never chooses a different viewpoint, changes the lens or drives
+/// an actor-style transition. New scenic shots enter with an intentional cut.</summary>
+internal sealed class ScenicCameraRig : IDisposable
+{
+    private readonly ScenicPoseSolver solver = new ScenicPoseSolver();
+    private readonly ScenicSplinePath path = new ScenicSplinePath();
+    private readonly ScenicVisibility ownedVisibility = new ScenicVisibility();
+    private ScenicShotPlan? plan;
+    private ScenicShotPlan? preparedPlan;
+    private ZNet? world;
+    private Player? carrier;
+    private ScenicPose accepted;
+    private bool hasPose;
+    private float aspect, nearClip;
+    private long pictureEpoch = 1000000000;
+    private RenderedPictureContext pictureContext;
+    private RenderedPictureKey pendingReconsideration;
+    internal bool PictureConcern { get; private set; }
+    internal string PictureConcernReason { get; private set; } = "No persistent rendered-picture concern";
+    private readonly int[] rejected = new int[Enum.GetValues(typeof(ScenicRejectionKind)).Length];
+    private bool tracedFailure;
+    private long tracedPlan;
+    private string tracedReason = "";
+    private float nextMotionTrace;
+    internal bool LastPictureUsable { get; private set; }
+    internal bool MovementAccepted { get; private set; }
+    internal float PresentedProgress => hasPose ? accepted.Progress : 0;
+    internal long PresentedPlanId => hasPose ? plan?.Id ?? 0 : 0;
+    internal Vector3? PresentedFocus => hasPose && LastPictureUsable ? accepted.Focus : (Vector3?)null;
+    internal ScenicRejectionKind FailureKind { get; private set; }
+    internal string LastFailure { get; private set; } = "Awaiting a directed scenic shot";
+    internal string Diagnostics { get; private set; } = "Scenic director: awaiting a prepared shot";
+    internal RenderedPictureMonitor? PictureMonitor { get; set; }
+    internal RenderedPictureContext? PictureContext => LastPictureUsable && pictureContext.Valid &&
+        pictureContext.Frame == Time.frameCount ? pictureContext : (RenderedPictureContext?)null;
+
+    internal bool TrySolve(ScenicShotPlan shot, float progress, ScenicVisibility? suppliedVisibility,
+        float cameraAspect, float cameraNearClip, bool continuous, bool moveCarrier,
+        out Vector3 position, out Quaternion rotation, out float fov)
+    {
+        CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Live, out var liveWork);
+        using (liveWork) return TrySolveBudgeted(shot, progress, suppliedVisibility, cameraAspect, cameraNearClip,
+            continuous, moveCarrier, out position, out rotation, out fov);
+    }
+
+    private bool TrySolveBudgeted(ScenicShotPlan shot, float progress, ScenicVisibility? suppliedVisibility,
+        float cameraAspect, float cameraNearClip, bool continuous, bool moveCarrier,
+        out Vector3 position, out Quaternion rotation, out float fov)
+    {
+        position = default; rotation = Quaternion.identity; fov = shot.FieldOfView;
+        LastPictureUsable = MovementAccepted = PictureConcern = false; pictureContext = default;
+        if (world != ZNet.instance || carrier != Player.m_localPlayer)
+        {
+            Reset(); world = ZNet.instance; carrier = Player.m_localPlayer;
+        }
+        bool changed = !ReferenceEquals(plan, shot);
+        if (!ReferenceEquals(preparedPlan, shot))
+        {
+            if (!shot.IsDirected || !shot.IsPictureOnly && !shot.IsPan && !path.Prepare(shot, 1))
+                return Reject(ScenicRejectionKind.InvalidPlan, "Cannot prepare directed scenic native route");
+            solver.Reset(); preparedPlan = shot;
+        }
+        if (!Finite(progress) || progress < 0 || progress > 1 || !Finite(cameraAspect) || cameraAspect <= 0 ||
+            !Finite(cameraNearClip) || cameraNearClip <= 0)
+            return Reject(ScenicRejectionKind.InvalidPlan, "Invalid scenic progress or camera format");
+        ScenicVisibility visibility = suppliedVisibility ?? ownedVisibility;
+        // Aspect or near-plane changes alter the actual validated image. Recheck
+        // the proposed pose, retaining the same fixed focal length and geometry.
+        aspect = cameraAspect; nearClip = cameraNearClip;
+        ScenicPose wanted = solver.Solve(path, shot, progress, aspect, nearClip);
+        bool joined = changed && shot.ContinuationOf > 0 && hasPose && plan?.Id == shot.ContinuationOf &&
+            accepted.Progress >= .999999f && Vector3.Distance(accepted.Position, wanted.Position) <= .01f &&
+            Vector3.Distance(accepted.Focus, wanted.Focus) <= .01f && Quaternion.Angle(accepted.Rotation, wanted.Rotation) <= .1f &&
+            Mathf.Abs(accepted.FieldOfView - wanted.FieldOfView) <= .001f;
+        float score = 0; ScenicRejectionKind failure = ScenicRejectionKind.InvalidPlan;
+        string reason = "A journey continuation must join the exact accepted end pose";
+        bool safe = (!changed || shot.ContinuationOf == 0 || joined) && ScenicPoseValidation.Check(wanted, shot, visibility, aspect, nearClip,
+            joined || continuous && !changed, moveCarrier, out score, out failure, out reason);
+        if (safe && hasPose && (!changed || joined))
+        {
+            // A director proposal is normally one bounded frame of travel. A
+            // large discontinuity must be prepared as a new cut, not accelerated
+            // through an unexamined slice of the path in one rendered frame.
+            if (Vector3.Distance(accepted.Position, wanted.Position) > 1.5f ||
+                shot.IsSpatial && progress >= accepted.Progress && path.SpatialTravelBetween(accepted.Progress, progress) > .75f ||
+                Quaternion.Angle(accepted.Rotation, wanted.Rotation) > 6f || !joined && progress < accepted.Progress - .0001f)
+            { safe = false; failure = ScenicRejectionKind.SamplingBudget; reason = "Scenic proposal exceeds one continuous movement step"; }
+            else safe = ScenicPoseValidation.Corridor(accepted, wanted, visibility, aspect, nearClip, out failure, out reason);
+        }
+        TraceProposal(shot, wanted, safe, failure, reason);
+        if (safe)
+        {
+            // Commit a cut only after its first actual pose passes. Preparing a
+            // different path must not destroy the last valid live composition.
+            if (changed)
+            {
+                // Consume pixel correction only when a different validated view
+                // actually goes on air, never merely for an unfulfilled request.
+                if (pendingReconsideration.IsValid) PictureMonitor?.AcceptReconsideration(pendingReconsideration, Time.unscaledTime);
+                // Shot ID distinguishes cuts. Keep the scene epoch stable so
+                // pixel-correction settling survives a local scenic edit.
+                pendingReconsideration = default; plan = shot;
+                ScenicTrace.Plan(shot);
+            }
+            accepted = wanted; hasPose = true; MovementAccepted = true; FailureKind = ScenicRejectionKind.None;
+            LastFailure = "none";
+        }
+        else
+        {
+            FailureKind = failure; LastFailure = reason;
+            rejected[(int)failure]++;
+            // Re-render the preceding composition only while its actual local
+            // geometry and visibility remain valid in this same world. Report
+            // its own plan identity, never crediting it to the failed new shot.
+            if (!hasPose || plan == null || !ScenicPoseValidation.Check(accepted, plan, visibility, aspect, nearClip,
+                changed || continuous, moveCarrier, out _, out _, out _))
+            { Diagnostics = "Scenic unavailable: " + failure + " / " + reason; return false; }
+        }
+        position = accepted.Position; rotation = accepted.Rotation; fov = accepted.FieldOfView;
+        LastPictureUsable = true;
+        ScenicShotPlan shown = plan!;
+        PictureRegion subjectRegion = default;
+        if (shown.Feature != null) ScenicSubjectFrame.Evaluate(shown.Feature, shown.Role, accepted, aspect, nearClip, out _, out subjectRegion);
+        pictureContext = new RenderedPictureContext(new RenderedPictureKey(pictureEpoch, shown.Id, 0),
+            subjectRegion, subjectRegion.IsValid, Time.frameCount, Time.unscaledTime);
+        RenderedPictureFeedback pixels = PictureMonitor != null
+            ? PictureMonitor.Feedback(pictureContext.Key, Time.unscaledTime) : RenderedPictureFeedback.Unavailable("pixel monitor unavailable");
+        PictureConcern = pixels.ShouldReconsider;
+        PictureConcernReason = pixels.Measurement.Valid ? pixels.Measurement.Reason : "Rendered-picture evidence unavailable";
+        if (PictureConcern) pendingReconsideration = pictureContext.Key;
+        Diagnostics = (shown.IsPictureOnly ? "Independent scenic picture: " : "Directed scenery: ") + shown.FeatureKind + " / " + shown.Role +
+            "; plan " + shown.Id + (shown.Id == shot.Id ? "" : "; awaiting cut " + shot.Id) + "; progress " + accepted.Progress.ToString("P0") +
+            "; duration " + shown.DurationSeconds.ToString("F1") + "s; fixed lens " + fov.ToString("F0") +
+            "; " + (MovementAccepted ? "developing " + (shot.UseNativeSpline ? "native spline" : "authored route") :
+                "retaining accepted pose: " + FailureKind + " / " + LastFailure) +
+            "; quality " + score.ToString("F2") + "; pixel penalty " + pixels.Penalty.ToString("F2") +
+            "; rejected steps " + TotalRejected();
+        return true;
+    }
+
+    private int TotalRejected() { int sum = 0; foreach (int count in rejected) sum += count; return sum; }
+    private void TraceProposal(ScenicShotPlan requested, ScenicPose wanted, bool safe, ScenicRejectionKind failure, string reason)
+    {
+        if (!ScenicTrace.Enabled || safe && !tracedFailure) return;
+        if (!safe && tracedFailure && tracedPlan == requested.Id && tracedReason == reason && Time.unscaledTime < nextMotionTrace) return;
+        ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Row("scenic-motion"), "requestedCamera", wanted.Position)
+            .Field("plan", requested.Id).Field("shownPlan", plan?.Id ?? 0).Field("safe", safe)
+            .Field("failure", safe ? "None" : failure.ToString()).Field("reason", safe ? "Movement resumed" : reason)
+            .Field("requestedProgress", wanted.Progress).Field("acceptedProgress", hasPose ? accepted.Progress : -1));
+        tracedFailure = !safe; tracedPlan = requested.Id; tracedReason = reason; nextMotionTrace = Time.unscaledTime + 1;
+    }
+    private bool Reject(ScenicRejectionKind kind, string reason)
+    {
+        FailureKind = kind; LastFailure = reason; LastPictureUsable = MovementAccepted = false;
+        Diagnostics = "Scenic unavailable: " + kind + " / " + reason; return false;
+    }
+    internal void Reset()
+    {
+        plan = preparedPlan = null; world = null; carrier = null; hasPose = false; accepted = default;
+        LastPictureUsable = MovementAccepted = false; FailureKind = ScenicRejectionKind.None;
+        pictureContext = default; pendingReconsideration = default; PictureConcern = false; pictureEpoch++; path.Reset(); solver.Reset(); ownedVisibility.Reset();
+        Array.Clear(rejected, 0, rejected.Length);
+        tracedFailure = false; tracedPlan = 0; tracedReason = ""; nextMotionTrace = 0;
+    }
+    public void Dispose() { Reset(); solver.Dispose(); path.Dispose(); }
+    private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+}

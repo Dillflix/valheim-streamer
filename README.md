@@ -1,6 +1,66 @@
 # Valheim Broadcaster
 
+**0.8.41 improves ordinary Scenic pacing, sequence development and arrival preparation.** Shot timing now accounts for actual camera travel and angular change, so a slow opening does not have to lead into a rushed close-subject turn. Soft composition requests retain valid movement; site sequences require actual establishing context. Ordinary region travel waits briefly for an edit boundary, and destination planning can overlap the native teleport wait once its geometry is loaded. Matching arrival retains that work instead of resetting it twice. **No server update is required; observer protocol remains 3.** Newly written fixtures use schema 3; older fixtures remain readable. [Changes, compatibility and runtime checks](docs/SCENIC-0.8.41-QUALITY.md). Actual visual quality and loading-time improvement remain pending in-game verification.
+
+**0.8.40 repairs Scenic journey departure and preserves ordinary coverage while it prepares.** The supplied 0.8.39 recording showed a zero-distance journey repeatedly extending a route toward a known rejected sightline, followed by an endpoint stall. Saved rejection provenance now prevents that launch; a journey takes ownership only when its first validated section meets the still-current shot endpoint. Periodic destination discovery no longer discards ordinary planning or interrupts a valid shot, and recent-view memory recognizes duplicate compositions across different feature IDs. Startup world access is also corrected. **No server update is required; observer protocol stays 3.** [Evidence, exact changes and runtime checks](docs/SCENIC-0.8.40-REPAIR.md). In-game results for this repair remain pending.
+
+**0.8.39 makes Scenic journeys distance-directed: a default 1,000 m objective at 6 m/s, independent of decorative `ShotMotion`.** Successive validated sections follow a persistent landscape objective, anticipate terrain and prepare further ahead; the protected loading anchor can lead along the current accepted route. Completion uses measured rendered-camera travel and forward progress. Blocked or interrupted attempts retain their distance and reason instead of reporting completion. New configuration keys avoid retaining the previous 1 m/s journey default. Observer protocol remains 3; the existing **0.8.37-or-later companion** supports all current capabilities. [Commands, migration and runtime checks](docs/SCENIC-PRODUCTION.md). The subsequently supplied 0.8.39 footage demonstrates a failed departure; the 0.8.40 repair notes distinguish that evidence from the automated tests.
+
+**0.8.38 integrates live Scenic timelapse shots into autonomous broadcasting.** Eligible outdoor compositions develop slowly through a visual day/night passage, driven by the presented camera route and returning to current natural time on completion. Empty-server authorization, player priority, geometry validation and picture recovery remain authoritative. Enabled by default with programme spacing; `broadcast timelapse start` requests a live shot. Interval recording is separately named `broadcast timelapse record`. Use the existing **0.8.37-or-later companion** for Environment1 permission; observer protocol stays 3. [Commands and runtime checks](docs/LIVE-TIMELAPSE.md). In-game visual validation remains pending.
+
+**0.8.37 adds continuous Scenic journeys, saved camera fixtures, operator-only route previews, silent timelapse recordings and render-pose auditing.** Moving shots now complete their route at reduced speed instead of ending early. Connected, validated route windows can sustain one travelling shot; live geometry and player coverage remain authoritative. Optional time/weather controls require fresh permission from the new companion confirming that no ordinary players are connected. Observer admission stays protocol 3; the existing compatible companion supports the other additions. Replace all three client DLLs and included notices, preserving configuration. [Commands, limitations and runtime checks](docs/SCENIC-PRODUCTION.md). Actual Valheim visuals and long-run streaming behavior still require runtime validation.
+
+**0.8.36 integrates the broadcast audit fixes and editorial improvements.** Camera modes share foliage observations and measured background work scheduling. Missing-picture recovery, native damping, encounter ranking and RTMP capture cadence are corrected. Scenic sequences retain measured site hierarchy, validate the final subject framing, use coastal direction and restrained pans, and consider observed lighting/weather when revisiting. The operator overlay separates the actual program picture from preparation and transport. Replace the three client DLLs and notices while preserving configuration. The existing protocol-3 server companion remains compatible; no server update is required for these features. [Changes, limits and runtime checks](docs/BROADCAST-INTEGRATION.md). In-game visual/performance validation remains pending.
+
+**0.8.35 broadens Player encounter coverage.** Ordinary nearby hostiles, observed closing movement and surrounding groups inform threat coverage before combat. A larger observed cast feeds adaptive per-shot groups, explicit exchange/overview coverage and actor-body occlusion checks. Synchronized footage metadata records the encounter, framed cast and coverage result. Replace the three client DLLs and notices, preserving configuration; the existing protocol-3 companion can remain installed. [Behavior and runtime checks](docs/ENCOUNTER-COVERAGE.md). In-game visual/performance validation remains pending.
+
+**0.8.34 adds synchronized local footage/diagnostics, independent Scenic picture admission, observed trader/site coverage and action-aware Player editing with bounded opponent/quarry inserts.** Diagnostic video defaults on while broadcasting and tracing: 640×360/12 fps, no audio, bounded local storage; live RTMP retains AAC audio. Use `broadcast capture on|off|status`. Replace the three client DLLs and included notices, preserving configuration; no companion update is required and observer protocol remains 3. [Behavior, capture instructions and runtime checks](docs/EDITORIAL-CAPTURE.md). In-game visual/performance validation remains pending.
+
+**0.8.33 repairs destination variety and carries selected structures into Scenic composition.** Recent coverage balances natural landscapes, bases and landmarks across available biomes; the updated companion identifies coastal approaches even when a zone centre is underwater. Structural visits require readable coverage of observed structures before earning positive feedback. Update both components for the complete landscape metadata feed; observer admission remains protocol 3. [Behaviour and validation](docs/WORLD-DESTINATIONS.md). In-game validation remains pending.
+
+**0.8.32 adds server-guided base/settlement and placed-landmark destinations, plus persistent visit feedback.** Install the matching client and companion to enable the optional capability; observer admission remains protocol 3, and older companions retain ordinary discovery. Existing terrain/foliage/picture validation stays authoritative. See [destination discovery, upgrade and test instructions](docs/WORLD-DESTINATIONS.md). In-game validation remains pending.
+
+**0.8.31:** repairs scene-wide foliage coverage collapse in 0.8.30: distinguishes empty renderers, recovers valid transformed local bounds, and localizes unknown/omitted geometry. [Evidence and limits](docs/SCENIC-EVIDENCE.md). Automatic capture remains enabled; protocol 3 is unchanged; no server update is required. In-game validation remains pending.
+
 A Jötunn/BepInEx mod for a dedicated broadcasting client: follow another player's character with a wide camera view, cycle targets automatically, and stream the rendered game view with game audio directly to an RTMP receiver.
+
+**0.8.28 introduces shared spatial planning and local place awareness.** Built directly on 0.8.27 (`025fe85`), Scenic discovers clear viewpoints, connects verified corridors and builds multiwaypoint shots before native trajectory validation. Player and Creature use adaptive future-corridor planning through their existing Cinemachine controller. Loaded construction is organized into buildings, districts, settlements and directly measured local spaces with explicit partial coverage. Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. Logic, native mathematics and compilation are testable here; visual quality and frame cost still require Valheim runtime validation. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md).
+
+**0.8.27 uses measured clear route sections and bounded scenic recovery.** Built directly on 0.8.26 (`e3d9b93`), it can recover an interior/suffix of a proposed route instead of discarding everything at the first obstruction, and proposes a measured canopy-height alternative when the camera is inside vegetation bounds. Every new curve is fully revalidated. Ten seconds without usable idle output exhausts local recovery without an additional loading timeout; travel still obeys existing permissions, cooldowns and destination rules. The user reports most 0.8.26 shots now work, but supplied evidence confirms prolonged remaining recovery. This new build is not yet visually validated. Replace the three client DLLs and included notices together, preserving configuration. No server update is required. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md).
+
+**0.8.26 repairs scenic terrain placement and foliage rejection.** Built directly on 0.8.25 (`fa96579`), it measures loaded terrain and water beneath the actual camera/near plane, fits the complete route before admission, and rejects unsafe live poses. Rock/structure targets use exposed bounds above those surfaces. Nearby foliage can use triangle-group or submesh bounds instead of treating an entire tree's bounding box as solid leaves. The supplied 0.8.25 recordings are failed runtime results; the new build still requires in-game validation. Install the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md).
+
+**0.8.23 repairs scenic continuity and motion.** Built directly on 0.8.22 (`7bda56a`), it separates blocked camera motion from readable footage and loaded-scene availability, prevents obsolete recovery searches from replacing recovered shots, and removes actor-style timed viewpoint/lens changes from scenic paths. Scenic movement uses short smooth ramps and steady cruising, with no catch-up after pauses. Acquired scenic plans can continue on verified geometry while unrelated objects load. Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md); in-game visual confirmation remains pending.
+
+**0.8.22 adds encounter-aware direction and deliberate pass-by shots.** Built directly on 0.8.21 (`9ae20da`), it separates active combat, inferred hunting targets and nearby powerful threats, preserves relevant participants, and chooses encounter-oriented compositions without sacrificing primary-player readability. Eligible travel shots can hold a world position and pan as players approach, pass and recede. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. In-game visual and replicated-encounter validation remain pending.
+
+**0.8.21 adds observational Position Composer shots, safe group Dolly Then Zoom, and coordinated FreeLook profiles.** Built directly on 0.8.20 (`94e563f`), it gives eligible actor shots native screen/depth freedom with a fixed viewing direction, lets groups use validated open-space camera movement before zooming, and assigns elevation-dependent lens/damping/composition to the native modifier. Existing visibility, continuity and observer constraints remain authoritative. All three options default on; compare them with `broadcast camera observation|groupdolly|freelook on|off`. Replace the three client DLLs and included notices together, preserving configuration. No server update is required; observer protocol remains 3. See [camera behavior](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). Visual behavior and performance still require Valheim runtime confirmation.
+
+**0.8.20 integrates native Cinemachine Confiner 3D, Spline Dolly, ClearShot and blend curves.** It builds directly on 0.8.19 (`6fbfb9d`). Interior confinement uses verified local camera volumes isolated from game physics; scenic paths use native spline traversal; ClearShot ranks evaluated viewpoints while usable-footage pacing and final validation remain authoritative. Automatic readback-orientation calibration addresses the vertically mirrored live/slate output reported after 0.8.19. Replace all three client DLLs and the included notices together, preserving configuration. These changes require no server update and retain observer protocol 3. See [camera behavior and native-component audit](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). In-game visual and graphics-backend validation remain pending.
+
+**0.8.19 adds predictive production direction and a clean broadcast feed.** Built directly from 0.8.18 (`4ecea7d`), it ranks currently readable viewpoints by their expected useful lifetime, develops short evidence-based shot sequences, and adds deliberate wide/full/qualified medium compositions with persistent screen geography. Streaming now reads the camera compositor before operator overlays and console UI; unavailable scenes use a clean recovery card. Low-frequency analysis of the actual live picture supplements geometry with conservative exposure/contrast evidence. All five changes are client-side; observer admission remains protocol 3 and the existing server can remain. The 0.8.18 server is optional for remote events; the 0.8.17-or-later activity feed remains required for global-idle wildlife cutaways. Replace the three client DLLs and included notices together, preserving configuration. New controls are `broadcast camera prediction|sequences|scales|picture on|off`; see [camera behavior and Cinemachine capability audit](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). Actual Valheim visuals, graphics-backend orientation and long-run cost still require runtime validation.
+
+**0.8.18 prioritizes readable footage and adds scene-aware direction.** Built directly from 0.8.17 (`94fb4a1`), it adds shared picture-health checks, expanded compact recovery viewpoints, measured rooms/roofs/openings, deliberate shot roles and scale, locomotion-sensitive movement and contextual transitions. Validated handoffs within a loaded cooperative group retain the scene; activity-aware scheduling balances observed encounters with fair coverage. These camera/local-direction improvements work with existing compatible protocol-3 servers. The optional 0.8.18 server update adds a separate `Events1` feed for activity outside the loaded area; ordinary players need no mod. The 0.8.17 server requirement for global idle/wildlife eligibility remains unchanged. Replace all three client DLLs and included notices together, preserving configuration; update the server/core pair only for the new remote feed. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) and [validation evidence](docs/RUNTIME-TESTS.md). In-game visual and multiplayer checks remain pending; no live installation or restart is performed.
+
+**0.8.17 adds nearby wildlife cutaways when every connected ordinary player has been observed idle for at least 60 seconds.** It builds directly on 0.8.16. Fresh complete server activity evidence is required; movement or observed action returns coverage to players. Cutaways use already-loaded creatures and the existing creature camera/dwell, with at least 60 seconds before another cutaway. This is observed inactivity, not proof that a player is away from their keyboard. Install the 0.8.17 server/core pair for this feature, plus the client's three DLLs and included notices, preserving configuration. Older protocol-3 servers retain player coverage and report why cutaways are unavailable. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md#observed-idle-wildlife-cutaways) for limits and pending runtime checks.
+
+**0.8.16 brings the shared Cinemachine pipeline to scenic and creature coverage.** It builds directly on 0.8.15. Scenery now uses ranked environmental paths with independent camera/aim movement and five non-looping shot styles; creatures use their actual body dimensions and observed movement. Composition, damping, movement controls and validated handoffs now apply across all three production modes. Idle pacing and history require usable live footage, not held images or a successful camera calculation alone. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for mode behavior and pending runtime tests. Replace all three client DLLs and included notices together, preserving configuration. No server update is required.
+
+**0.8.15 separates camera trajectories from player translation.** It builds directly on 0.8.14 and retains its deliberate composition. Each procedural candidate now develops a persistent position in the world while aiming at the current subject, with activity-dependent tracking and bounded corrections. This addresses the target-relative follow point, velocity prediction and blend displacement that made the camera feel attached during movement. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior, diagnostics and pending visual tests. Replace all three client DLLs and included notices together, preserving configuration. The existing protocol-3 server can remain installed.
+
+**0.8.14 adds deliberate screen composition to the damped player director.** It builds directly on 0.8.13: the camera now chooses persistent subject placement, movement lead room and activity space, with coordinated group framing and compact fallbacks. `broadcast camera composition on|off` compares the new placement policy while retaining the same damping and visibility checks. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for behavior and pending visual validation. Replace the three client DLLs and included notices together, preserving configuration. Observer protocol and server behavior are unchanged; this update requires no new server deployment.
+
+**0.8.13 adds damped, activity-aware player direction and cooperative framing.** Players can move within the frame; readable shots develop through bounded movements and fresh compositions, with quieter behavior in confined spaces or after obstruction corrections. Persistent nearby companions and relevant opponents can share a shot, and sustained visible coverage informs automatic player rotation. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for controls, evidence limits and pending runtime tests. Built on 0.8.12, retaining protocol 3; the existing server remains compatible. A companion update optionally adds fresh observation/health-loss hints. Replace the three client DLLs and included notices together, preserving configuration.
+
+**0.8.12 adds Cinemachine player cameras with foliage-aware shot selection.** Candidate views adapt angle, distance and height, retain stable compositions and respect the existing loaded-geometry/carrier limits. Player-shot foliage is a quality penalty rather than a loading failure. Enabled by default through `Camera.ProceduralPlayers`; use `broadcast camera fixed` / `procedural` for comparison and `broadcast camera status` for diagnostics. This builds directly on 0.8.11 and remains protocol 3. **Install all three client DLLs and the included ThirdParty notices folder.** The existing server and configuration can remain; visual runtime verification is pending.
+
+**0.8.11 replaces GUI screenshot holds with a camera compositor.** Live and held scenes use the same final camera-texture path; travel/recovery invalidate the prior image. `broadcast framehold test` schedules a half-second hold so orientation can be checked without waiting for travel. Includes 0.8.10 continuous following. Replace both client DLLs; keep the deployed protocol-3 server and configuration. In-game visual verification is pending.
+
+**0.8.10 separates player acquisition from continuous following.** An established shot can continue while nearby network objects instantiate, provided the same living character and usable local geometry remain present. Initial acquisition, respawn, significant relocation and travel still require full readiness. Includes 0.8.8 scenery and 0.8.9 held-frame changes. Replace both client DLLs; the deployed protocol-3 server and existing configuration can remain. Runtime retest is pending.
+
+**0.8.9 changed the held-frame display path implicated in brief upside-down flashes (superseded by 0.8.11).** Saved frames now use the same GPU normalization path as streaming, capture restores graphics state, and only an actually presented live frame can refresh the hold. The reported inversion still requires an in-game retest. Includes the 0.8.8 scenery improvements and remains compatible with the deployed protocol-3 server; replace both client DLLs together.
+
+**0.8.8 improves scenic composition.** It tries alternate angles and heights, screens the camera path against solid geometry and nearby foliage, and replaces persistently obstructed shots. This continues from the corrected protocol-3 0.8.7 build; the deployed protocol-3 0.8.4 server can remain installed. Replace both client DLLs together. Visual results in Valheim remain pending; see [RUNTIME-TESTS.md](docs/RUNTIME-TESTS.md).
 
 **0.8.4 makes observer mode optional per connection.** The server's `Observer.SteamIds` list grants permission to request the role; it does not force those accounts into it. Vanilla clients and modded clients with `Multiplayer.ObserverConnection=false` join as normal players, including allowlisted accounts. Set that client option to `true` **before joining** to request read-only observation. Use matching 0.8.4 client/server builds (observer protocol 3); disconnect before changing roles. Multiplayer runtime verification of this change is still pending.
 
@@ -10,7 +70,7 @@ In normal F8/F10 modes the broadcaster remains an ordinary connected player. Tho
 
 ## Autonomous broadcasting (0.8.0)
 
-Follow [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) for the configuration, controls, solo route exercise and runtime matrix. Use matching 0.8.4 client/server artifacts from one source commit; protocol 3 adds explicit intent before admission and rejects older observer handshakes.
+Follow [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) for the configuration, controls, solo route exercise and runtime matrix. Use protocol-3 client/server builds; the current client supports the deployed protocol-3 0.8.4 server. Protocol 3 adds explicit intent before admission and rejects older observer handshakes. The superseded movement-fix 0.8.4/0.8.5/0.8.6 builds used protocol 2; do not use those artifacts.
 
 - The companion supplies bounded, authenticated snapshots of connected players and generated scenic destinations. Server policy can permit observer acquisition of players whose map position is not public.
 - The director rotates across connected players, using controlled native travel for distant targets and waiting for actual loaded characters. Only usable player footage advances viewing time. Stale/unreachable targets receive bounded retries and cooldowns.
@@ -39,15 +99,18 @@ Offline activation rejects dedicated-server connections and hosted worlds, even 
 
 ## Implemented behavior
 
-- Configurable camera distance, height, FOV, world-space azimuth, and follow smoothing.
-- Obstruction checks between the target and camera.
+- Configurable camera distance, height, FOV, preferred azimuth, independent procedural position/aim damping and a screen-space dead zone.
+- Shared Cinemachine damping, composition and validated transitions for players, creatures and scenery, with explicit shot envelopes, environmental path development, future-readability comparison and mode-specific foliage scoring.
+- Evidence-based activity sequences and persistent action geography; low-frequency rendered-picture feedback complements geometric readability.
+- Clean program output separated from operator console/diagnostic overlays, with a dedicated recovery card and no second world render.
+- Bounded deliberate movement, usable-footage pacing and persistent cooperative player framing; scenic place/style history and creature repeat/failure cooldowns support idle variety.
 - Stable-ID target selection, next/previous, timed rotation, hold, and disconnect fallback.
 - Continuous coverage: player acquisition takes priority; idle uses changing scenic paths and eligible nearby creatures, with autonomous generated-region travel in the configured read-only mode. A recovery slate appears when no ready shot can be rendered or controlled travel is in progress.
 - Separate connected-player presence and scene readiness, with bounded experimental remote acquisition attempts.
 - HUD hiding and restoration; matching main/sky camera FOV; restoration of camera state when broadcasting stops or the observer dies.
 - The older **experimental** reference-only distant-target mode remains separate from protected native observer travel. It starts disabled; use the companion's discovery/travel path for autonomous read-only coverage.
 
-The mod captures the existing framebuffer and game audio listener, then manages a local FFmpeg process to publish H.264 video plus stereo AAC audio. No OBS, second rendered camera or microphone capture is used. RTMP alone does not require the server companion. FFmpeg is a separate executable you supply. An embedded HLS/DASH web server is not implemented; a remote media server can convert the RTMP feed for browser playback.
+The mod captures the clean post-effects camera texture and game audio listener, then manages a local FFmpeg process to publish H.264 video plus stereo AAC audio. No OBS, second rendered camera or microphone capture is used. RTMP alone does not require the server companion. FFmpeg is a separate executable you supply. An embedded HLS/DASH web server is not implemented; a remote media server can convert the RTMP feed for browser playback.
 
 ## Build
 
@@ -58,6 +121,14 @@ Run the director tests without game files:
 ```sh
 dotnet run --project tests/ValheimBroadcaster.Core.Tests -c Release
 ```
+
+Before a client build, prepare the pinned Cinemachine 3.1.7 runtime sources (the core/server builds do not need this):
+
+```sh
+python scripts/fetch-cinemachine.py
+```
+
+This fetches verified upstream sources into an ignored build directory. The selected runtime builds as `ValheimBroadcaster.Cinemachine.dll`; it uses the matching game's existing Unity assemblies and does not ship them. See [dependency build notes](third_party/Cinemachine/README.md).
 
 Build the plugin on Windows PowerShell:
 
@@ -81,27 +152,27 @@ dotnet build src/ValheimBroadcaster.Plugin -c Release \
 
 The build requires real game and loader assemblies. It reads those files, excludes Jötunn's build hooks, and has no automatic installation step. Do not commit or distribute the referenced game/Unity/BepInEx/Jötunn DLLs.
 
-GitHub Actions runs the core tests, real FFmpeg loopback checks on Linux/Windows, game-metadata audits and client/server builds against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide separate `valheim-broadcaster-<commit>` and `valheim-broadcaster-server-<commit>` artifacts, each containing only that role's plugin and Core DLLs. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching assemblies.
+GitHub Actions runs the core tests, real FFmpeg loopback checks on Linux/Windows, game-metadata audits and client/server builds against a pinned Valheim 1.0.21 baseline. The build job obtains real references from the free official dedicated-server depot using a checksummed downloader; it never launches the game. Successful runs provide separate `valheim-broadcaster-<commit>` and `valheim-broadcaster-server-<commit>` artifacts. The client contains its plugin, Core, isolated Cinemachine runtime and notices; the server contains its plugin and Core only. These are test builds, not runtime-validated releases. Download them from the [Actions page](https://github.com/Dillflix/valheim-streamer/actions), or build locally against your own matching assemblies.
 
 Expected output directory: `src/ValheimBroadcaster.Plugin/bin/Release/net48/`.
 
 ## Install and try locally
 
 1. Use a separate test profile with BepInEx 5 and Jötunn 2.30.2 available. Close that client before changing plugins.
-2. Copy **only** `ValheimBroadcaster.dll` and `ValheimBroadcaster.Core.dll` from the build output into `BepInEx/plugins/ValheimBroadcaster/` in that profile.
+2. From the client artifact, copy the contents of `ValheimBroadcaster/` into `BepInEx/plugins/ValheimBroadcaster/` in that profile: `ValheimBroadcaster.dll`, `ValheimBroadcaster.Core.dll`, `ValheimBroadcaster.Cinemachine.dll` and the included `ThirdParty/` folder. Replace all three DLLs together; preserve your configuration. The server does not need Cinemachine.
 3. Start Valheim, join the test world, and park the observer character safely near another player. Broadcasting starts disabled.
 4. Press **F8** to start. Use **PageDown** / **PageUp** to cycle and **F9** to hold or resume. Press **F8** again to restore the normal camera.
 5. Check `BepInEx/LogOutput.log` for the plugin startup line, state changes, or errors. Validate restoration before capturing a session.
 
 Hotkeys are ignored while typing in chat/console or using the recognized menu, inventory, and text-input screens. The observer's normal gameplay controls remain active in ordinary F8/F10 modes. Explicit offline observer mode suppresses them; console and broadcast controls remain available.
 
-To remove the prototype, close the client and remove its two DLLs. Keep any existing configuration and test records. Do not remove dependencies used by other mods.
+To remove the prototype, close the client and remove its three DLLs and owned ThirdParty notices. Keep any existing configuration and test records. Do not remove dependencies used by other mods.
 
 ## Solo camera test
 
 No second player or server mod is needed. This works in a local single-player world or while you are alone on your server.
 
-1. Install the two DLLs from the latest test build into your active mod profile. With Thunderstore, open that profile folder and copy both into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
+1. Install the complete client artifact (three DLLs and ThirdParty notices) into your active mod profile. With Thunderstore, open that profile folder and copy it into `BepInEx/plugins/ValheimBroadcaster/`, then launch modded as usual. No console launch argument is required.
 2. Enter a test world with a living character and press **F10**. Alternatively, with the console enabled, run `broadcast self` and close the console.
 3. Walk, run, jump, and move near walls or trees. The same broadcast camera used for other players now follows you, exercising framing, smoothing, obstruction checks, main/sky FOV, HUD hiding, and direct stream capture.
 4. Press **F8** or run `broadcast off` to stop and restore the normal view. Run `broadcast on` to switch directly back to ordinary player targeting; alone, that mode starts varied scenic/creature coverage.
@@ -109,6 +180,8 @@ No second player or server mod is needed. This works in a local single-player wo
 Self-follow is session-only and always shows a `SELF-FOLLOW TEST` status label, even when `ShowStatus=false`. Its roster contains only you, so next/previous and timed cycling stay on you. Other players joining will not become test targets. Distant-streaming overrides are bypassed even if `RemoteTargets=true`; entering self-follow restores any previous override. Death, world exit, and plugin disable stop the test. Starting again with F8 uses normal mode; press F10 or run `broadcast self` to re-enter the test.
 
 Your normal movement controls remain active. This mode tests actual camera rendering with your own character; it does not validate remote-player replication, multi-target shots, or distant world loading.
+
+For the new director, compare `broadcast camera dynamic` with `broadcast camera steady`; use `broadcast camera motion 0` to isolate tracking/damping from decorative movement. Restore `dynamic` and `motion 1` afterward. See the [camera runtime matrix](docs/CAMERA-DIRECTOR.md#runtime-validation) for open terrain, sustained movement, forests, interiors and cooperative sessions.
 
 ## Controls and console
 
@@ -124,9 +197,18 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast follow <id>` | Select an exact listed ID and hold it; start with `broadcast on` first |
 | `broadcast status` | Show director state, target, hold/auto mode, and roster count |
 | `broadcast stream on` / `off` / `status` / `diagnostics` | Request/cancel RTMP audio + video and inspect encoder/retry failures; publishing requires an eligible camera |
+| `broadcast wildlife on` / `off` / `status` | Enable/disable observed-idle wildlife cutaways or inspect activity freshness, minimum idle time, rearm time and blocking reason |
 | `broadcast survey` | Reset the loaded-region search origin; it is not a camera focus (`anchor` remains a compatibility alias) |
 | `broadcast probe mark/start/stop/status` | Mark, run, stop or inspect a reference-only solo distant-scene test |
 | `broadcast observer start/mark/travel/return/status` | Activate/resume, mark, travel, return/park, or inspect diagnostics; `travel x y z` accepts explicit coordinates |
+| `broadcast camera prediction on` / `off` (also `sequences`, `scales`, `picture`) | Toggle future-view ranking, short activity sequences, deliberate shot scales or actual-picture feedback |
+| `broadcast camera procedural` / `fixed` / `status` | Select procedural actor/dedicated scenic cameras or legacy fixed framing; inspect mode/quality diagnostics. The existing `Camera.ProceduralPlayers` key is retained for compatibility |
+| `broadcast camera dynamic` / `steady` | Enable/disable deliberate movement; scenic steady holds the developed pose while shot scheduling continues, actor tracking remains active |
+| `broadcast camera composition on` / `off` | Enable deliberate screen placement or use the centered comparison preference; retain damping, groups and visibility checks |
+| `broadcast camera groups on` / `off` | Enable/disable player cooperative and opponent group framing; creature coverage currently uses one primary actor |
+| `broadcast camera motion <0-1.5>` | Set actor movement strength or directed scenic traversal speed; zero pauses scenic movement while shot scheduling continues |
+| `broadcast camera damping <position> <aim>` | Set independent damping in seconds, each 0.1–3 |
+| `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
 | `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
 | `broadcast auto on/off/status` | Resume/pause/inspect automatic player acquisition and scenic travel in a read-only session |
 | `broadcast route add [x y z]/start/stop/clear/status` | Run a world-session solo acquisition route through the same travel path |
@@ -139,18 +221,27 @@ Names are labels. Ordinary loaded targets use character ZDO IDs; the discovery-b
 
 After the first launch, close the game and edit `BepInEx/config/com.dillflix.valheimbroadcaster.cfg` in the active profile. Restart to apply the edited file.
 
+Camera commands also update their settings while running. See [CAMERA-DIRECTOR.md](docs/CAMERA-DIRECTOR.md) for how damping, dead zones, movement and constrained-space behavior interact.
+
 | Section / key | Default | Meaning |
 | --- | --- | --- |
+| `Camera / ProceduralPlayers` | `true` | Procedural actor and dedicated scenic coverage; false selects legacy fixed framing. The serialized key name is retained for compatibility |
+| `Camera / DynamicShots` | `true` | Activity/space-aware shot duration and deliberate movement |
+| `Camera / GroupFraming` | `true` | Persistent nearby player companions and relevant opponents when a readable composition is available; not creature-herd inference |
+| `Camera / PositionDamping`, `AimDamping` | `0.8`, `1` | Cinemachine damping in seconds; larger values soften response, range 0.1–3. Position damping smooths the planned trajectory, not a raw player-follow point |
+| `Camera / DeadZone` | `0.12` | Screen fraction allowing movement before recentering, range 0–0.3 |
+| `Camera / ShotMotion` | `1` | Actor movement strength or scenic traversal-speed multiplier, range 0–1.5; accepted scenic routes are not reshaped |
 | `Camera / Distance` | `18` | Horizontal metres from target |
 | `Camera / Height` | `10` | Metres above the focus point |
 | `Camera / FieldOfView` | `75` | Vertical degrees |
-| `Camera / Azimuth` | `225` | Fixed world-space viewing direction |
-| `Camera / Smoothing` | `5` | Follow response per second |
-| `Director / DwellSeconds` | `30` | Ready footage before advancing |
+| `Camera / Azimuth` | `225` | Preferred world-space direction; procedural shots can reframe around obstructions |
+| `Camera / Smoothing` | `5` | Legacy fixed camera response per second; actor cameras use position/aim damping and directed scenery uses its authored route |
+| `Director / DwellSeconds` | `30` | Ready player footage before rotating targets; separate from composition duration |
 | `Director / TargetTimeoutSeconds` | `20` | Maximum experimental remote acquisition attempt |
 | `Director / AcquisitionCooldownSeconds` | `30` | Local-interest interval between remote attempts |
-| `Idle / ScenicSeconds` | `45` | Scenic dwell before trying a creature |
-| `Idle / CreatureSeconds` | `25` | Creature dwell before returning to scenery |
+| `Idle / WildlifeCutaways` | `true` | Allow nearby wildlife cutaways after all connected ordinary players are observed idle for 60 seconds; requires the 0.8.17 server activity service |
+| `Idle / ScenicSeconds` | `45` | Usable scenic footage between opportunities to try a loaded creature; directed scenic shot duration is independent |
+| `Idle / CreatureSeconds` | `25` | Usable creature footage before returning to scenery |
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Display / ShowStatus` | `true` | Show the director overlay |
@@ -181,11 +272,15 @@ See [architecture](docs/ARCHITECTURE.md), [runtime checks and evidence](docs/RUN
 
 ## Continuous coverage and solo idle test
 
-Press **F8** while alone to test normal idle coverage (F10 is still the explicit self-follow test). The loaded region around the observer is a search boundary, never a fixed camera focus. Each scenic shot moves along a newly selected terrain path; recent locations are excluded. Scenic shots last up to 45 seconds and creature shots up to 25 seconds. A shown creature has a five-minute repeat cooldown, and subjects stationary for ten seconds become ineligible. With no fresh creature, the next scenic path is selected. The read-only autonomous mode adds generated-region traversal; ordinary/offline modes keep local coverage. If no fresh destination or valid local path exists, diagnostics report the limitation.
+Press **F8** while alone to test normal idle coverage (F10 remains the self-follow test). The loaded region is a search boundary, never a fixed camera focus. The scenic director infers ridge, coastline, clearing, rock, structure and open-landscape subjects from loaded terrain, active water and static-object bounds. These are geometric hints, not semantic landmark recognition. It develops establishing, traversing, revealing and eligible detail shots with a fixed lens per shot and prepares the next route before editing. Ordinary proposal durations begin at 8–12 seconds according to role; measured camera travel and angular change determine the final duration, with restrained treatment for NPCs, openings and rooms. Longer or close-turning routes can need more time. A new shot cuts directly to its validated viewpoint rather than making a short, fast blend.
+
+`Idle.ScenicSeconds` remains 45 seconds by default, but now measures usable scenic coverage between opportunities to try loaded wildlife; it no longer stretches every scenic camera route to 45 seconds. Creature dwell remains 25 seconds. Held images and slates earn no footage. A successfully shown creature has a five-minute repeat cooldown; a creature view unusable for three seconds yields to scenery with a separate 30-second failed-view cooldown. Read-only autonomous sessions retain generated-region travel; ordinary/offline modes stay local. No suitable subject or fully readable route produces an explicit diagnostic and bounded retry rather than an invented scenic view.
+
+Use `broadcast camera dynamic` and `broadcast camera motion 1` for normal scenic movement. `steady` or `motion 0` retains the developed pose while normal shot scheduling can still advance. `broadcast hold` also pauses scenic timing and edits; `resume` continues without catching up to held time. Directed scenery uses a prepared native Dolly route by default; `broadcast camera dolly off` selects an authored-curve comparison for newly planned shots. Composition changes likewise apply to future plans. Actor damping, group, sequence, scale and FreeLook switches do not rewrite the active scenic route or lens. `broadcast camera fixed` remains the legacy framing comparison. See the [dedicated scenic design](docs/CAMERA-DIRECTOR.md#dedicated-scenic-direction-0824) for controls and validation limits.
 
 Normal coverage locally masks the broadcaster's child renderers, restoring their previous settings on stop. F10 deliberately shows the character for self-follow testing. This is local presentation only: in ordinary modes other clients can still see the character, and player input, collision, damage, AI interactions, and simulation effects are not removed. See [OBSERVER.md](docs/OBSERVER.md).
 
-When other players become ready, coverage switches to them and rotates if several are available. When none remain ready, idle resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
+When other players become ready, coverage switches to them and rotates if several are available. Authorized autonomous sessions can briefly show nearby wildlife when all connected ordinary players meet the observed-idle rule; see [wildlife cutaways](docs/CAMERA-DIRECTOR.md#observed-idle-wildlife-cutaways). When none remain ready, normal idle coverage resumes. Automatic transitions keep the same RTMP session alive. Press **F11** to publish as before. Use `broadcast survey` to restart scouting around your character’s current region without restarting RTMP. Search state is cleared on stop/world exit.
 
 [IDLE-DIRECTOR.md](docs/IDLE-DIRECTOR.md) documents the local shot layer and its earlier design. [AUTONOMOUS-BROADCAST.md](docs/AUTONOMOUS-BROADCAST.md) documents the current read-only acquisition, scenic traversal and recovery layers. Multiplayer isolation remains experimental and requires the companion. Offline observation retains manually selected travel; automatic discovery requires the authorized server feed.
 

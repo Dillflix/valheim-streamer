@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <!-- Isolate this selected runtime from other mods' Unity.Cinemachine builds. -->
+    <AssemblyName>ValheimBroadcaster.Cinemachine</AssemblyName>
+    <Version>3.1.7</Version>
+    <AssemblyVersion>3.1.7.0</AssemblyVersion>
+    <FileVersion>3.1.7.0</FileVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);CINEMACHINE_NO_CM2_SUPPORT;CINEMACHINE_PHYSICS;CINEMACHINE_UNITY_6000_0_11F1_OR_NEWER;UNITY_6000_0_OR_NEWER;UNITY_2023_3_OR_NEWER;UNITY_2023_2_OR_NEWER;UNITY_2023_1_OR_NEWER</DefineConstants>
+    <!-- Upstream editor-only debug fields are intentionally never assigned here. -->
+    <NoWarn>$(NoWarn);0649</NoWarn>
+    <CinemachineSourceDir>$(MSBuildThisFileDirectory)obj/upstream</CinemachineSourceDir>
+    <ValheimManagedDir Condition="'$(ValheimManagedDir)' == '' and '$(ValheimDir)' != ''">$(ValheimDir)/valheim_Data/Managed</ValheimManagedDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+    <Compile Include="$(CinemachineSourceDir)/Runtime/**/*.cs" />
+    <Compile Include="$(CinemachineSourceDir)/Splines/Runtime/**/*.cs" />
+    <Compile Include="ManualCameraUpdate.cs" />
+    <Compile Include="CandidateQualityBridge.cs" />
+    <Reference Include="$(ValheimManagedDir)/UnityEngine*.dll;$(ValheimManagedDir)/Unity.Mathematics.dll;$(ValheimManagedDir)/Unity.Collections.dll">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="RequirePinnedCinemachineSource" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(CinemachineSourceDir)/source-record.json')" Text="Run python scripts/fetch-cinemachine.py before building. It downloads and verifies the pinned upstream source; no game files are changed." />
+    <Error Condition="!Exists('$(CinemachineSourceDir)/Splines/source-record.json')" Text="Run python scripts/fetch-cinemachine.py to prepare the pinned Splines source with Cinemachine." />
+    <Error Condition="!Exists('$(ValheimManagedDir)/Unity.Collections.dll')" Text="ValheimManagedDir must include Unity.Collections.dll from the matching Valheim installation. Do not redistribute it." />
+    <Error Condition="!Exists('$(ValheimManagedDir)/Unity.Mathematics.dll')" Text="ValheimManagedDir must include Unity.Mathematics.dll from the matching Valheim installation. Do not redistribute it." />
+  </Target>
+</Project>

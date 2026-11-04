@@ -145,12 +145,30 @@ internal sealed class ObserverController
         return false;
     }
 
-    internal bool FollowCamera(Vector3 cameraPosition)
+    // Optional lead belongs only to an already validated current journey route.
+    // Move the invisible carrier and its reference together; never override the
+    // network reference independently or assume that an unloaded point is safe.
+    internal bool FollowCamera(Vector3 cameraPosition, bool continuousPlayer = false, Vector3? streamingCameraPosition = null)
     {
         if (Phase != ObserverPhase.Watching || !owner || !body || !CanOperate) return false;
         Vector3 position = cameraPosition + Vector3.down * 2f;
-        if (!TargetRoster.Finite(position) || (owner.transform.position - position).sqrMagnitude > 10000f || !IdleShots.Ready(position))
+        if (!TargetRoster.Finite(position) || (owner.transform.position - position).sqrMagnitude > 10000f ||
+            !PlayerShotReadiness.PositionReady(position, continuousPlayer))
         { Suspend("Camera destination requires controlled travel; use broadcast observer return."); return false; }
+        if (streamingCameraPosition.HasValue)
+        {
+            Vector3 lead = streamingCameraPosition.Value + Vector3.down * 2f;
+            Vector3 desired = TargetRoster.Finite(lead) && (lead - position).sqrMagnitude <= 32f * 32f &&
+                PlayerShotReadiness.PositionReady(lead, false) ? lead : position;
+            // Gain or relinquish lookahead continuously. A temporarily unready
+            // lead must not bounce the loading centre directly back 24 metres.
+            // The on-air camera is untouched, and unsafe intermediate positions
+            // retain the already-checked camera-relative fallback.
+            Vector3 advanced = Vector3.MoveTowards(owner.transform.position, desired,
+                30f * Mathf.Clamp(Time.unscaledDeltaTime, 0, .1f));
+            if ((advanced - position).sqrMagnitude <= 32f * 32f &&
+                PlayerShotReadiness.PositionReady(advanced, true)) position = advanced;
+        }
         owner.transform.position = position;
         body.position = position;
         SyncInterest();

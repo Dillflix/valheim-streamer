@@ -11,13 +11,14 @@
 
   <ItemGroup>
     <ProjectReference Include="../ValheimBroadcaster.Core/ValheimBroadcaster.Core.csproj" />
+    <ProjectReference Include="../../third_party/Cinemachine/Cinemachine.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
     <!-- Compile-only deliberately excludes Jotunn's build hooks and dependency DLLs. -->
     <PackageReference Include="JotunnLib" Version="$(JotunnVersion)" IncludeAssets="compile" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(ValheimManagedDir)' != ''">
-    <Reference Include="$(ValheimManagedDir)/assembly_valheim.dll;$(ValheimManagedDir)/assembly_utils.dll;$(ValheimManagedDir)/UnityEngine*.dll;$(ValheimManagedDir)/Unity.Collections.dll">
+    <Reference Include="$(ValheimManagedDir)/assembly_valheim.dll;$(ValheimManagedDir)/assembly_utils.dll;$(ValheimManagedDir)/UnityEngine*.dll;$(ValheimManagedDir)/Unity.Collections.dll;$(ValheimManagedDir)/Unity.Mathematics.dll">
       <Private>false</Private>
     </Reference>
     <Reference Include="$(ValheimManagedDir)/SoftReferenceableAssets.dll" Condition="Exists('$(ValheimManagedDir)/SoftReferenceableAssets.dll')"><Private>false</Private></Reference>

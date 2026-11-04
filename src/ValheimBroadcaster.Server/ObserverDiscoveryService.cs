@@ -17,6 +17,14 @@ internal sealed class ObserverDiscoveryService
     private readonly Dictionary<ZNetPeer, float> metadataAt = new Dictionary<ZNetPeer, float>();
     private readonly Dictionary<ZNetPeer, float> nextReply = new Dictionary<ZNetPeer, float>();
     private readonly Dictionary<string, ObserverRegion> catalog = new Dictionary<string, ObserverRegion>(StringComparer.Ordinal);
+    private readonly Dictionary<string, WorldInterestSite> natural = new Dictionary<string, WorldInterestSite>(StringComparer.Ordinal);
+    private readonly Queue<Vector2s> pending = new Queue<Vector2s>();
+    private readonly HashSet<string> queued = new HashSet<string>(StringComparer.Ordinal);
+    private readonly HashSet<string> surveyed = new HashSet<string>(StringComparer.Ordinal);
+    private readonly Queue<string> surveyedOrder = new Queue<string>();
+    private LandscapeSurvey? survey;
+    private Vector2s surveyZone;
+    internal IReadOnlyList<WorldInterestSite> NaturalDestinations => natural.Values.ToArray();
     private readonly Queue<string> catalogOrder = new Queue<string>();
     private readonly Dictionary<ZNetPeer, int> pageStarts = new Dictionary<ZNetPeer, int>();
     private HashSet<Vector2s>? generated;
@@ -36,7 +44,7 @@ internal sealed class ObserverDiscoveryService
     internal void Reset()
     {
         metadataAt.Clear(); nextReply.Clear(); pageStarts.Clear(); catalog.Clear(); catalogOrder.Clear();
-        ResetCursor(); generated = null; zones = null; sequence = 0; nextScan = 0;
+        ResetTerrain(); ResetCursor(); generated = null; zones = null; sequence = 0; nextScan = 0;
     }
     internal void ReceivedMetadata(ZNetPeer peer, float now) => metadataAt[peer] = now;
     internal void Tick(IReadOnlyList<ZNetPeer> peers, float now, bool enabled)
@@ -49,41 +57,56 @@ internal sealed class ObserverDiscoveryService
         nextScan = now + 1;
         if (zones != ZoneSystem.instance)
         {
-            ResetCursor(); catalog.Clear(); catalogOrder.Clear(); pageStarts.Clear();
+            ResetTerrain(); ResetCursor(); catalog.Clear(); catalogOrder.Clear(); pageStarts.Clear();
             zones = ZoneSystem.instance; generated = GeneratedField!.GetValue(zones) as HashSet<Vector2s>;
         }
         if (generated == null) return;
-        // Seed useful nearby destinations immediately, with half of the expensive
-        // terrain-query budget reserved for independent world-wide progress.
-        int nearbyBudget = TerrainBudget / 2;
+        // Queue nearby and world-wide evidence independently of query work.
+        // One partially sampled zone survives a tick boundary, even with a
+        // one-query budget. Nearby retries cannot consume the global cursor.
         foreach (ZNetPeer peer in peers.Take(16))
         {
             Vector3 reference = peer.GetRefPos();
             if (!peer.IsReady() || !Finite(reference.x) || !Finite(reference.z)) continue;
             Vector2s around = ZoneSystem.GetZone(reference);
             for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++)
-                Consider(new Vector2s(around.x + x, around.y + z), ref nearbyBudget);
+                QueueZone(new Vector2s(around.x + x, around.y + z), 32);
         }
-        int terrainBudget = TerrainBudget / 2 + nearbyBudget;
-        for (int i = 0; i < CoordinateBudget && terrainBudget > 0; i++)
-            Consider(NextZone(), ref terrainBudget);
+        for (int i = 0; i < CoordinateBudget && pending.Count < 128; i++) QueueZone(NextZone(), 128);
+        int budget = TerrainBudget;
+        while (budget > 0 && (survey != null || pending.Count > 0))
+        {
+            if (survey == null) { surveyZone = pending.Dequeue(); survey = new LandscapeSurvey(); }
+            Vector3 center = ZoneSystem.GetZonePos(surveyZone);
+            ObserverPoint offset = LandscapeSurvey.Offset(survey.NextSample);
+            Vector3 point = center + new Vector3(offset.X, 0, offset.Z);
+            budget--; survey.Observe(WorldGenerator.instance.GetHeight(point));
+            if (!survey.Complete) continue;
+            string id = ZoneId(surveyZone); queued.Remove(id);
+            if (surveyed.Add(id)) { surveyedOrder.Enqueue(id); if (surveyed.Count > 8192) surveyed.Remove(surveyedOrder.Dequeue()); }
+            if (survey.TryDestination(zones!.m_waterLevel, out ObserverPoint arrival, out ScenicLandscape landscape))
+            {
+                center.x += arrival.X; center.z += arrival.Z; center.y = arrival.Y;
+                string biome = Clean(WorldGenerator.instance.GetBiome(center).ToString());
+                if (catalog.Count >= CatalogLimit) { string removed = catalogOrder.Dequeue(); catalog.Remove(removed); natural.Remove(removed); }
+                catalog.Add(id, new ObserverRegion(id, biome, Point(center))); catalogOrder.Enqueue(id);
+                natural.Add(id, new WorldInterestSite(id, "", biome + " / " + landscape.ToString(), WorldInterestKind.Natural,
+                    Point(center), new ObserverPoint(24, 8, 24), Point(center), 0, 50, biome: biome, landscape: landscape));
+            }
+            survey = null;
+        }
     }
-
-    private void Consider(Vector2s zone, ref int terrainBudget)
+    private static string ZoneId(Vector2s zone) => zone.x.ToString(CultureInfo.InvariantCulture) + ":" + zone.y.ToString(CultureInfo.InvariantCulture);
+    private void QueueZone(Vector2s zone, int limit)
     {
-        if (terrainBudget <= 0 || !generated!.Contains(zone)) return;
-        string id = zone.x.ToString(CultureInfo.InvariantCulture) + ":" + zone.y.ToString(CultureInfo.InvariantCulture);
-        if (catalog.ContainsKey(id) || !NeighborhoodGenerated(zone)) return;
-        Vector3 center = ZoneSystem.GetZonePos(zone);
-        if (!Finite(center.x) || !Finite(center.z)) return;
-        terrainBudget--;
-        float height = WorldGenerator.instance.GetHeight(center);
-        if (!Finite(height) || height < zones!.m_waterLevel + 2f || height >= 998f) return;
-        center.y = height + 2f;
-        if (catalog.Count >= CatalogLimit) catalog.Remove(catalogOrder.Dequeue());
-        catalog.Add(id, new ObserverRegion(id, Clean(WorldGenerator.instance.GetBiome(center).ToString()), Point(center)));
-        catalogOrder.Enqueue(id);
+        if (pending.Count >= limit || !generated!.Contains(zone)) return;
+        string id = ZoneId(zone);
+        if (catalog.ContainsKey(id) || surveyed.Contains(id) || queued.Contains(id) || !NeighborhoodGenerated(zone)) return;
+        Vector3 p = ZoneSystem.GetZonePos(zone); if (!Finite(p.x) || !Finite(p.z)) return;
+        queued.Add(id); pending.Enqueue(zone);
     }
+    private void ResetTerrain()
+    { natural.Clear(); pending.Clear(); queued.Clear(); surveyed.Clear(); surveyedOrder.Clear(); survey = null; }
 
     private Vector2s NextZone()
     {

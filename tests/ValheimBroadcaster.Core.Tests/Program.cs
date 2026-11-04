@@ -27,6 +27,7 @@ internal static class Program
             ("Solo target remains stable through cycling, readiness, and refresh", SelfTestLifetime),
             ("Zero players alternates scenery and creatures", IdleAlternation),
             ("No creatures maintains scenic coverage", ScenicFallback),
+            ("Replacement scenery receives a fresh dwell without delaying ready players", ScenicReplacement),
             ("Creature loss immediately returns to scenery", CreatureLoss),
             ("Ready player preempts idle and scene recovery", PlayerPriority),
             ("Connected but unloaded player keeps idle footage", PendingPlayer),
@@ -56,6 +57,7 @@ internal static class Program
             ("Observer travel rejects invalid time without changing state", ObserverTiming),
             ("Short loading gaps hold only recently captured footage", FrameHoldWindow),
             ("Forced travel or failure slate cannot be hidden by a good frame", FrameHardFailure),
+            ("Quick recovery cannot revive footage from before travel", FrameTravelBoundary),
             ("Frame reset and clock rollback cannot replay another session", FrameReset),
             ("Presentation clock rejects invalid values", FrameClock),
             ("Observer identity configuration accepts exact bounded Steam IDs", ObserverAllowlist),
@@ -65,10 +67,91 @@ internal static class Program
             ("Multiplayer return parks with protections until resumed", ObserverPark),
             ("Parked session cleanup cannot change the next offline return", ObserverParkReset)
         }.Concat(AutonomousDirectorTests.Cases)
+            .Concat(ScenicArrivalPreparationTests.Cases())
+            .Concat(ScenicPacingTests.Cases())
             .Concat(ObserverAdmissionTests.Cases())
             .Concat(ObserverDiscoveryTests.Cases())
+            .Concat(WorldInterestTests.Cases())
+            .Concat(LandscapeCatalogueTests.Cases())
+            .Concat(ScenicDestinationDiversityTests.Cases())
+            .Concat(DestinationSubjectCoverageTests.Cases())
             .Concat(ConnectionRecoveryTests.Cases())
-            .Concat(CameraReachabilityTests.Cases()).ToArray();
+            .Concat(CameraReachabilityTests.Cases())
+            .Concat(PlayerFollowContinuityTests.Cases())
+            .Concat(RelatedPlayerViewTests.Cases())
+            .Concat(ProceduralShotPolicyTests.Cases())
+            .Concat(PictureQualityTests.Cases())
+            .Concat(ProgramFramePolicyTests.Cases())
+            .Concat(ProgramOrientationTests.Cases())
+            .Concat(CaptureCadenceTests.Cases())
+            .Concat(CameraRenderAuditTests.Cases())
+            .Concat(ObserverEnvironmentTests.Cases())
+            .Concat(TimelapseClockTests.Cases())
+            .Concat(CameraFixtureTests.Cases())
+            .Concat(MissingPlayerPictureTests.Cases())
+            .Concat(ActorIntegrationTests.Cases())
+            .Concat(RoomConfinementTests.Cases())
+            .Concat(NativeRankingTests.Cases())
+            .Concat(ObservationalShotTests.Cases())
+            .Concat(EncounterPolicyTests.Cases())
+            .Concat(EncounterFramingTests.Cases())
+            .Concat(EncounterSituationTests.Cases())
+            .Concat(EncounterCoverageTests.Cases())
+            .Concat(EncounterPerspectiveTests.Cases())
+            .Concat(ActorOcclusionTests.Cases())
+            .Concat(PassByShotTests.Cases())
+            .Concat(ElevationProfileTests.Cases())
+            .Concat(GroupDollyTests.Cases())
+            .Concat(RenderedPictureTests.Cases())
+            .Concat(ShotLongevityTests.Cases())
+            .Concat(ShotScaleTests.Cases())
+            .Concat(ShotSequenceTests.Cases())
+            .Concat(ActionPhaseTests.Cases())
+            .Concat(ComplementaryPerspectiveTests.Cases())
+            .Concat(ProceduralCameraGeometryTests.Cases())
+            .Concat(CinematicShotDirectorTests.Cases())
+            .Concat(ShotIntentTests.Cases())
+            .Concat(PlayerActivitySelectionTests.Cases())
+            .Concat(ShotTrajectoryPolicyTests.Cases())
+            .Concat(ScenicShotPlanTests.Cases())
+            .Concat(ScenicAvailabilityTests.Cases())
+            .Concat(ScenicPictureAvailabilityTests.Cases())
+            .Concat(ScenicSiteSequenceTests.Cases())
+            .Concat(ScenicEditorialPolishTests.Cases())
+            .Concat(ScenicRecoveryTests.Cases())
+            .Concat(ScenicTraceTests.Cases())
+            .Concat(ScenicObservationSchedulingTests.Cases())
+            .Concat(ScenicRouteWindowTests.Cases())
+            .Concat(ScenicPresentationTests.Cases())
+            .Concat(ScenicMotionTests.Cases())
+            .Concat(ScenicDirectorTests.Cases())
+            .Concat(ScenicJourneyTests.Cases())
+            .Concat(ScenicJourneyDepartureTests.Cases())
+            .Concat(LiveScenicTimelapseTests.Cases())
+            .Concat(ScenicCandidateScheduleTests.Cases())
+            .Concat(CameraObservationBudgetTests.Cases())
+            .Concat(SharedObservationTests.Cases())
+            .Concat(CameraSpatialPlannerTests.Cases())
+            .Concat(ActorSpatialHorizonTests.Cases())
+            .Concat(SpatialTrajectoryTests.Cases())
+            .Concat(PlaceHierarchyTests.Cases())
+            .Concat(SpatialPlanningIntegrationTests.Cases())
+            .Concat(ScenicSurfaceTests.Cases())
+            .Concat(CreatureCameraAdmissionTests.Cases())
+            .Concat(ScenicIntegrationTests.Cases())
+            .Concat(ScenicReadinessTests.Cases())
+            .Concat(IdlePresentationTests.Cases())
+            .Concat(WildlifeCutawayPolicyTests.Cases())
+            .Concat(AutonomousCutawayTests.Cases())
+            .Concat(ObserverActivityProtocolTests.Cases())
+            .Concat(ObserverEventProtocolTests.Cases())
+            .Concat(ObservedIdleClockTests.Cases())
+            .Concat(CompanionGroupPolicyTests.Cases())
+            .Concat(SceneAwarenessTests.Cases())
+            .Concat(PlayerCoverageTests.Cases())
+            .Concat(ShotProjectionTests.Cases())
+            .Concat(ShotCompositionPolicyTests.Cases())
+            .Concat(ObserverContextTests.Cases()).ToArray();
 
         int failed = 0;
         foreach (var test in cases)
@@ -304,6 +387,20 @@ internal static class Program
         long revision = c.Revision;
         c.Tick(86400, null, 0, true, None); Equal(CoverageMode.Scenic, c.Mode); Equal(revision + 1, c.Revision);
         c.Tick(10, null, 0, true, Creatures); Equal(CoverageMode.Creature, c.Mode);
+    }
+    private static void ScenicReplacement()
+    {
+        var c = Coverage(); c.Tick(0, null, 0, true, None);
+        c.Tick(9, null, 0, true, None);
+        long revision = c.Revision;
+        c.ScenicPresentationStarted(); // Replace an obstructed shot near the end of its dwell.
+        Equal(0d, c.ShotElapsed); Equal(revision, c.Revision);
+        c.Tick(9, null, 0, true, None);
+        Equal(CoverageMode.Scenic, c.Mode); Equal(9d, c.ShotElapsed); Equal(revision, c.Revision);
+        c.Tick(1, null, 0, true, None); Equal(revision + 1, c.Revision);
+        c.ScenicPresentationStarted();
+        c.Tick(0, "ready", 1, true, None);
+        Equal(CoverageMode.Player, c.Mode); Equal("ready", c.SubjectId);
     }
     private static void CreatureLoss()
     {
@@ -559,6 +656,19 @@ internal static class Program
         var f = new FrameContinuity(); f.Captured(1);
         Equal(FramePresentation.Slate, f.Select(1.01, true, true));
         Equal(FramePresentation.Slate, f.Select(1.01, false, true));
+    }
+    private static void FrameTravelBoundary()
+    {
+        var f = new FrameContinuity(); f.Captured(1);
+        Equal(FramePresentation.Hold, f.Select(1.01, false, false));
+        Equal(FramePresentation.Slate, f.Select(1.02, false, true));
+        // Travel may finish before the old hold expires. It must not return.
+        Equal(FramePresentation.Slate, f.Select(1.03, false, false));
+        Equal(FramePresentation.Live, f.Select(1.04, true, false));
+        Equal(FramePresentation.Slate, f.Select(1.05, false, false));
+        // Only a newly captured live image can restore short-gap continuity.
+        f.Captured(1.06);
+        Equal(FramePresentation.Hold, f.Select(1.07, false, false));
     }
     private static void FrameReset()
     {

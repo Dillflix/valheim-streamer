@@ -11,6 +11,7 @@ internal sealed class StreamOptions
     internal string Url = "";
     internal int Width = 1280, Height = 720, Fps = 30, BitrateKbps = 4000, SampleRate = 48000;
     internal bool FlipVertical = false;
+    internal bool AutomaticOrientation = true;
     internal VideoEncoderKind VideoEncoder = VideoEncoderKind.libx264;
     internal int NvencGpu = -1;
 
@@ -48,7 +49,7 @@ internal sealed class StreamOptions
             "-pix_fmt yuv420p -bf 0 -g {6} -keyint_min {6} -b:v {7}k -maxrate {7}k -bufsize {8}k " +
             "-c:a aac -b:a 128k -ar 48000 -progress pipe:1 -rw_timeout 5000000 " +
             "-f flv -flvflags no_duration_filesize \"{9}\"",
-            Width, Height, Fps, SampleRate, audioPort, FlipVertical ? "-vf vflip " : "", Fps * 2, BitrateKbps, BitrateKbps * 2, Url,
+            Width, Height, Fps, SampleRate, audioPort, !AutomaticOrientation && FlipVertical ? "-vf vflip " : "", Fps * 2, BitrateKbps, BitrateKbps * 2, Url,
             VideoEncoder == VideoEncoderKind.h264_nvenc
                 ? "-c:v h264_nvenc -preset p4 -tune ll -rc cbr -gpu " + NvencGpu.ToString(CultureInfo.InvariantCulture)
                 : "-c:v libx264 -preset veryfast -tune zerolatency -threads 2");

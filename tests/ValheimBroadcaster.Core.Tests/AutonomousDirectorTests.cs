@@ -23,6 +23,12 @@ internal static class AutonomousDirectorTests
         ("Scenic selection enforces minimum and maximum travel distances", ScenicBounds),
         ("Unavailable scenery triggers a bounded search independent of footage dwell", ScenicRecovery),
         ("Scenic region dwell requires useful rendered footage", ScenicFootage),
+        ("Ordinary Scenic relocation completes a developing shot before departure", ScenicDepartureBoundary),
+        ("Scenic relocation cannot extend an unfinished shot indefinitely", ScenicDepartureDeadline),
+        ("Scenic missing-picture and content recovery bypass an editorial departure wait", ScenicDepartureRecovery),
+        ("Ready and distant players preempt a pending Scenic edit", ScenicDeparturePlayerPriority),
+        ("Holding resets the pending Scenic edit deadline without catch-up", ScenicDepartureHold),
+        ("Journey ownership and world reset clear pending Scenic relocation timing", ScenicDepartureOwnership),
         ("Failed scenic destinations yield to alternatives", ScenicFailure),
         ("Multi-hour scenery history remains bounded", BoundedHistory),
         ("Full scenic history preserves unexpired revisit exclusions", FullHistoryCooldown),
@@ -33,6 +39,12 @@ internal static class AutonomousDirectorTests
         ("Solo routes use the travel transaction and require ready footage", SoloRoute),
         ("Solo route failures and cancellation preserve explicit results", SoloRouteFailure),
         ("External travel cannot be interrupted by autonomous requests", ExternalTravel),
+        ("Sustained walking and sprinting preserve local follow across loading gaps", SustainedMovement),
+        ("Nearby unready scenes never authorize player travel", LocalLoading),
+        ("Reacquisition requires continuous loss of camera reach", ContinuousReachLoss),
+        ("Brief interruptions preserve footage dwell and target identity", BriefInterruption),
+        ("Disconnect and manual selection clear the previous target grace", GraceIdentity),
+        ("Pause and reset clear stale reacquisition timers", GraceLifecycle),
         ("Autonomy rejects invalid clocks coordinates and discovery bounds", InvalidInputs)
     };
 
@@ -78,6 +90,96 @@ internal static class AutonomousDirectorTests
         Step(d, 3600, players, shown: "a", dt: 3600); Eq("a", d.TargetId); Eq(1d, d.ReadyDwellSeconds);
         Step(d, 3601, players, shown: "a"); Eq("b", d.TargetId);
     }
+    private static AutonomyPlayer Spatial(float x, bool ready, double movement) =>
+        new AutonomyPlayer("a", "Runner", new AutonomyPosition(x, 0, 0), 100000, ready, movement,
+            movement >= CameraReachability.ImmediateLimit ? "Outside immediate camera reach" : "Target area loading locally");
+
+    private static void SustainedMovement()
+    {
+        // Move farther than any streaming radius over two minutes. The carrier
+        // follows the smoothed camera, never the original acquisition point.
+        foreach (double speed in new[] { 2d, 8d, 12d })
+        foreach (double direction in new[] { -1d, 1d })
+        foreach (double azimuth in new[] { 0d, 90d, 180d, 270d })
+        {
+            var d = New(); d.SetHolding(true);
+            double radians = azimuth * Math.PI / 180, ox = Math.Sin(radians) * 60, oz = Math.Cos(radians) * 60;
+            double cx = ox, cy = 9.5, cz = oz;
+            for (int frame = 0; frame <= 7200; frame++)
+            {
+                double now = frame / 60d, x = direction * speed * now;
+                bool loaded = frame % 420 < 408; // recurring 200ms scene gaps
+                double required = CameraReachability.RequiredDisplacement(x - cx, -cy, -cz, 60, 10, azimuth);
+                var player = new AutonomyPlayer("runner", "Runner", new AutonomyPosition((float)x, 0, 0), now + 1,
+                    loaded && required < CameraReachability.ImmediateLimit, required, loaded ? "Locally frameable" : "Target area loading locally");
+                Step(d, now, new[] { player }, position: new AutonomyPosition((float)cx, (float)cy, (float)cz),
+                    shown: loaded ? "runner" : null, dt: 1d / 60);
+                Assert(d.PendingTravel == null && d.TargetId == "runner", "Ordinary continuous movement requested reacquisition");
+                if (loaded) cx += (x + ox - cx) * (1 - Math.Exp(-4d / 60));
+            }
+            Assert(Math.Abs(cx - ox) > 200, "Trajectory did not leave the original area");
+            Eq(0L, d.CompletedTravels);
+        }
+    }
+    private static void LocalLoading()
+    {
+        var d = New(); d.MinimumPlayerTravelDistance = 5; d.AcquisitionSeconds = 10;
+        Step(d, 0, new[] { Spatial(60, true, 60) }, shown: "a");
+        for (int now = 1; now < 10; now++)
+        {
+            Step(d, now, new[] { Spatial(60 + now, false, 60 + now) });
+            Assert(d.PendingTravel == null, "An unready nearby area must not authorize a native teleport");
+            Eq("a", d.TargetId);
+        }
+        Step(d, 10, new[] { Spatial(70, false, 70) });
+        Assert(d.PendingTravel == null && d.TargetId == null && d.LastFailure!.Contains("deadline"));
+    }
+    private static void ContinuousReachLoss()
+    {
+        var d = New(); d.AcquisitionSeconds = 30;
+        Step(d, 0, new[] { Spatial(20, true, 30) }, shown: "a");
+        Step(d, 1, new[] { Spatial(500, false, 510) }); Assert(d.PresentationGraceActive && d.PendingTravel == null);
+        // A near observation resets the reach-loss clock even without rendered footage.
+        Step(d, 3, new[] { Spatial(20, false, 30) });
+        Step(d, 4, new[] { Spatial(600, false, 610) }); Assert(d.PendingTravel == null);
+        Step(d, 6.9, new[] { Spatial(620, false, 630) }); Assert(d.PendingTravel == null);
+        Step(d, 7, new[] { Spatial(630, false, 640) });
+        Eq(630f, Request(d).Position.X); Assert(Request(d).Reason.Contains("continuously out of reach 3"));
+        long token = Request(d).Token; d.TravelStarted(token, 7);
+        Step(d, 8, new[] { Spatial(700, false, 710) }); Eq(630f, d.ActiveTravel!.Position.X);
+    }
+    private static void BriefInterruption()
+    {
+        var d = New(); var both = new[] { Spatial(20, true, 30), P("b") };
+        Step(d, 0, both, shown: "a"); Eq(1d, d.ReadyDwellSeconds);
+        long revision = d.Revision;
+        Step(d, 1, new[] { Spatial(20, false, 30), P("b") });
+        Eq(revision, d.Revision); Eq(1d, d.ReadyDwellSeconds); Assert(d.PresentationGraceActive);
+        Step(d, 2, both, shown: "a"); Eq("b", d.TargetId); Assert(!d.PresentationGraceActive);
+    }
+    private static void GraceIdentity()
+    {
+        var d = New(); d.SetHolding(true);
+        Step(d, 0, new[] { Spatial(20, true, 30) }, shown: "a");
+        Step(d, 1, new[] { Spatial(20, false, 30) }); Assert(d.PresentationGraceActive);
+        Step(d, 2, new[] { P("b", 1000, false) }); Eq("b", Request(d).TargetId); Assert(!d.PresentationGraceActive);
+        d.Reset(); d.SetEnabled(true);
+        Step(d, 0, new[] { Spatial(20, true, 30), P("b", 1000, false) }, shown: "a");
+        d.Select("b"); Step(d, 1, new[] { Spatial(20, true, 30), P("b", 1000, false) });
+        Eq("b", Request(d).TargetId); Assert(!d.PresentationGraceActive);
+    }
+    private static void GraceLifecycle()
+    {
+        var d = New(); d.AcquisitionSeconds = 30;
+        Step(d, 0, new[] { Spatial(20, true, 30) }, shown: "a");
+        Step(d, 1, new[] { Spatial(500, false, 510) }); d.SetPaused(true); Assert(!d.PresentationGraceActive);
+        Step(d, 100, new[] { Spatial(500, false, 510) }); d.SetPaused(false);
+        Step(d, 101, new[] { Spatial(500, false, 510) }); Assert(d.PendingTravel == null && d.PresentationGraceActive);
+        Step(d, 104, new[] { Spatial(500, false, 510) }); Assert(d.PendingTravel != null);
+        d.Reset(); d.SetEnabled(true); Step(d, 0, new[] { Spatial(500, false, 510) });
+        Assert(d.PendingTravel != null && !d.PresentationGraceActive);
+    }
+
     private static void PositionFreshness()
     {
         var d = New(); Step(d, 10, new[] { P("a", 1000, false, 10) });
@@ -140,8 +242,10 @@ internal static class AutonomousDirectorTests
     private static void TargetLoss()
     {
         var d = New(); Step(d, 0, new[] { P("a"), P("b") }, shown: "a");
-        Step(d, 1, new[] { P("a", 0, false, 0), P("b") }, shown: "b"); Eq("b", d.TargetId);
-        Step(d, 2, new[] { P("a") }, shown: "a"); Eq("a", d.TargetId);
+        Step(d, 1, new[] { P("a", 0, false, 0), P("b") }, shown: "b"); Eq("a", d.TargetId);
+        Assert(d.PresentationGraceActive);
+        Step(d, 4, new[] { P("a", 0, false, 0), P("b") }, shown: "b"); Eq("b", d.TargetId);
+        Step(d, 5, new[] { P("a") }, shown: "a"); Eq("a", d.TargetId);
     }
     private static void DeferredPreemption()
     {
@@ -168,6 +272,71 @@ internal static class AutonomousDirectorTests
         long revision = d.Revision;
         Step(d, 2, new[] { P("a"), new AutonomyPlayer("b", "Renamed", Origin, 100, true) }, shown: "b");
         Eq("b", d.TargetId); Eq("Renamed", d.TargetName); Eq(revision, d.Revision); Eq(2d, d.ReadyDwellSeconds);
+    }
+    private static ScenicRegion[] DepartureRegions() => new[] { R("local", 0), R("fresh", 300) };
+    private static void DepartureStep(AutonomousDirector d, double now, bool boundary = false,
+        bool ready = true, bool expired = false, bool exhausted = false, bool journey = false,
+        IReadOnlyList<AutonomyPlayer>? players = null, string? shown = null) =>
+        d.Tick(now, 1, players ?? Array.Empty<AutonomyPlayer>(), DepartureRegions(), Origin, shown, ready,
+            idleSearchExpired: expired, scenicContentExhausted: exhausted, scenicJourneyActive: journey,
+            scenicEditBoundary: boundary);
+    private static AutonomousDirector WaitingDeparture()
+    {
+        var d = New(); DepartureStep(d, 0); DepartureStep(d, 1);
+        Assert(d.PendingTravel == null && d.ScenicDepartureWaiting, "Dwell interrupted a developing scenic shot");
+        return d;
+    }
+    private static void ScenicDepartureBoundary()
+    {
+        var d = WaitingDeparture(); DepartureStep(d, 5);
+        Assert(d.PendingTravel == null, "Waiting for an editorial boundary issued a travel token");
+        DepartureStep(d, 6, boundary: true);
+        Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+        Eq("Scenic footage dwell completed", Request(d).Reason);
+        Assert(!d.ScenicDepartureWaiting);
+    }
+    private static void ScenicDepartureDeadline()
+    {
+        var d = WaitingDeparture();
+        DepartureStep(d, 15.99); Assert(d.PendingTravel == null);
+        DepartureStep(d, 16); Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+        Assert(!d.ScenicDepartureWaiting, "Expired window remained armed after departure");
+    }
+    private static void ScenicDepartureRecovery()
+    {
+        var missing = WaitingDeparture(); DepartureStep(missing, 2, ready: false, expired: true);
+        Eq("Scenic picture-recovery budget exhausted", Request(missing).Reason);
+        var exhausted = WaitingDeparture(); DepartureStep(exhausted, 2, exhausted: true);
+        Eq("Local scenic coverage exhausted; seeking fresh subject", Request(exhausted).Reason);
+    }
+    private static void ScenicDeparturePlayerPriority()
+    {
+        var ready = WaitingDeparture(); DepartureStep(ready, 2, players: new[] { P("a") }, shown: "a");
+        Eq(AutonomyState.Following, ready.State); Eq("a", ready.TargetId);
+        Assert(ready.PendingTravel == null && !ready.ScenicDepartureWaiting);
+        var distant = WaitingDeparture(); DepartureStep(distant, 2, players: new[] { P("a", 1000, false) });
+        Eq(AutonomyTravelKind.Player, Request(distant).Kind);
+        Assert(!distant.ScenicDepartureWaiting);
+    }
+    private static void ScenicDepartureHold()
+    {
+        var d = WaitingDeparture(); d.SetHolding(true); DepartureStep(d, 100, boundary: true);
+        Assert(d.PendingTravel == null && !d.ScenicDepartureWaiting);
+        d.SetHolding(false); DepartureStep(d, 101); DepartureStep(d, 115.99);
+        Assert(d.PendingTravel == null, "Held time consumed the new unheld edit deadline");
+        DepartureStep(d, 116); Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+    }
+    private static void ScenicDepartureOwnership()
+    {
+        var d = WaitingDeparture(); DepartureStep(d, 100, journey: true);
+        Assert(d.PendingTravel == null && !d.ScenicDepartureWaiting);
+        DepartureStep(d, 101); Assert(d.PendingTravel == null && d.ScenicDepartureWaiting);
+        d.Reset(); d.SetEnabled(true); DepartureStep(d, 0); DepartureStep(d, 1);
+        Assert(d.PendingTravel == null && d.ScenicDepartureWaiting, "Old world's deadline leaked across reset");
+        DepartureStep(d, 2, boundary: true); Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+        var window = new ScenicRelocationWindow();
+        Throws(() => window.CanDepart(double.NaN, false));
+        window.CanDepart(10, false); Throws(() => window.CanDepart(9, false));
     }
     private static void ScenicNovelty()
     {
