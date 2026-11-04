@@ -25,6 +25,7 @@ internal sealed class ScenicProduction
     private long fixturePlanId;
     private float fixtureRequestedAt, fixtureMotion = 1;
     private bool fixtureDynamic = true;
+    internal long FixtureOwnerId => requestedFixture?.Id ?? (Plan?.Id == fixturePlanId ? fixturePlanId : 0);
     internal bool FixturePreparing => requestedFixture != null;
     internal bool FixtureActive => requestedFixture != null || fixturePlanId > 0 && Plan?.Id == fixturePlanId;
     internal string FixtureStatus { get; private set; } = "No camera fixture requested";

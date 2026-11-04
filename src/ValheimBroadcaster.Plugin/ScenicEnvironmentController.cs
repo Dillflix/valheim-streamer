@@ -18,7 +18,19 @@ internal sealed class ScenicEnvironmentController : IDisposable
     private static readonly MethodInfo? RescaleDayFraction = AccessTools.Method(typeof(EnvMan), "RescaleDayFraction", new[] { typeof(float) });
     private EnvMan? owner;
     private ZNet? world;
-    private double cycleSeconds;
+    private double cycleSeconds, initialOffset;
+    private double? timelapseProgress;
+    internal bool AutomaticPermissionRequested { get; set; }
+    internal bool CanAutomatic => !disposed && !suspendedForConflict && configurationError.Length == 0 && cycleSeconds == 0 && weather.Length == 0 &&
+        (!EnvMan.instance || timelapseProgress.HasValue || !EnvMan.instance.m_debugTimeOfDay && string.IsNullOrEmpty(EnvMan.instance.m_debugEnv));
+    internal bool Permitted(double now) => remote.Isolated ? remote.EnvironmentAllowed(now) : ObserverController.Offline;
+    internal void SetTimelapse(double? progress)
+    {
+        if (progress.HasValue && (double.IsNaN(progress.Value) || double.IsInfinity(progress.Value) || progress < 0 || progress > 1))
+            throw new ArgumentOutOfRangeException(nameof(progress));
+        if (!progress.HasValue && timelapseProgress.HasValue) Restore();
+        timelapseProgress = progress;
+    }
     private string weather = "", configurationError = "";
     private bool savedDebugTime, ownsTime, ownsWeather;
     private float savedTime, savedFraction, appliedTime;
@@ -55,9 +67,9 @@ internal sealed class ScenicEnvironmentController : IDisposable
     internal void Tick(bool scenicOnAir, double now)
     {
         if (disposed) return;
-        bool requested = configurationError.Length == 0 && !suspendedForConflict && (cycleSeconds > 0 || weather.Length > 0);
-        remote.EnvironmentRequested = requested && scenicOnAir;
-        bool permitted = remote.Isolated ? remote.EnvironmentAllowed(now) : ObserverController.Offline;
+        bool requested = configurationError.Length == 0 && !suspendedForConflict && (cycleSeconds > 0 || weather.Length > 0 || timelapseProgress.HasValue);
+        remote.EnvironmentRequested = (requested || AutomaticPermissionRequested) && scenicOnAir;
+        bool permitted = Permitted(now);
         if (!requested || !scenicOnAir || !permitted || !EnvMan.instance || !ZNet.instance)
         {
             Restore();
@@ -71,7 +83,7 @@ internal sealed class ScenicEnvironmentController : IDisposable
         if (!owner)
         {
             EnvMan environment = EnvMan.instance;
-            if (cycleSeconds > 0 && (SmoothDayFraction?.FieldType != typeof(float) || RescaleDayFraction?.ReturnType != typeof(float)))
+            if ((cycleSeconds > 0 || timelapseProgress.HasValue) && (SmoothDayFraction?.FieldType != typeof(float) || RescaleDayFraction?.ReturnType != typeof(float)))
             { Status = "Environment: visual time restoration hooks do not match this game build"; return; }
             if (weather.Length > 0 && !environment.m_environments.Any(item => item != null && item.m_name == weather))
             { Status = "Environment: unknown weather '" + weather + "'; use an installed EnvMan environment name"; return; }
@@ -81,6 +93,12 @@ internal sealed class ScenicEnvironmentController : IDisposable
             if (float.IsNaN(savedFraction) || float.IsInfinity(savedFraction))
             { Restore(); Status = "Environment: current visual time is invalid"; return; }
             clock.Reset(Math.Max(0, Math.Min(1, savedFraction)), now);
+            if (timelapseProgress.HasValue)
+            {
+                if (!TryNaturalPhase(out float naturalStart)) return;
+                initialOffset = savedFraction - naturalStart;
+                initialOffset -= Math.Floor(initialOffset + .5);
+            }
         }
         // Do not silently take over state another mod/operator modified after us.
         if (ownsTime && (!owner.m_debugTimeOfDay || owner.m_debugTime != appliedTime) ||
@@ -89,17 +107,41 @@ internal sealed class ScenicEnvironmentController : IDisposable
             Restore(); suspendedForConflict = true; remote.EnvironmentRequested = false;
             Status = "Environment: external override detected; cinematic control suspended"; log(Status); return;
         }
-        float phase = (float)clock.Advance(now, cycleSeconds, true);
-        if (cycleSeconds > 0)
+        if (timelapseProgress.HasValue && !TryNaturalPhase(out _)) return;
+        float phase = timelapseProgress.HasValue ? (float)LiveScenicTimelapse.Phase(lastNaturalPhase, timelapseProgress.Value, initialOffset) :
+            (float)clock.Advance(now, cycleSeconds, true);
+        if (cycleSeconds > 0 || timelapseProgress.HasValue)
         { owner.m_debugTimeOfDay = true; owner.m_debugTime = appliedTime = phase; ownsTime = true; }
         if (weather.Length > 0)
         { owner.m_debugEnv = appliedWeather = weather; ownsWeather = true; }
-        Status = "Environment: cinematic " + (cycleSeconds > 0 ? "day cycle " + cycleSeconds.ToString("F0") + "s" : "natural time") +
+        Status = "Environment: cinematic " + (timelapseProgress.HasValue ? "live daylight passage " + timelapseProgress.Value.ToString("P0") : cycleSeconds > 0 ? "day cycle " + cycleSeconds.ToString("F0") + "s" : "natural time") +
             (weather.Length > 0 ? "; weather " + weather : "; natural weather") + "; shared simulation clock unchanged";
     }
 
+    private float lastNaturalPhase;
+    private bool TryNaturalPhase(out float phase)
+    {
+        phase = savedFraction;
+        try
+        {
+            if (!owner || !world || owner.m_dayLengthSec <= 0 || RescaleDayFraction == null)
+                throw new InvalidOperationException("Natural visual phase unavailable");
+            double fraction = (world.GetTimeSeconds() % owner.m_dayLengthSec) / owner.m_dayLengthSec;
+            if (!(RescaleDayFraction.Invoke(owner, new object[] { Mathf.Clamp01((float)fraction) }) is float value) ||
+                float.IsNaN(value) || float.IsInfinity(value)) throw new InvalidOperationException("Invalid natural visual phase");
+            phase = lastNaturalPhase = value;
+            return true;
+        }
+        catch (Exception error)
+        {
+            Stop(); suspendedForConflict = true;
+            Status = "Environment: natural-phase observation failed (" + error.GetType().Name + "); previous settings restored";
+            log(Status); return false;
+        }
+    }
+
     internal void Stop()
-    { Restore(); remote.EnvironmentRequested = false; Status = "Environment: previous time/weather settings restored"; }
+    { Restore(); timelapseProgress = null; AutomaticPermissionRequested = false; remote.EnvironmentRequested = false; Status = "Environment: previous time/weather settings restored"; }
 
     private void Restore()
     {

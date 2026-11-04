@@ -9,7 +9,8 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<float> Distance, Height, FieldOfView, Azimuth, Smoothing, Dwell, Timeout;
     internal readonly ConfigEntry<float> ScenicDwell, CreatureDwell, CreatureRadius, AcquisitionCooldown;
     internal readonly ConfigEntry<bool> WildlifeCutaways;
-    internal readonly ConfigEntry<bool> ScenicJourneys;
+    internal readonly ConfigEntry<bool> ScenicJourneys, LiveTimelapse;
+    internal readonly ConfigEntry<float> LiveTimelapseSeconds;
     internal readonly ConfigEntry<float> ScenicJourneySeconds, ScenicJourneySpeed;
     internal readonly ConfigEntry<float> EnvironmentCycleSeconds;
     internal readonly ConfigEntry<string> EnvironmentWeather;
@@ -57,6 +58,8 @@ internal sealed class BroadcastSettings
         FlipVertical = config.Bind("Streaming", "FlipVertical", false, "Manual output flip, used only when AutomaticOrientation=false. Existing values are preserved but ignored in automatic mode. Restart streaming after changing this setting.");
         StreamToggle = config.Bind("Controls", "StreamToggle", new KeyboardShortcut(KeyCode.F11), "Start/stop RTMP video and game audio. Requires active broadcast camera.");
         ScenicDwell = config.Bind("Idle", "ScenicSeconds", 45f, Range("Seconds of usable scenic footage between wildlife opportunities. The dedicated scenic director sets individual shot duration from each route.", 5f, 600f));
+        LiveTimelapse = config.Bind("ScenicTimelapse", "Enabled", true, "Autonomously select restrained live daylight-passage shots on an authorized empty server. No recording or simulation acceleration.");
+        LiveTimelapseSeconds = config.Bind("ScenicTimelapse", "DurationSeconds", 90f, Range("Live shot duration for one visual day, returning to current natural time.", 45f, 180f));
         ScenicJourneys = config.Bind("Idle", "ScenicJourneys", true, "Offer continuous scenic journeys through successively validated local route sections. Players and unavailable geometry can interrupt a journey; no teleport occurs within a journey shot.");
         ScenicJourneySeconds = config.Bind("Idle", "ScenicJourneySeconds", 180f, Range("Maximum developed journey duration in seconds before returning to varied scenic coverage.", 30f, 900f));
         ScenicJourneySpeed = config.Bind("Idle", "ScenicJourneySpeed", 1f, Range("Target scenic journey travel speed in metres per second before the Camera.ShotMotion multiplier. Actual progress requires a validated route and usable live output.", .25f, 2f));

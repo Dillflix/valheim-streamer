@@ -21,6 +21,7 @@ public sealed partial class BroadcasterPlugin
             if (!director.IsEnabled || !observer.Active || observer.Phase != ObserverPhase.Watching ||
                 coverage.Mode != CoverageMode.Scenic || selfTest || probe.Active || remote.Isolated && !remote.Approved)
             { context?.AddString("Start a protected observer's Scenic coverage before requesting a journey."); return; }
+            StopLiveTimelapse("Operator requested a journey");
             settings.ScenicJourneys.Value = true;
             SetHolding(false);
             context?.AddString(idle.RequestJourney());
@@ -53,6 +54,7 @@ public sealed partial class BroadcasterPlugin
         bool playback = director.IsEnabled && observer.Active && observer.Phase == ObserverPhase.Watching &&
             coverage.Mode == CoverageMode.Scenic && !selfTest && !probe.Active &&
             (!remote.Isolated || remote.Approved);
+        if (args.Length >= 2 && args[1].Equals("play", StringComparison.OrdinalIgnoreCase)) StopLiveTimelapse("Operator requested a saved fixture");
         try
         {
             context?.AddString(cameraFixtures.Command(args, ZNet.instance ? ZNet.instance.GetWorldUID() : 0,
@@ -81,6 +83,7 @@ public sealed partial class BroadcasterPlugin
                 .Where(item => item != null).Select(item => item.m_name).OrderBy(name => name)) : "Join a world to list available environments.");
             return;
         }
+        if (action != "status" && action != "list") StopLiveTimelapse("Operator changed environment controls");
         if (action == "off" && args.Length == 2)
         {
             settings.EnvironmentCycleSeconds.Value = 0;
@@ -107,7 +110,7 @@ public sealed partial class BroadcasterPlugin
 
     private void TimelapseCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast timelapse start [capture interval seconds] [real duration seconds] [output fps] | stop | status";
+        const string usage = "broadcast timelapse record start [capture interval seconds] [real duration seconds] [output fps] | stop | status";
         if (args.Length < 2 || timelapseCapture == null) { context?.AddString(usage); return; }
         string action = args[1].ToLowerInvariant();
         if (action == "start" && args.Length >= 2 && args.Length <= 5)

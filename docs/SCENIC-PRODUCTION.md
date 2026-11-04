@@ -100,10 +100,12 @@ This audit is observational. Missing diagnostic evidence does not invalidate an 
 
 ## Real interval timelapse recording
 
+In 0.8.38 this separate export feature uses `timelapse record`; autonomous live timelapse shots are described in [LIVE-TIMELAPSE.md](LIVE-TIMELAPSE.md).
+
 ```text
-broadcast timelapse start 2 600 30
-broadcast timelapse status
-broadcast timelapse stop
+broadcast timelapse record start 2 600 30
+broadcast timelapse record status
+broadcast timelapse record stop
 ```
 
 Arguments are **capture interval in real seconds**, **capture duration in real seconds**, and **output FPS**. Omitting them uses 2 / 600 / 30: up to 300 photographs from ten real minutes, encoded as ten seconds of silent 1280×720 MP4. Intervals range from 0.25 to 3600 seconds, source duration up to seven days, output FPS 1–60, with at most 216,000 photographs in one clip.

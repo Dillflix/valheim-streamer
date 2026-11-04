@@ -1,5 +1,9 @@
 # Validation and runtime test record
 
+## 0.8.38 live Scenic timelapse
+
+Built on the complete 0.8.37 source tree. Meaningful regressions cover matching rendered-plan progress, stale/held output, permission/owner preemption, bounded preparation and picture loss, editorial spacing, and joining the moving natural clock at both phase endpoints. Matching real-game-reference builds and existing policy/native/media CI remain required. Actual Valheim lighting, native sky smoothing, dark-scene fallback and player-join restoration remain **not run here**. See [runtime acceptance](LIVE-TIMELAPSE.md#runtime-acceptance).
+
 ## 0.8.37 Scenic production capabilities
 
 Built directly on 0.8.36 (`0de075d3213e76e3abd41c4ce627c4f071ed49a7`). The new cases cover route completion at reduced speed, exact initial/native window admission, bounded fixture preparation and player preemption, fixture persistence and validation, render-pose/identity comparison, expiring empty-server permissions, and real FFmpeg timelapse frame timing, orientation, storage and failure handling. Existing Core, native camera mathematics, real-game hook, RTMP, diagnostic video and replay suites remain required. Project builds use the matching real game assemblies with warnings treated as errors; repository CI provides an independent build and packaged artifacts.

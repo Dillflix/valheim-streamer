@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.37";
+    public const string PluginVersion = "0.8.38";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -188,6 +188,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         catch (Exception error) { remote.Fail("Observer connection error: " + error.GetType().Name); }
         cameraFixtures?.SetWorld(ZNet.instance ? ZNet.instance.GetWorldUID() : 0);
         scenicEnvironment?.Configure(settings.EnvironmentCycleSeconds.Value, settings.EnvironmentWeather.Value);
+        try { UpdateLiveTimelapse(); }
+        catch (Exception error)
+        { StopLiveTimelapse("Timelapse adapter failed: " + error.GetType().Name); settings.LiveTimelapse.Value = false; Logger.LogWarning(LiveTimelapseStatus); }
         scenicEnvironment?.Tick(enabled && director.IsEnabled && !selfTest && !probe.Active &&
             observer.Active && observer.Phase == ObserverPhase.Watching && activeWorld == ZNet.instance &&
             coverage.Mode == CoverageMode.Scenic && (scenicEnvironment.Active || cameraReady &&
@@ -590,6 +593,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 
     private void Stop(bool force = false, bool parked = false)
     {
+        StopLiveTimelapse("Broadcast stopped");
         scenicEnvironment?.Stop();
         timelapseCapture?.StopCapture("Broadcast stopped");
         cameraFixtures?.Reset();
@@ -823,6 +827,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             plugin.presentedIdleUsable = !plugin.probe.Active && plugin.cameraReady && plugin.rig.LastPictureUsable &&
                 (plugin.coverage.Mode == CoverageMode.Scenic || plugin.coverage.Mode == CoverageMode.Creature);
             plugin.presentedFrame = Time.frameCount;
+            if (plugin.liveTimelapse.OnAir && (plugin.coverage.Mode != CoverageMode.Scenic ||
+                plugin.observer.Phase != ObserverPhase.Watching || plugin.presentedScenicPlan != plugin.liveTimelapse.PlanId))
+                plugin.StopLiveTimelapse("Presentation changed; natural lighting restored before render");
             if (plugin.cameraReady && plugin.rig.OutputCamera)
             {
                 RenderedPictureContext? picture = plugin.rig.PictureContext;
@@ -981,6 +988,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             director.IsHolding ? "Operator hold: edits paused" : observer.RemoteSession ? automatic?.Status ?? "Preparing coverage" :
             coverage.IsWildlifeCutaway ? "Wildlife cutaway; observing player activity" : coverage.AwaitingPlayers ?
                 "Waiting for a loaded player view" : "Automatic " + coverage.Mode + " coverage");
+        if (liveTimelapse.Active) directing = LiveTimelapseStatus;
         string planning = coverage.Mode == CoverageMode.Scenic && (idle.Searching || !idle.HasScenicPath)
             ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
         string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
@@ -1187,7 +1195,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
     private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
-        "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + timelapseCapture?.Status + "\n" + scenicEnvironment?.Status + "\n" + cameraFixtures?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
+        "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + timelapseCapture?.Status + "\n" + LiveTimelapseStatus + "\n" + scenicEnvironment?.Status + "\n" + cameraFixtures?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
     {
@@ -1314,7 +1322,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private sealed class BroadcastCommand : ConsoleCommand
     {
         public override string Name => "broadcast";
-        public override string Help => "broadcast journey start|stop|on|off|status|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse start [interval] [duration] [fps]|stop|status | environment list|cycle <seconds>|weather <name>|off|status\n" +
+        public override string Help => "broadcast journey start|stop|on|off|status|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
             "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
@@ -1326,7 +1334,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 switch (action)
                 {
                     case "camera": plugin.CameraCommand(args, context); return;
-                    case "timelapse": plugin.TimelapseCommand(args, context); return;
+                    case "timelapse": plugin.LiveTimelapseCommand(args, context); return;
                     case "environment": plugin.EnvironmentCommand(args, context); return;
                     case "fixture": plugin.FixtureCommand(args, context); return;
                     case "journey": plugin.JourneyCommand(args, context); return;

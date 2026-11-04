@@ -19,6 +19,7 @@ internal sealed class IdleShots
     internal string JourneyStatus => scenic.JourneyStatus;
     internal string RequestJourney() => scenic.RequestJourney();
     internal void StopJourney() => scenic.StopJourney();
+    internal long FixtureOwnerId => scenic.FixtureOwnerId;
     internal bool FixturePreparing => scenic.FixturePreparing;
     internal bool FixtureActive => scenic.FixtureActive;
     internal string FixtureStatus => scenic.FixtureStatus;
