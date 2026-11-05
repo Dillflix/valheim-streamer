@@ -8,7 +8,7 @@ namespace ValheimBroadcaster.Plugin;
 // Conservative scenic-shot screening. Local triangle groups or submesh bounds
 // refine nearby foliage; unreadable/unsupported renderers retain coarse bounds.
 // This is not an alpha-accurate measurement of rendered leaves.
-internal sealed class ScenicVisibility
+internal sealed partial class ScenicVisibility
 {
     private const int Capacity = 512;
     private const float SurveyRadius = ScenicObservationPolicy.DetailRadius, ForegroundRange = ScenicObservationPolicy.ForegroundRange, DetailRadius = ScenicObservationPolicy.DetailRadius;

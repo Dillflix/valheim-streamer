@@ -15,6 +15,9 @@ internal static class JourneyRoutePlaybackTests
         yield return ("A certified stationary Journey arrival earns live dwell without inventing movement or catch-up time", StationaryArrival);
         yield return ("Journey route acceptance isolates callbacks and motion state across consecutive sections", NewSection);
         yield return ("Journey playback rejects ordinary scenery and invalid clock values", InvalidInputs);
+        yield return ("Retimed Journey bends travel at their selected cruise without a second mission-speed slowdown", SelectedCruiseClock);
+        yield return ("Journey cruise metadata survives route transformations and stationary endings", CruiseTransforms);
+        yield return ("Journey endpoint completion cannot turn a sub-five-centimetre remainder into a large position jump", TinyEndpointCompletion);
     }
 
     private static AutonomyPosition P(float x, float z = 0) => new AutonomyPosition(x, 30, z);
@@ -33,6 +36,79 @@ internal static class JourneyRoutePlaybackTests
         var playback = new JourneyRoutePlayback(); playback.Accept(section, at);
         playback.Observe(section.Id, at, 0, true, true, false);
         return playback;
+    }
+
+    private static void SelectedCruiseClock()
+    {
+        foreach (double selected in new[] { 2d, 6d, 12d })
+        foreach (double actual in new[] { selected, selected * .5 })
+        {
+            var feature = new ScenicFeature("bend", ScenicFeatureKind.Landscape, P(30, 20), P(1), 20, 5, .9f);
+            ScenicShotPlan shape = ScenicShotPlan.Spatial(30, feature, ScenicShotRole.Traverse,
+                new[] { P(0), P(12), P(24, 6), P(36, 12) },
+                new[] { P(20), P(32), P(44, 6), P(56, 12) }, 65, useNativeSpline: false);
+            ScenicShotPlan plan = shape.AsJourneyDeparture(7, shape.TravelMetres / selected)
+                .WithJourneyCruiseSpeed(selected).WithJourneyRamps(false, false);
+            var playback = Start(plan);
+            double distance = 0; AutonomyPosition last = plan.Sample(0).CameraPosition;
+            for (int frame = 1; frame <= 120; frame++)
+            {
+                double progress = playback.ProposeAtCruise(1d / 60, actual, 12);
+                playback.Observe(plan.Id, frame / 60d, progress, true, true, false);
+                AutonomyPosition next = plan.Sample(playback.Progress).CameraPosition;
+                distance += last.Distance(next); last = next;
+            }
+            Check(Math.Abs(distance - actual * 2) < .02, "Selected bend speed was divided by the mission request a second time");
+            Near(playback.Progress, actual * 2 / shape.TravelMetres);
+            Near(playback.ProposeAtCruise(120, actual, 12, false), playback.Progress);
+        }
+        // Old fixtures carry zero metadata and preserve their original divisor.
+        var legacy = Start(Section(duration: 4));
+        Near(legacy.ProposeAtCruise(.1, 6, 12), .0125);
+        var slow = Start(Section(duration: 24).WithJourneyCruiseSpeed(2));
+        bool rejected = false;
+        try { slow.ProposeAtCruise(.1, 3, 12); } catch (ArgumentOutOfRangeException) { rejected = true; }
+        Check(rejected, "Playback silently exceeded its certified angular speed");
+    }
+
+    private static void CruiseTransforms()
+    {
+        ScenicShotPlan plan = Section().WithJourneyCruiseSpeed(6);
+        Check(plan.AsStandalone().JourneyCruiseSpeed == 6 && plan.WithIdentity(31).JourneyCruiseSpeed == 6 &&
+            plan.WithDuration(10).JourneyCruiseSpeed == 6 && plan.RaiseCamera(1).JourneyCruiseSpeed == 6 &&
+            ScenicJourneyEnding.Refuge(plan, 41)!.JourneyCruiseSpeed == 6 &&
+            ScenicJourneyEnding.Propose(plan, 42, 1)!.JourneyCruiseSpeed == 6,
+            "An immutable route transformation discarded its authored cruise");
+        foreach (double invalid in new[] { 0d, 1.9, 12.1, double.NaN, double.PositiveInfinity })
+        {
+            bool rejected = false;
+            try { plan.WithJourneyCruiseSpeed(invalid); } catch (ArgumentOutOfRangeException) { rejected = true; }
+            Check(rejected, "Invalid authored cruise accepted");
+        }
+    }
+
+    private static void TinyEndpointCompletion()
+    {
+        foreach (double selected in new[] { 2d, 6d, 12d })
+        {
+            ScenicShotPlan plan = Section(duration: 48 / selected).WithJourneyCruiseSpeed(selected);
+            var playback = Start(plan); double at = 0;
+            while (48 * (1 - playback.Progress) > .05)
+            {
+                at += 1d / 60;
+                double proposal = playback.ProposeAtCruise(1d / 60, selected, 12);
+                playback.Observe(plan.Id, at, proposal, true, true, false);
+            }
+            AutonomyPosition before = plan.Sample(playback.Progress).CameraPosition;
+            // Mirrors the final endpoint-only completion, which remains
+            // capped by Propose's .1s authored-clock limit. It never consumes
+            // the remaining duration of a larger route or missing picture.
+            double final = playback.Propose(plan.DurationSeconds * (1 - playback.Progress));
+            Check(plan.Sample(final).CameraPosition.Distance(before) <= .05001,
+                "Endpoint completion moved farther than the small measured remainder");
+            playback.Observe(plan.Id, at + 1d / 60, final, true, true, false);
+            Near(playback.Progress, 1);
+        }
     }
 
     private static void FirstPresentation()

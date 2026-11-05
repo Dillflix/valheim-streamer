@@ -58,7 +58,7 @@ internal sealed partial class ScenicProduction
                     picture = ScenicShotPlan.Picture(++nextId, capturedPlan.Feature, capturedPlan.Role,
                         sample.Position, new AutonomyPosition(journeyExitCapturedFocus.x, journeyExitCapturedFocus.y, journeyExitCapturedFocus.z),
                         (float)fov, composition.ScreenX, composition.ScreenY)
-                        .WithStableWaterClearance(capturedPlan.StableWaterClearance);
+                        .WithStableWaterClearance(capturedPlan.StableWaterClearance).WithJourneyView(capturedPlan.UsesJourneyView);
                 }
                 catch (ArgumentException) { picture = null; }
             }

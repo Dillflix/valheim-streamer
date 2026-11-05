@@ -44,6 +44,10 @@ internal static class NativeJourneyGaze
             { Complete = true; Accepted = false; return true; }
             for (int i = 0; i < intervals && CheckedIntervals < Intervals; i++)
             {
+                // Sample uses MotionFraction internally, so these are equal
+                // time intervals, including ramp acceleration. Dividing the
+                // supplied duration by CruiseFraction again would count ramps
+                // twice. The caller may retime without rebuilding geometry.
                 ScenicShotSample next = path.Sample((CheckedIntervals + 1) / (float)Intervals);
                 double ax = previous.AimPosition.X - previous.CameraPosition.X,
                     ay = previous.AimPosition.Y - previous.CameraPosition.Y, az = previous.AimPosition.Z - previous.CameraPosition.Z;

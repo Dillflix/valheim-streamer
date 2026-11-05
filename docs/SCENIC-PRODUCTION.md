@@ -1,4 +1,6 @@
-# Scenic journeys, camera fixtures and timelapse — 0.8.49
+# Scenic journeys, camera fixtures and timelapse — 0.8.51
+
+Version 0.8.51 introduces connected local Journey navigation and angular travelling-view validation, while named arrivals retain actual subject visibility. Saved fixtures now use schema 4 to preserve that view contract, stable-water clearance and the authored section cruise cap. See [the failed 0.8.50 evidence, implementation boundaries and acceptance](JOURNEY-0.8.51-NAVIGATION.md). Sustained in-game travel remains unverified.
 
 Version 0.8.49 gives Journey its own persistent mission and execution clock, measured spatial departure survey, and distance-based safe stopping reserve. This supersedes the fixed section-count startup gate and picture-dependent mission lifetime in prior versions. See [ownership, planning, evidence and runtime acceptance](JOURNEY-0.8.49-ARCHITECTURE.md).
 
@@ -6,14 +8,14 @@ Version 0.8.46 corrected sparse-catalogue selection and independent departure sc
 
 Version 0.8.42 replaced the projected Journey endpoint and inherited view offset with a selected catalogue destination, an observed itinerary and independently directed forward gaze. Each admitted section includes a prepared six-second ending; ordinary Scenic preparation runs concurrently. Actual captured-frame identity, position, progress and time now drive travel and arrival evidence. See [the recorded failure, new contract and limits](SCENIC-0.8.42-JOURNEYS.md).
 
-The ordinary-shot pacing, context-qualified site sequences, fixture schema 3 and matching native-arrival preparation introduced in 0.8.41 remain in place. See [the ordinary Scenic quality changes](SCENIC-0.8.41-QUALITY.md).
+The ordinary-shot pacing, context-qualified site sequences and matching native-arrival preparation introduced in 0.8.41 remain in place. Its schema-3 fixture timing remains supported; newly saved fixtures use schema 4 as described below. See [the ordinary Scenic quality changes](SCENIC-0.8.41-QUALITY.md).
 
 Camera fixtures, operator previews, render-pose auditing, interval recordings and empty-server environment controls remain available. Autonomous live timelapse shots added in 0.8.38 are documented in [LIVE-TIMELAPSE.md](LIVE-TIMELAPSE.md).
 
 ## Install and compatibility
 
 - Replace the **three client DLLs and included ThirdParty notices together**, preserving the existing configuration.
-- Journey, fixture, preview, pose-audit and recorded-timelapse features work with an existing compatible **protocol-3** companion. **No server update is required for 0.8.49.**
+- Journey, fixture, preview, pose-audit and recorded-timelapse features work with an existing compatible **protocol-3** companion. **No server update is required for 0.8.51.**
 - Install the **0.8.37 server/core pair** for the new optional empty-server `Environment1` permission. Earlier companions leave remote environment overrides inactive. Ordinary players need no mod update.
 - `Observer.CinematicEnvironmentEnabled=true` permits an already-authorized observer to request this optional capability. Client environment overrides default off.
 - Admission, pre-admission opt-in and observer isolation remain protocol 3. No new game, Unity, BepInEx or Jötunn binaries belong in either payload.
@@ -22,7 +24,7 @@ Compilation and automated tests do not establish in-game camera quality, graphic
 
 ## Continuous Scenic journeys
 
-A journey selects a **known scenic destination near a requested itinerary scale**, default **1,000 m**, and requests an independent **6 m/s** cruise. The selected route can be shorter or longer than that scale. `Camera.ShotMotion` controls decorative ordinary shots; it does not scale Journey travel. Requested speed is an upper target: certified distance, safe stopping room and measured successful production govern effective speed. The camera may brake to a complete stop when it cannot safely advance; that is diagnosed as waiting/replanning, not successful travel.
+A journey selects a **known scenic destination near a requested itinerary scale**, default **1,000 m**, and requests an independent **6 m/s** cruise. The selected route can be shorter or longer than that scale. `Camera.ShotMotion` controls decorative ordinary shots; it does not scale Journey travel. Requested speed is an upper target: each section records a 2–12 m/s authored cap after native turn/gaze checks, and certified distance, safe stopping room and measured successful production can reduce effective speed further. Playback respects the section cap and anticipates braking before a fresh connected queued section with a slower cap. The camera may brake to a complete stop when it cannot safely advance; that is diagnosed as waiting/replanning, not successful travel.
 
 Server discovery supplies landscape/coast regions and available structure/site observations. Selection considers scale, bearing, freshness, retry deadlines and recent destination families. A connected metadata guide is preferred where available, but sparse observations may still identify a real destination by bearing. Metadata does not certify unloaded space: **each local camera section and ending requires loaded terrain/water, corridor, foliage and native-path validation**.
 
@@ -83,7 +85,7 @@ broadcast fixture stop
 
 The optional playback duration is **1–604800 seconds**. A moving fixture played with an explicit duration uses normal motion speed so a captured half-speed setting cannot silently double the requested time. Without a duration override, recorded movement/dynamic settings are retained locally for that playback; global settings are not overwritten. A fixture captured while decorative motion was disabled retains that stationary behavior.
 
-Fixtures preserve camera and aim geometry, lens, composition, motion profile, duration, subject envelopes, source version and selected settings. Their stable world UID prevents playing a route in another world. The file records the original subject envelope for comparison; it does not prove that the building, vegetation or actor still exists unchanged.
+Fixtures preserve camera and aim geometry, lens, composition, motion profile, duration, subject envelopes, source version, stable-water clearance, travelling-view versus subject-view validation, authored section cruise cap, and selected settings. Their stable world UID prevents playing a route in another world. The file records the original subject envelope for comparison; it does not prove that the building, vegetation or actor still exists unchanged.
 
 If the saved start is distant or unready, playback can use the existing authorized observer travel path to acquire it. Acquisition is bounded to 90 seconds; route preparation then has its own 20-second bound. The complete saved route must pass current terrain/water/foliage and final-pose validation. A route is rejected if fitting would change its saved geometry. Ready player coverage can preempt playback.
 
@@ -98,7 +100,7 @@ broadcast fixture delete coast-pass
 
 Data lives under `BepInEx/config/ValheimBroadcaster/CameraFixtures/<world UID>/`. Files use a bounded, versioned, checksummed format. A world supports up to 64 fixtures, each at most 32 KiB. Replacement is atomic and retains a `.bak`; no silent delete-and-rewrite fallback is used if atomic replacement is unavailable. Names are normalized and cannot select arbitrary filesystem paths.
 
-Version 0.8.41 writes fixture schema 3, which preserves the bounded timing-to-distance profile and the rejected-continuation provenance introduced in schema 2. It reads schemas 1, 2 and 3; loading an old fixture does not rewrite it. Schema 1 retains unknown continuation provenance, and legacy timing remains explicit rather than being silently retimed. Explicit replacement keeps the existing backup behavior. **Clients older than 0.8.41 cannot load newly written schema-3 fixtures**; retain the original file or its backup if rollback is needed. Existing files, live configuration and saves are not migrated automatically.
+Version 0.8.51 writes fixture schema 4, adding the stable-water-clearance and Journey-view flags plus the authored section cruise cap. A saved travelling section therefore retains its local angular-view validation; a named arrival retains subject-oriented validation. It reads schemas 1–4. Older files keep their original meaning, with the newly recorded flags absent/false and cruise zero meaning unspecified/legacy timing; loading does not silently upgrade or rewrite them. Schema 3, introduced in 0.8.41, continues to preserve the timing-to-distance profile, and schema 2 continues to preserve rejected-continuation provenance. Schema 1 retains unknown continuation provenance. Explicit replacement keeps the existing backup behavior. **Clients older than 0.8.51 cannot read newly written schema-4 fixtures**; retain an older original or backup for rollback. Existing files, live configuration and saves are not migrated automatically.
 
 ## Operator-only spatial preview
 

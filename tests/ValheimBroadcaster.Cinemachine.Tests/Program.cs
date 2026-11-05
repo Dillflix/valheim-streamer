@@ -27,6 +27,7 @@ internal static class Program
         foreach (var test in NativeJourneyDistanceTests.Cases()) yield return test;
         foreach (var test in NativeJourneySamplingTests.Cases()) yield return test;
         foreach (var test in NativeJourneyGazeTests.Cases()) yield return test;
+        foreach (var test in NativeNavigationTests.Cases()) yield return test;
         foreach (var test in NativeScenicPacingTests.Cases()) yield return test;
         foreach (ScenicShotStyle style in Enum.GetValues(typeof(ScenicShotStyle)))
         {

@@ -43,6 +43,22 @@ public sealed class JourneyRoutePlayback
         return proposal;
     }
 
+    /// <summary>Scale wall time by live cruise relative to the cruise used to
+    /// certify this section. Dividing by the mission request would slow an
+    /// already retimed bend a second time. The controller must honor the
+    /// section ceiling; output gaps and holds still use the normal preview gate.</summary>
+    public double ProposeAtCruise(double deltaSeconds, double actualCruise, double requestedCruise, bool canMove = true)
+    {
+        Number(deltaSeconds, nameof(deltaSeconds)); Number(actualCruise, nameof(actualCruise));
+        Number(requestedCruise, nameof(requestedCruise));
+        if (requestedCruise < 2 || requestedCruise > 12) throw new ArgumentOutOfRangeException(nameof(requestedCruise));
+        double authored = Current != null && Current.JourneyCruiseSpeed > 0 ? Current.JourneyCruiseSpeed : requestedCruise;
+        if (actualCruise > Math.Min(authored, requestedCruise) + .000001)
+            throw new ArgumentOutOfRangeException(nameof(actualCruise), "Live cruise exceeds the certified section speed.");
+        double step = Math.Min(deltaSeconds, Math.Min(.1, ScenicJourneyPolicy.MaximumStepMetres / Math.Max(.01, actualCruise)));
+        return Propose(step * actualCruise / authored, canMove);
+    }
+
     /// <summary>A physical validation failure pauses this section without
     /// requesting an unrelated Scenic shot. Resume only after fresh validation.
     /// Missing output alone must never be reported as a physical obstruction.</summary>

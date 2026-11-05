@@ -100,9 +100,10 @@ public sealed class JourneyRunwayPolicy
         next = (next + 1) % HistoryCapacity; count = Math.Min(count + 1, HistoryCapacity);
     }
 
-    public bool TryStart(int connectedFreshSections, double validatedMetres, double requestedCruise, out string reason)
+    public bool TryStart(int connectedFreshSections, double validatedMetres, double requestedCruise, out string reason,
+        double sectionCruiseLimit = 12)
     {
-        Number(validatedMetres, nameof(validatedMetres)); Speed(requestedCruise);
+        Number(validatedMetres, nameof(validatedMetres)); Speed(requestedCruise); Speed(sectionCruiseLimit);
         if (connectedFreshSections < 0) throw new ArgumentOutOfRangeException(nameof(connectedFreshSections));
         if (connectedFreshSections == 0)
         { reason = "Preparing a fresh connected Journey route and safe ending"; return false; }
@@ -112,7 +113,7 @@ public sealed class JourneyRunwayPolicy
         double supported = MaximumSpeed(validatedMetres, ReactionSeconds + MinimumUsefulSeconds);
         if (supported + .000001 < MinimumCruise(requestedCruise))
         { reason = "Certified Journey runway is too short for useful movement and a safe stop"; return false; }
-        EffectiveCruise = Math.Min(DesiredCruise(requestedCruise), supported); Started = true;
+        EffectiveCruise = Math.Min(sectionCruiseLimit, Math.Min(DesiredCruise(requestedCruise), supported)); Started = true;
         reason = EffectiveCruise + .000001 >= requestedCruise
             ? "Certified physical runway supports departure at the requested cruise"
             : "Certified physical runway supports departure at an adapted useful cruise";
@@ -125,12 +126,20 @@ public sealed class JourneyRunwayPolicy
     /// mission owner decides how long to wait/replan and whether to end. This
     /// method supplies no movement authority if a proof is revoked.</summary>
     public double StepSpeed(double requestedCruise, double validatedMetres, double deltaSeconds,
-        bool held = false, bool braking = false)
+        bool held = false, bool braking = false, double sectionCruiseLimit = 12,
+        double nextSectionCruiseLimit = 12, double remainingSectionMetres = 0)
     {
         Speed(requestedCruise); Number(validatedMetres, nameof(validatedMetres)); Number(deltaSeconds, nameof(deltaSeconds));
+        Speed(sectionCruiseLimit); Speed(nextSectionCruiseLimit); Number(remainingSectionMetres, nameof(remainingSectionMetres));
         if (!Started) throw new InvalidOperationException("A certified Journey reserve must be admitted before advancing cruise.");
+        // A newly admitted slower section may have obtained fresh proof too
+        // late to anticipate it. Safety wins at that seam; controller telemetry
+        // and the playback clock must both use this same strict ceiling.
+        EffectiveCruise = Math.Min(EffectiveCruise, Math.Min(requestedCruise, sectionCruiseLimit));
         if (held || deltaSeconds == 0) return EffectiveCruise;
-        double desired = braking ? 0 : Math.Min(DesiredCruise(requestedCruise), MaximumSafeSpeed(validatedMetres));
+        double envelope = SectionSpeedEnvelope(sectionCruiseLimit, nextSectionCruiseLimit, remainingSectionMetres,
+            Math.Min(.1, deltaSeconds));
+        double desired = braking ? 0 : Math.Min(envelope, Math.Min(DesiredCruise(requestedCruise), MaximumSafeSpeed(validatedMetres)));
         // A stopped camera resumes only when there is enough certified room for
         // useful travel. A few newly observed centimetres cannot cause creeping.
         if (Stopped && validatedMetres + .000001 < MinimumLaunchMetres(requestedCruise)) desired = 0;
@@ -139,10 +148,31 @@ public sealed class JourneyRunwayPolicy
         if (desired <= StoppedSpeed) desired = 0;
         double change = (desired > EffectiveCruise ? Acceleration : Deceleration) * Math.Min(.1, deltaSeconds);
         EffectiveCruise += Math.Max(-change, Math.Min(change, desired - EffectiveCruise));
-        EffectiveCruise = Math.Min(requestedCruise, EffectiveCruise);
+        EffectiveCruise = Math.Min(Math.Min(requestedCruise, sectionCruiseLimit), EffectiveCruise);
         if (EffectiveCruise < .000001) EffectiveCruise = 0;
         return EffectiveCruise;
     }
+
+    /// <summary>A fresh connected successor supplies a speed constraint, not
+    /// extra clearance. Approach its seam at a bounded deceleration; absent or
+    /// stale successors must be omitted by the caller.</summary>
+    public static double SectionSpeedEnvelope(double sectionCruiseLimit, double nextSectionCruiseLimit, double remainingMetres,
+        double previewSeconds = 0)
+    {
+        Speed(sectionCruiseLimit); Speed(nextSectionCruiseLimit); Number(remainingMetres, nameof(remainingMetres));
+        Number(previewSeconds, nameof(previewSeconds));
+        if (nextSectionCruiseLimit >= sectionCruiseLimit) return sectionCruiseLimit;
+        // The proposed frame consumes v*dt metres before the next evaluation.
+        // Solve v² + 2*a*dt*v <= next² + 2*a*remaining, rather than following
+        // the continuous envelope one frame late and exceeding deceleration.
+        double step = Deceleration * Math.Min(.1, previewSeconds);
+        double limit = Math.Sqrt(nextSectionCruiseLimit * nextSectionCruiseLimit +
+            2 * Deceleration * remainingMetres + step * step) - step;
+        return Math.Min(sectionCruiseLimit, Math.Max(nextSectionCruiseLimit, limit));
+    }
+
+    public void LimitToSection(double sectionCruiseLimit)
+    { Speed(sectionCruiseLimit); EffectiveCruise = Math.Min(EffectiveCruise, sectionCruiseLimit); }
 
     public double DesiredCruise(double requestedCruise)
     {
@@ -209,11 +239,13 @@ public sealed class JourneyRunwayPolicy
     /// inherited seam aim while it develops toward the travelling gaze. This
     /// bounds a proposal, never substitutes for full route/ending preflight.</summary>
     public static double WindowMetres(double requestedCruise, double seamDistance, double desiredMetres,
-        double loadedReachMetres = LocalReachMetres, double inheritedGazeMetres = 0)
+        double loadedReachMetres = LocalReachMetres, double inheritedGazeMetres = 0, double? observationReachMetres = null)
     {
         Speed(requestedCruise); Number(seamDistance, nameof(seamDistance)); Number(desiredMetres, nameof(desiredMetres));
         Number(loadedReachMetres, nameof(loadedReachMetres)); Number(inheritedGazeMetres, nameof(inheritedGazeMetres));
-        double reach = Math.Max(0, loadedReachMetres - seamDistance - Math.Max(GazeReach(requestedCruise), inheritedGazeMetres));
+        if (observationReachMetres.HasValue) Number(observationReachMetres.Value, nameof(observationReachMetres));
+        double viewReach = observationReachMetres ?? GazeReach(requestedCruise);
+        double reach = Math.Max(0, loadedReachMetres - seamDistance - Math.Max(viewReach, inheritedGazeMetres));
         double metres = Math.Min(ScenicJourneyPolicy.WindowMetres, Math.Min(desiredMetres, reach));
         return metres + .000001 >= ScenicJourneyPolicy.MinimumWindowMetres ? metres : 0;
     }

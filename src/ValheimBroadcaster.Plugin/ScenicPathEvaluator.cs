@@ -106,9 +106,9 @@ internal static class ScenicPoseValidation
         // frame as well as initial network-area acquisition. Do not admit with
         // a weaker predicate and then reject that same pose as a continuation.
         if (!PlayerShotReadiness.PositionReady(pose.Position, true) ||
-            !PlayerShotReadiness.PositionReady(pose.Focus, true))
+            !plan.UsesJourneyView && !PlayerShotReadiness.PositionReady(pose.Focus, true))
             return Reject(ScenicRejectionKind.Geometry, "Scenic camera or feature geometry is not loaded", out kind, out reason);
-        if (!continuous && (!IdleShots.Ready(pose.Position) || !IdleShots.Ready(pose.Focus)))
+        if (!continuous && (!IdleShots.Ready(pose.Position) || !plan.UsesJourneyView && !IdleShots.Ready(pose.Focus)))
             return Reject(ScenicRejectionKind.Acquisition, "Scenic camera or feature area is not acquired", out kind, out reason);
         if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason, plan.StableWaterClearance))
             return Reject(ScenicRejectionKind.Geometry, surfaceReason, out kind, out reason);
@@ -123,6 +123,25 @@ internal static class ScenicPoseValidation
                 return Reject(ScenicRejectionKind.Geometry, "Scenic carrier geometry is not loaded", out kind, out reason);
             if (!continuous && !IdleShots.Ready(carrier))
                 return Reject(ScenicRejectionKind.Acquisition, "Scenic carrier area is not acquired", out kind, out reason);
+        }
+        if (plan.UsesJourneyView)
+        {
+            // Cruising and its stationary refuge describe the surrounding
+            // environment. The synthetic aim encodes orientation, not a named
+            // feature whose arbitrary world point must have a clear sightline.
+            // Named arrivals keep the subject-framing contract below.
+            ScenicVisibility.JourneyViewObservation observed = visibility.EvaluateJourney(pose.Position, pose.Rotation,
+                pose.FieldOfView, aspect, nearClip);
+            score = (float)observed.View.Score;
+            if (observed.InsideVegetation) return Reject(ScenicRejectionKind.InsideVegetation, observed.View.Reason, out kind, out reason);
+            if (!observed.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, observed.View.Reason, out kind, out reason);
+            if (!observed.SceneReady) return Reject(ScenicRejectionKind.Geometry, "Journey angular viewing neighbourhood is not loaded", out kind, out reason);
+            if (!observed.SurveyComplete || observed.View.Status == JourneyViewStatus.Unknown)
+                return Reject(ScenicRejectionKind.SurveyIncomplete, observed.View.Reason, out kind, out reason);
+            if (!continuous && !IdleShots.Ready(observed.ReadinessPoint))
+                return Reject(ScenicRejectionKind.Acquisition, "Journey viewing neighbourhood is not acquired", out kind, out reason);
+            if (!observed.View.Readable) return Reject(ScenicRejectionKind.Foliage, observed.View.Reason, out kind, out reason);
+            reason = observed.View.Reason; return true;
         }
         ScenicFeature? feature = plan.Feature;
         Bounds? subject = feature != null ? ScenicSubjectFrame.BoundsFor(feature) : null;
@@ -245,7 +264,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
             { Fail(ScenicRejectionKind.InvalidPlan, "Native scenic solver returned a non-finite pose"); return true; }
             if (hasPrevious && (Vector3.Distance(previous.Position, pose.Position) > .75f ||
                 plan.IsSpatial && path.SpatialTravelBetween(previous.Progress, fraction) > .75f ||
-                Vector3.Distance(previous.Focus, pose.Focus) > 1f || Quaternion.Angle(previous.Rotation, pose.Rotation) > 3f))
+                !plan.UsesJourneyView && Vector3.Distance(previous.Focus, pose.Focus) > 1f ||
+                Quaternion.Angle(previous.Rotation, pose.Rotation) > 3f))
             {
                 if (fraction - previous.Progress < .0001f)
                 { Fail(ScenicRejectionKind.SamplingBudget, "Scenic route has an unresolved pose discontinuity"); return true; }

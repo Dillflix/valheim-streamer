@@ -17,6 +17,9 @@ internal static class CameraFixtureTests
         yield return ("Schema 1 camera fixtures remain readable without modifying their saved bytes", LegacySchema);
         yield return ("Camera fixtures preserve measured pace and authored duration exactly", PacingRoundTrip);
         yield return ("Schema 2 camera fixtures retain rejected-tail evidence without rewriting", LegacySchema2);
+        yield return ("Schema 3 camera fixtures preserve pacing without inventing Journey view contracts", LegacySchema3);
+        yield return ("Camera fixtures preserve water and angular-view contracts independently of mission identity", ViewContracts);
+        yield return ("Camera fixtures reject malformed validation flags with a valid checksum", InvalidViewContracts);
         yield return ("Camera fixtures reject corrupted pacing with a valid outer checksum", InvalidPacing);
         yield return ("Camera fixture parsing rejects corruption, truncation, trailing data and newer schema", Corruption);
         yield return ("Camera fixture parsing rejects non-finite playback settings even with a valid checksum", InvalidSettings);
@@ -51,7 +54,9 @@ internal static class CameraFixtureTests
         Check(expected.Id == actual.Id && expected.Role == actual.Role && expected.UseNativeSpline == actual.UseNativeSpline &&
             expected.DurationSeconds == actual.DurationSeconds && expected.FieldOfView == actual.FieldOfView &&
             expected.IsPan == actual.IsPan && expected.IsSpatial == actual.IsSpatial && expected.ConstantSpeed == actual.ConstantSpeed &&
-            expected.ContinuationRejection == actual.ContinuationRejection,
+            expected.ContinuationRejection == actual.ContinuationRejection &&
+            expected.StableWaterClearance == actual.StableWaterClearance && expected.UsesJourneyView == actual.UsesJourneyView &&
+            expected.JourneyCruiseSpeed == actual.JourneyCruiseSpeed,
             "Playback identity or timing/lens changed on reload.");
         for (int i = 0; i <= 100; i++)
         {
@@ -138,6 +143,8 @@ internal static class CameraFixtureTests
             "Legacy fixture identity, playback geometry or timestamp changed");
         Check(!loaded.Plan.HasRejectedContinuation && loaded.Plan.ContinuationRejection.Length == 0,
             "Legacy missing evidence became an invented rejected continuation");
+        Check(!loaded.Plan.StableWaterClearance && !loaded.Plan.UsesJourneyView && loaded.Plan.JourneyCruiseSpeed == 0,
+            "Schema 1 gained validation contracts that were not recorded");
         Check(File.ReadAllBytes(path).SequenceEqual(bytes), "Loading a legacy fixture silently rewrote it");
         Reject(() => store.Save(loaded));
         Check(File.ReadAllBytes(path).SequenceEqual(bytes), "Unapproved schema replacement changed the original file");
@@ -164,13 +171,73 @@ internal static class CameraFixtureTests
         CameraFixture loaded = CameraFixtureCodec.Decode(bytes, 1234567);
         Check(loaded.Plan.HasExplicitDuration && loaded.Plan.PacingProfile == null && loaded.Plan.DurationSeconds == 120 &&
             loaded.Plan.ContinuationRejection == "Known focus obstruction", "Schema 2 playback or rejected-tail provenance changed.");
+        Check(!loaded.Plan.StableWaterClearance && !loaded.Plan.UsesJourneyView && loaded.Plan.JourneyCruiseSpeed == 0,
+            "Schema 2 gained validation contracts that were not recorded");
+    }
+    private static void LegacySchema3() => InDirectory(directory =>
+    {
+        // Fixed released schema-3 layout, built independently of the current
+        // encoder. Pacing is present; neither validation flag was stored.
+        byte[] bytes = Convert.FromBase64String("RkNCVgMAAACH1hIAAAAAAAwAbGVnYWN5LWNvYXN0BgAwLjguMzkAAAAg/iZrOt8IAAAAPwF7AAAAAAAAAAABAAAAAAAAAF5AAAB0Qo/C9T0pXI+9AAAAAAAAAAAAAAAAAAAAAAAAAAUAY29hc3QCAAAgQQAAQEAAACBBAACAPwAAAAAAAAAAAABAQQAAwEBmZmY/AAAAAAAAAAAAAAAAAAAAAEEAAHDBAACgQQAAEEEAAEDBAAAgQQAAQEAAACBBAABAQQAAoEAAACBBABcAS25vd24gZm9jdXMgb2JzdHJ1Y3Rpb24BAAAAAAAALEAEAAAAAAAAAAAAAAAAAAAAAAAzMzMzMzPTPwAAAAAAAOA/ZmZmZmZm5j9mZmZmZmbmPwAAAAAAAPA/AAAAAAAA8D9JEjGlti44KLM/FpbCwOBlPWg2SgYS7phlkhR/ZXsW9A==");
+        string worldDirectory = Path.Combine(directory, "000000000012d687");
+        Directory.CreateDirectory(worldDirectory);
+        string path = Path.Combine(worldDirectory, "legacy-coast.vbcamera");
+        File.WriteAllBytes(path, bytes);
+        CameraFixture loaded = new CameraFixtureStore(directory).Load(1234567, "legacy-coast");
+        Check(loaded.Plan.HasExplicitDuration && loaded.Plan.DurationSeconds == 120 && loaded.Plan.PacingProfile != null &&
+            loaded.Plan.PacingProfile.Count == 4 && loaded.Plan.PacingProfile.DurationSeconds == 14 &&
+            loaded.Plan.PacingProfile.TimeFraction(1) == .3 && loaded.Plan.PacingProfile.DistanceFraction(1) == .5 &&
+            loaded.Plan.ContinuationRejection == "Known focus obstruction",
+            "Schema 3 playback, pacing or rejected-tail provenance changed");
+        Check(!loaded.Plan.StableWaterClearance && !loaded.Plan.UsesJourneyView && loaded.Plan.JourneyCruiseSpeed == 0,
+            "Schema 3 gained validation contracts that were not recorded");
+        Check(File.ReadAllBytes(path).SequenceEqual(bytes), "Reading schema 3 silently upgraded the saved file");
+        SamePlan(loaded.Plan, RoundTrip(loaded).Plan);
+    });
+    private static void ViewContracts()
+    {
+        foreach (bool stableWater in new[] { false, true })
+        foreach (bool journeyView in new[] { false, true })
+        {
+            ScenicShotPlan plan = Curved().WithStableWaterClearance(stableWater).WithJourneyView(journeyView).WithJourneyCruiseSpeed(3.5);
+            CameraFixture source = Fixture(plan), loaded = RoundTrip(source);
+            SamePlan(source.Plan, loaded.Plan);
+            Check(loaded.Plan.StableWaterClearance == stableWater && loaded.Plan.UsesJourneyView == journeyView && loaded.Plan.JourneyCruiseSpeed == 3.5,
+                "Independent validation contracts changed on reload");
+            Check(CameraFixtureCodec.Encode(source).SequenceEqual(CameraFixtureCodec.Encode(loaded)),
+                "Validation contract encoding changed on round trip");
+        }
+        // A named arrival is still a Journey, but deliberately retains strict
+        // subject framing. Do not infer the view contract from source metadata.
+        CameraFixture arrival = RoundTrip(Fixture(ScenicShotPlan.Spatial(123, Feature(), ScenicShotRole.Traverse,
+            new[] { P(0, 9, -20), P(10, 10, -22), P(20, 9, -18) },
+            new[] { P(8, 4, 8), P(10, 5, 9), P(13, 4, 11) }, 57)
+            .AsJourney(23, 122, 22).WithJourneyView(false).WithJourneyCruiseSpeed(6)));
+        Check(arrival.SourceJourneyId == 23 && !arrival.Plan.IsJourney && arrival.Plan.StableWaterClearance &&
+            !arrival.Plan.UsesJourneyView && arrival.Plan.JourneyCruiseSpeed == 6, "Arrival provenance changed its framing or cruise contract");
+    }
+    private static void InvalidViewContracts()
+    {
+        byte[] valid = CameraFixtureCodec.Encode(Fixture());
+        for (int tail = 1; tail <= 2; tail++)
+        {
+            byte[] changed = (byte[])valid.Clone();
+            changed[changed.Length - 32 - 8 - tail] = 2; Rehash(changed);
+            Reject(() => CameraFixtureCodec.Decode(changed, 1234567));
+        }
+        foreach (double invalid in new[] { double.NaN, double.PositiveInfinity, -1d, 1.9, 12.1 })
+        {
+            byte[] changed = (byte[])valid.Clone();
+            Array.Copy(BitConverter.GetBytes(invalid), 0, changed, changed.Length - 32 - 8, 8); Rehash(changed);
+            Reject(() => CameraFixtureCodec.Decode(changed, 1234567));
+        }
     }
     private static void InvalidPacing()
     {
         var pace = ScenicPacingProfile.Restore(14, new[] { 0d, .3, .7, 1 }, new[] { 0d, .5, .7, 1 });
         byte[] bytes = CameraFixtureCodec.Encode(Fixture(Curved().WithPacingProfile(pace)));
-        // Four (time,distance) pairs immediately precede the outer digest.
-        int table = bytes.Length - 32 - 4 * 16;
+        // Pacing precedes two validation flags, authored cruise and the digest.
+        int table = bytes.Length - 32 - 2 - 8 - 4 * 16;
         Array.Copy(BitConverter.GetBytes(.9), 0, bytes, table + 16, 8);
         Rehash(bytes); Reject(() => CameraFixtureCodec.Decode(bytes, 1234567));
     }

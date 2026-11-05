@@ -5,7 +5,7 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
-internal enum CameraSpaceUse { Scenic, Actor }
+internal enum CameraSpaceUse { Scenic, Actor, Journey }
 internal enum CameraQueryPriority { Background, OnAir }
 internal enum CameraSpaceState { Unknown, Blocked, Clear }
 
@@ -50,6 +50,15 @@ internal sealed class CameraSpatialScene
     private long worldId;
     internal long Epoch { get { Synchronize(); return epoch; } }
     internal long WorldEpoch { get { Synchronize(); return worldEpoch; } }
+    internal bool BackgroundQueryAvailable
+    {
+        get
+        {
+            Synchronize();
+            return budget.BackgroundSpent + 6 <= CameraObservationBudget.BackgroundUnits &&
+                budget.Spent + 6 <= CameraObservationBudget.TotalUnits;
+        }
+    }
     internal string Diagnostics => $"Camera space: epoch {epoch}; {points.Count} points, {segments.Count} corridors, {pending.Count} pending; " +
         $"work {budget.Spent}/{CameraObservationBudget.TotalUnits} (background {budget.BackgroundSpent}/{CameraObservationBudget.BackgroundUnits}); " +
         CameraWorkBudget.Shared.Diagnostics + "; " + ScenicFoliageScene.Shared.Diagnostics;
@@ -90,13 +99,14 @@ internal sealed class CameraSpatialScene
     private sealed class PendingEdge
     {
         internal readonly double Started;
+        internal double LastServiced;
         internal readonly int Steps;
         internal int Next;
         internal double EvidenceAt;
         internal Vector3 Previous;
         internal Quaternion PreviousRotation;
         internal float Clearance = float.PositiveInfinity;
-        internal PendingEdge(double now, int steps) { Started = EvidenceAt = now; Steps = steps; }
+        internal PendingEdge(double now, int steps) { Started = LastServiced = EvidenceAt = now; Steps = steps; }
     }
 
     internal CameraSpaceObservation ObservePoint(Vector3 position, Quaternion rotation, float fov, float aspect,
@@ -132,12 +142,15 @@ internal sealed class CameraSpatialScene
             new PointKey(to, toRotation, fov, aspect, nearClip, use, requireAcquired));
         double now = Time.unscaledTime;
         if (segments.TryGetValue(key, out CameraSpaceObservation cached) && Fresh(cached, now, SegmentLifetime)) return cached;
-        if (!pending.TryGetValue(key, out PendingEdge? work) || now < work.Started || now - work.Started > PendingLifetime)
+        if (!pending.TryGetValue(key, out PendingEdge? work) || now < work.Started ||
+            (use == CameraSpaceUse.Journey ? now - work.LastServiced > PendingLifetime || now - work.EvidenceAt > JourneyNavigationSearch.MaximumEvidenceAge :
+                now - work.Started > PendingLifetime))
         {
             if (work == null && pending.Count >= PendingCapacity) EvictOldestPending();
             int steps = Math.Max(1, Math.Max(Mathf.CeilToInt(distance / .75f), Mathf.CeilToInt(angle / 5f)));
             work = new PendingEdge(now, steps); pending[key] = work;
         }
+        work.LastServiced = now;
         // Work resumes on subsequent frames at the identical unproven sample.
         // Returning Unknown cannot supply an edge to the planner's free graph.
         while (work.Next <= work.Steps)
@@ -178,10 +191,10 @@ internal sealed class CameraSpatialScene
             overlaps, query.Rotation, obstructionMask, QueryTriggerInteraction.Ignore);
         overlap = InspectOverlap(count, "Camera-space near plane intersects geometry");
         if (overlap.HasValue) return overlap.Value;
-        if (query.Use == CameraSpaceUse.Scenic)
+        if (query.Use == CameraSpaceUse.Scenic || query.Use == CameraSpaceUse.Journey)
         {
             var pose = new ScenicPose(query.Position, query.Position + forward, query.Rotation, query.Fov, 0);
-            if (!ScenicSurface.TryRequiredLift(pose, query.Aspect, query.Near, out float lift, out string reason)) return Unknown(reason);
+            if (!ScenicSurface.TryRequiredLift(pose, query.Aspect, query.Near, out float lift, out string reason, query.Use == CameraSpaceUse.Journey)) return Unknown(reason);
             if (lift > .001f) return Blocked(reason);
         }
         else if (!ActorSurface(query, out CameraSpaceObservation result)) return result;
@@ -278,7 +291,7 @@ internal sealed class CameraSpatialScene
     private void EvictOldestPending()
     {
         EdgeKey oldest = default; double at = double.PositiveInfinity;
-        foreach (var pair in pending) if (pair.Value.Started < at) { oldest = pair.Key; at = pair.Value.Started; }
+        foreach (var pair in pending) if (pair.Value.LastServiced < at) { oldest = pair.Key; at = pair.Value.LastServiced; }
         pending.Remove(oldest);
     }
     private static void Store<TKey>(Dictionary<TKey, CameraSpaceObservation> cache, Queue<TKey> order,
@@ -326,7 +339,7 @@ internal sealed class CameraSpatialScene
         return TargetRoster.Finite(position) && Math.Abs(position.x) <= 20000 && Math.Abs(position.y) <= 20000 && Math.Abs(position.z) <= 20000 &&
             Finite(magnitude) && magnitude > .0001f && Finite(fov) && fov >= 1 && fov <= 170 &&
             Finite(aspect) && aspect > 0 && aspect <= 8 && Finite(nearClip) && nearClip > 0 && nearClip <= 5 &&
-            (use == CameraSpaceUse.Scenic || use == CameraSpaceUse.Actor);
+            (use == CameraSpaceUse.Scenic || use == CameraSpaceUse.Actor || use == CameraSpaceUse.Journey);
     }
     private static bool ValidPriority(CameraQueryPriority priority) => priority == CameraQueryPriority.Background || priority == CameraQueryPriority.OnAir;
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

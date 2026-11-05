@@ -23,7 +23,8 @@ public static class JourneyReadablePrefix
         double duration = Math.Max(.1, original.DurationSeconds * sliced.TravelMetres / original.TravelMetres);
         proposal = (original.ContinuationOf == 0 ? sliced.AsJourneyDeparture(original.JourneyId, duration) :
             sliced.AsJourney(original.JourneyId, original.ContinuationOf, duration))
-            .WithJourneyRamps(original.JourneyEaseIn, original.JourneyEaseOut);
+            .WithJourneyRamps(original.JourneyEaseIn, original.JourneyEaseOut).WithJourneyView(original.UsesJourneyView);
+        if (original.JourneyCruiseSpeed > 0) proposal = proposal.WithJourneyCruiseSpeed(original.JourneyCruiseSpeed);
         return true;
     }
 }

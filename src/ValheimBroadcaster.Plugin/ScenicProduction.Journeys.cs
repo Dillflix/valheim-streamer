@@ -420,7 +420,8 @@ internal sealed partial class ScenicProduction
         for (int i = 0; i < journeyQueue.Count; i++)
         {
             JourneySection queued = journeyQueue[i];
-            if (queued.Proof.Contradicted || !WithinDepartureHorizon(queued.Plan, Player.m_localPlayer.transform.position))
+            if (queued.Proof.Contradicted || !WithinDepartureHorizon(queued.Plan, Player.m_localPlayer.transform.position) ||
+                !WithinDepartureHorizon(queued.Ending, Player.m_localPlayer.transform.position))
             {
                 journeyLastPreparationFailure = queued.Proof.Reason;
                 RetireJourneyQueue(i); journeyRetryAt = Time.unscaledTime + .35f; break;
@@ -438,12 +439,14 @@ internal sealed partial class ScenicProduction
         AutonomyPosition seam = predecessor.Sample(independent && first ? 0 : 1).CameraPosition;
         double committed = currentRemaining;
         foreach (JourneySection queued in journeyQueue) committed += queued.Plan.TravelMetres;
-        double loadedRoute = JourneyRunwayPolicy.LocalReachMetres - JourneyRunwayPolicy.GazeReach(journey.CruiseSpeed);
+        double viewReach = predecessor.UsesJourneyView ? JourneyViewPolicy.ObservationRange : JourneyRunwayPolicy.GazeReach(journey.CruiseSpeed);
+        double loadedRoute = JourneyRunwayPolicy.LocalReachMetres - viewReach;
         if (!journeyRunway.NeedsPreparation(JourneyRunwayMetres(), journey.CruiseSpeed, loadedRoute)) return;
-        double inheritedGaze = independent && first ? 0 : seam.Distance(predecessor.Sample(1).AimPosition);
+        double inheritedGaze = predecessor.UsesJourneyView ? viewReach : independent && first ? 0 : seam.Distance(predecessor.Sample(1).AimPosition);
         double available = JourneyRunwayPolicy.WindowMetres(journey.CruiseSpeed,
             Vector3.Distance(Player.m_localPlayer.transform.position, FromCore(seam)), ScenicJourneyPolicy.WindowMetres,
-            inheritedGazeMetres: inheritedGaze);
+            inheritedGazeMetres: inheritedGaze,
+            observationReachMetres: predecessor.UsesJourneyView ? (double?)JourneyViewPolicy.ObservationRange : null);
         double metres = Math.Min(journey.NextWindowMetres(committed) * journeyWindowScale, available);
         if (metres < ScenicJourneyPolicy.MinimumWindowMetres) return;
         ScenicFeature? arrival = independent ? null : ObservedArrivalSubject(seam, metres + 8);
@@ -462,6 +465,7 @@ internal sealed partial class ScenicProduction
         if (!section.Proof.CanAdmit || !journeyTravel.TryAcceptRoute(
             new JourneyRouteEvidence(section.Plan.Id, section.Epoch, section.Plan.TravelMetres), Time.unscaledTime, out _)) return false;
         journeySection?.Dispose(); journeySection = section; journeyPlayback.Accept(section.Plan, Time.unscaledTimeAsDouble);
+        journeyRunway.LimitToSection(JourneySectionCruise(section.Plan));
         journeyLiveFailure = ScenicRejectionKind.None; journeyViewBlockedSeconds = 0;
         Camera? camera = Camera.main;
         journeyEndingLease.Begin(section.Ending, section.Epoch, section.Proof.EndingValidatedAt,
@@ -491,7 +495,7 @@ internal sealed partial class ScenicProduction
         var feature = new ScenicFeature("journey-origin", ScenicFeatureKind.Landscape, aim,
             new AutonomyPosition(forward.x, 0, forward.z), 24, 0, 0);
         return ScenicShotPlan.Picture(++nextId, feature, ScenicShotRole.Traverse, body, aim,
-            Mathf.Clamp(camera.fieldOfView, 30, 100), 0, -.04f);
+            Mathf.Clamp(camera.fieldOfView, 30, 100), 0, -.04f).WithJourneyView();
     }
 
     private void BeginJourneyCoverageRecovery(string reason)
@@ -530,9 +534,24 @@ internal sealed partial class ScenicProduction
         if (!WithinDepartureHorizon(journeyRepairSeed, Player.m_localPlayer.transform.position))
         { RetireJourneyQueue(); journeyRepairSeed = SnapshotTravelOrigin(current); }
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
+        // An ordinary fallback can cut far enough to unload the pending
+        // search's forward observations while its old origin is still nearby.
+        // Retain compatible work, but do not spend a complete retry batch on
+        // an observation horizon which the currently presented camera left.
+        if (!journeyRetainsPicture && HasFreshJourneyFallbackCapture() &&
+            (journeyPlanning && !journeyPlanner.WithinLoadingHorizon(Player.m_localPlayer.transform.position) ||
+             journeyPendingSection != null && (!WithinDepartureHorizon(journeyPendingSection, Player.m_localPlayer.transform.position) ||
+                !journeyEndingPlanner.WithinLoadingHorizon(Player.m_localPlayer.transform.position))))
+        {
+            RetireJourneyQueue(); journeyPlanner.ForgetSearchEpisode();
+            journeyRepairSeed = SnapshotTravelOrigin(Plan);
+            journeyRetryAt = 0; journeyWindowScale = 1;
+            TraceJourney("local-replan-horizon-rebased");
+        }
+        if (journeyRepairSeed == null) return JourneyOwnsPicture;
         StepJourneyPreparation(moveCarrier); RefreshJourneyQueue(moveCarrier);
         if (journeyQueue.Count > 0 && journeyQueue[0].Proof.CanAdmit &&
-            journeyRunway.TryStart(1, JourneyRunwayMetres(), journey.CruiseSpeed, out _) && AdmitJourneySection(journeyQueue[0]))
+            journeyRunway.TryStart(1, JourneyRunwayMetres(), journey.CruiseSpeed, out _, JourneySectionCruise(journeyQueue[0].Plan)) && AdmitJourneySection(journeyQueue[0]))
         {
             journeyQueue.RemoveAt(0); journeyRepairSeed = null; journey.BreakPresentation();
             TraceJourney("local-replan-resumed"); changed = true; return true;
@@ -541,10 +560,8 @@ internal sealed partial class ScenicProduction
         // Rebase between completed search batches, using actual presentation,
         // rather than cancelling useful work on every ordinary camera cut.
         if (!journeyRetainsPicture && !journeyPlanning && journeyQueue.Count == 0 &&
-            HasUsablePicture && journeyExitCapture.HasValue && journeyExitCapturedPlan?.Id == Plan?.Id &&
-            Time.unscaledTimeAsDouble >= journeyExitCapture.Value.Time &&
-            Time.unscaledTimeAsDouble - journeyExitCapture.Value.Time <= .25 &&
-            journeyRepairSeed.Sample(0).CameraPosition.Distance(journeyExitCapture.Value.Position) > 8)
+            HasFreshJourneyFallbackCapture() &&
+            journeyRepairSeed.Sample(0).CameraPosition.Distance(journeyExitCapture.GetValueOrDefault().Position) > 8)
         {
             journeyRepairSeed = SnapshotTravelOrigin(Plan);
             journeyRetryAt = 0; journeyWindowScale = 1;
@@ -556,6 +573,11 @@ internal sealed partial class ScenicProduction
         if (Time.unscaledTime >= nextJourneyTrace) { TraceJourney("local-replan-progress"); nextJourneyTrace = Time.unscaledTime + 1; }
         return JourneyOwnsPicture;
     }
+
+    private bool HasFreshJourneyFallbackCapture() => HasUsablePicture && journeyExitCapture.HasValue &&
+        journeyExitCapturedPlan?.Id == Plan?.Id && journeyExitPhysicalEpoch == CameraSpatialScene.Shared.Epoch &&
+        Time.unscaledTimeAsDouble >= journeyExitCapture.Value.Time &&
+        Time.unscaledTimeAsDouble - journeyExitCapture.Value.Time <= .25;
 
     private void ReleaseJourneyRepairPicture(long admittedPicture)
     {
@@ -573,12 +595,8 @@ internal sealed partial class ScenicProduction
 
     private static bool WithinDepartureHorizon(ScenicShotPlan plan, Vector3 carrier)
     {
-        // Match the 85m planning bound, retaining margin inside the exact
-        // evaluator's 91m carrier check. Do not silently tighten it to 75m
-        // only after a complete route has already been prepared.
-        for (int i = 0; i <= 16; i++)
-            if ((FromCore(plan.Sample(i / 16d).CameraPosition) - carrier).sqrMagnitude > 85 * 85) return false;
-        return true;
+        return JourneyLoadingContext.ContainsPlan(plan,
+            new AutonomyPosition(carrier.x, carrier.y, carrier.z), JourneyViewPolicy.ObservationRange);
     }
 
     private bool TickDeparture(BroadcastSettings settings, ScenicShotPlan? current, bool moveCarrier,
@@ -671,7 +689,7 @@ internal sealed partial class ScenicProduction
         if (journeyDepartureSeed == null) return false;
         StepJourneyPreparation(moveCarrier); RefreshJourneyQueue(moveCarrier);
         if (journeyQueue.Count > 0 && journeyQueue[0].Proof.CanAdmit &&
-            journeyRunway.TryStart(1, JourneyRunwayMetres(), journey.CruiseSpeed, out string reserveReason))
+            journeyRunway.TryStart(1, JourneyRunwayMetres(), journey.CruiseSpeed, out string reserveReason, JourneySectionCruise(journeyQueue[0].Plan)))
         {
             JourneySection first = journeyQueue[0];
             if (AdmitJourneySection(first))

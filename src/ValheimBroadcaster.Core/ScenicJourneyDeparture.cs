@@ -111,7 +111,7 @@ namespace ValheimBroadcaster.Core
                 ? ScenicFeatureKind.Landscape : old.Kind;
             var feature = new ScenicFeature(old.Id, kind, aim, direction, old.Radius, old.Height,
                 old.Confidence, waterDirection: old.WaterDirection);
-            return ScenicShotPlan.Picture(source.Id, feature, ScenicShotRole.Traverse, position, aim, fov, 0, -.04f);
+            return ScenicShotPlan.Picture(source.Id, feature, ScenicShotRole.Traverse, position, aim, fov, 0, -.04f).WithJourneyView();
         }
 
         /// <summary>Selected natural coordinates persist within a world even
