@@ -82,6 +82,9 @@ internal sealed partial class ScenicProduction
         fixturePlanId = 0; FixtureStatus = "Camera fixture stopped";
     }
     private readonly ScenicPictureAvailability pictures = new ScenicPictureAvailability();
+    private readonly ScenicPictureAdmission pictureAdmission = new ScenicPictureAdmission();
+    private string pictureAdmissionValidation = "Not evaluated";
+    private float nextPictureAdmissionTrace;
     private readonly ScenicVisibility pictureVisibility = new ScenicVisibility("first-picture");
     private readonly DestinationSubjectCoverage destinationSubject = new DestinationSubjectCoverage();
     private readonly ScenicFeatureSurvey destinationSurvey = new ScenicFeatureSurvey();
@@ -201,7 +204,7 @@ internal sealed partial class ScenicProduction
         ClearJourneyProgramme();
         fixtureEvaluator.Dispose(); fixtureVisibility.Reset(); journeyPlanner.Dispose();
         destinationSubject.Reset(); destinationSurvey.Reset(); destinationFeatures.Clear(); nextDestinationSurvey = 0;
-        director.Reset(); pictures.Reset(); pictureVisibility.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
+        director.Reset(); pictures.Reset(); pictureAdmission.Reset(); pictureVisibility.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
         refreshingSurvey = false; surveyRefreshAt = 0;
         readiness.Reset(); liveSceneReadiness.Reset(); recovery.Reset(); testingKey = null;
         lastPresentedPlan = null; lastPresentedFocus = lastAdmittedFocus = default; Visibility.Reset(); planningVisibility.Reset();
@@ -351,6 +354,11 @@ internal sealed partial class ScenicProduction
     internal bool TickSearch(BroadcastSettings settings, bool moveCarrier, bool held, bool allowActivate = true)
     {
         if (!HasRegion || !SceneReady) return false;
+        // Scene discovery has its own lifetime. Advance it while terrain/site
+        // subjects are being collected too, before any camera candidate exists.
+        // Ensure shares the existing observation budget and per-frame work cap;
+        // this is not a synchronous scene scan or a new readiness predicate.
+        ScenicFoliageScene.Shared.Ensure(origin);
         TraceReplacement();
         if (FixtureActive && TickFixture(settings, moveCarrier, held, allowActivate, out bool fixtureChanged)) return fixtureChanged;
         bool journeyControls = TickJourney(settings, moveCarrier, held, allowActivate, out bool journeyChanged);
@@ -358,6 +366,11 @@ internal sealed partial class ScenicProduction
         // Journey execution owns the on-air plan, not the whole planning pipeline.
         // Continue local surveys and stage ordinary exit coverage under the shared budget.
         allowActivate &= !journeyControls;
+        // A previously measured clear node keeps progressing toward actual
+        // admission even if route search changes subject, finishes or resets.
+        // This owns no footage until complete current validation succeeds.
+        if (pictureAdmission.Pending != null && allowActivate && (!held || Plan == null) && TryIndependentPicture(moveCarrier))
+            return true;
         PlaceSurvey.Shared.Update(origin, Time.unscaledTime);
         if (destinationSubject.Site != null)
         {
@@ -590,7 +603,7 @@ internal sealed partial class ScenicProduction
     }
     private bool TryIndependentPicture(bool moveCarrier)
     {
-        if (!spatial.HasPictureCandidate) return false;
+        if (pictureAdmission.Pending == null && !spatial.HasPictureCandidate) return false;
         if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return false;
         using (work) return TryIndependentPictureBudgeted(moveCarrier);
     }
@@ -600,12 +613,42 @@ internal sealed partial class ScenicProduction
         // shot for the first static graph node encountered during preparation.
         // Actual blocked/completed routes retain independent-picture fallback.
         bool protectCurrent = HasUsablePicture && (pictures.Current != null || !director.BlocksMovement);
-        if (!pictures.WantsCandidate(protectCurrent)) return false;
-        ScenicShotPlan? candidate = spatial.TakePictureCandidate(++nextId, out long epoch, out float observedAt);
-        if (candidate == null || epoch != CameraSpatialScene.Shared.Epoch || Time.unscaledTime - observedAt > .5f) return false;
-        // The spatial node is a proposal. Certify exactly the same fixed pose
-        // the execution rig will render, including actual surface, near-plane,
-        // loaded support, carrier range, foliage and any typed subject checks.
+        if (!pictures.WantsCandidate(protectCurrent)) { pictureAdmission.Reset(); return false; }
+        long epoch = CameraSpatialScene.Shared.Epoch;
+        if (pictureAdmission.Pending == null)
+        {
+            ScenicShotPlan? proposal = spatial.TakePictureCandidate(++nextId, out long observedEpoch, out float observedAt);
+            if (proposal == null || !pictureAdmission.TryQueue(proposal, observedEpoch, epoch, observedAt, Time.unscaledTime)) return false;
+            pictureAdmissionValidation = "Not evaluated"; nextPictureAdmissionTrace = 0;
+            ScenicTrace.Event("picture-admission-pending", "Retaining an exact pose while independent validation completes", proposal.Id);
+        }
+        long pendingId = pictureAdmission.Pending!.Id;
+        ScenicPictureAdmissionResult result = pictureAdmission.Advance(epoch, Time.unscaledTime, Time.frameCount,
+            candidate => ValidateIndependentPicture(candidate, moveCarrier), out ScenicShotPlan? admitted);
+        if (ScenicTrace.Enabled && (result != ScenicPictureAdmissionResult.Pending || Time.unscaledTime >= nextPictureAdmissionTrace))
+        {
+            nextPictureAdmissionTrace = Time.unscaledTime + 1;
+            ScenicTrace.Record(ScenicTrace.Row("picture-admission").Field("plan", pendingId).Field("result", result.ToString())
+                .Field("attempts", pictureAdmission.Evaluations).Field("elapsed", Time.unscaledTime - pictureAdmission.StartedAt)
+                .Field("reason", pictureAdmission.Reason).Field("validation", pictureAdmissionValidation));
+        }
+        if (admitted == null) return false;
+        // This timestamp belongs to the just-completed full pose check, not to
+        // the older graph proposal. No pending or merely remembered view is freshened.
+        if (!pictures.TryOffer(admitted, epoch, CameraSpatialScene.Shared.Epoch, Time.unscaledTime,
+            Time.unscaledTime, protectCurrent)) return false;
+        usingIndependentPicture = true;
+        journeyExitExhausted = false;
+        readiness.Reset(); proposed = 0;
+        if (director.Current != null) director.RequestReplacement("Developing a new cinematic route while a measured picture remains available");
+        Reason = "Independent readable " + admitted.FeatureKind + " picture; preparing cinematic movement";
+        ScenicTrace.Event("picture-admitted", Reason, admitted.Id);
+        return true;
+    }
+    private ScenicPictureAdmissionResult ValidateIndependentPicture(ScenicShotPlan candidate, bool moveCarrier)
+    {
+        // Repeat the complete current surface, near-plane, carrier, framing,
+        // foliage and typed-subject checks at this exact immutable pose.
         Camera? camera = Camera.main;
         float aspect = camera ? camera.aspect : Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
         float nearClip = camera ? camera.nearClipPlane : .3f;
@@ -614,17 +657,15 @@ internal sealed partial class ScenicProduction
         var pose = new ScenicPose(position, focus, ScenicVisibility.Compose(position, focus,
             sample.ScreenX, sample.ScreenY, candidate.FieldOfView, aspect), candidate.FieldOfView, 0);
         if (!ScenicPoseValidation.Check(pose, candidate, pictureVisibility, aspect, nearClip, false, moveCarrier,
-            out _, out _, out _)) return false;
-        if (!director.CanDevelopSubject(candidate.Feature!)) return false;
-        if (!pictures.TryOffer(candidate, epoch, CameraSpatialScene.Shared.Epoch, observedAt,
-            Time.unscaledTime, protectCurrent)) return false;
-        usingIndependentPicture = true;
-        journeyExitExhausted = false;
-        readiness.Reset(); proposed = 0;
-        if (director.Current != null) director.RequestReplacement("Developing a new cinematic route while a measured picture remains available");
-        Reason = "Independent readable " + candidate.FeatureKind + " picture; preparing cinematic movement";
-        ScenicTrace.Event("picture-admitted", Reason, candidate.Id);
-        return true;
+            out _, out ScenicRejectionKind rejection, out string rejectionReason))
+        {
+            pictureAdmissionValidation = rejection + ": " + rejectionReason;
+            return rejection == ScenicRejectionKind.SurveyIncomplete || rejection == ScenicRejectionKind.Geometry ||
+                rejection == ScenicRejectionKind.Acquisition ? ScenicPictureAdmissionResult.Pending : ScenicPictureAdmissionResult.Rejected;
+        }
+        bool develop = director.CanDevelopSubject(candidate.Feature!);
+        pictureAdmissionValidation = develop ? "Complete current pose validation passed" : "Subject no longer eligible for development";
+        return develop ? ScenicPictureAdmissionResult.Accepted : ScenicPictureAdmissionResult.Rejected;
     }
     private void CaptureSubjects()
     {
