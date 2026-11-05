@@ -16,6 +16,9 @@ internal sealed class IdleShots
     private float radius = 50;
     private Vector3 creatureOrigin;
     internal bool JourneyActive => scenic.JourneyActive;
+    internal bool JourneyOwnsTravel => scenic.JourneyOwnsTravel;
+    internal void UpdateJourneyAuthority(long worldId, bool authorized, bool watching, bool held, bool preempted) =>
+        scenic.UpdateJourneyAuthority(worldId, authorized, watching, held, preempted);
     internal bool ManualJourneyPending => scenic.ManualJourneyPending;
     internal Vector3? JourneyLoadingPoint => scenic.JourneyLoadingPoint;
     internal string JourneyStatus => scenic.JourneyStatus;
@@ -77,8 +80,8 @@ internal sealed class IdleShots
         scenic.TickSearch(settings, moveCarrier, held, allowActivate);
     internal Vector3 ScenicFocus(float fraction) => scenic.Focus(fraction);
     internal bool ViewClear(Vector3 camera, Vector3 focus, float fov) => scenic.Visibility.Clear(camera, focus, fov, out _);
-    internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held, Vector3? actualFocus, JourneyPresentationSample? actualCapture = null) =>
-        scenic.Observe(ready, usable, planId, progress, blocked, held, reason, actualFocus, actualCapture);
+    internal bool ReportPresentation(bool ready, string reason, bool usable, long planId, float progress, bool blocked, bool held, Vector3? actualFocus, JourneyPresentationSample? actualCapture = null, ScenicRejectionKind failure = ScenicRejectionKind.None) =>
+        scenic.Observe(ready, usable, planId, progress, blocked, held, reason, actualFocus, actualCapture, failure);
     internal void UpdateRecovery(bool onAir, bool usableLive, long planId, bool held) =>
         scenic.UpdateRecovery(onAir, usableLive, planId, held);
     internal bool ObservePixelConcern(long planId, bool reconsider, string reason) =>

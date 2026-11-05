@@ -4,9 +4,9 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
-/// <summary>Certifies a finite, exact-seam ending before its journey section is
-/// taken on air. Neither a readable endpoint nor catalogue metadata substitutes
-/// for complete camera, aim, terrain, near-plane and foliage validation.</summary>
+/// <summary>Certifies an exact-seam stationary refuge before taking a cruise
+/// section on air. Only a deliberate arrival needs a complete angular sweep.
+/// Both retain full camera, aim, terrain, near-plane and foliage validation.</summary>
 internal sealed class ScenicJourneyEndingPlanner : IDisposable
 {
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
@@ -43,7 +43,7 @@ internal sealed class ScenicJourneyEndingPlanner : IDisposable
             Vector3 focus = locallyObservedArrivalFocus.Value;
             arrivalFocus = new AutonomyPosition(focus.x, focus.y, focus.z);
         }
-        Reason = "Preparing a validated finite journey ending";
+        Reason = arrivalFocus.HasValue ? "Preparing the locally observed Journey arrival" : "Certifying the exact Journey endpoint refuge";
     }
 
     internal void Step()
@@ -55,15 +55,22 @@ internal sealed class ScenicJourneyEndingPlanner : IDisposable
         { Finish("Journey ending preparation expired; last evidence: " + lastFailure); return; }
         if (candidate == null)
         {
-            if (alternative >= ScenicJourneyEnding.CandidateCount)
+            if (alternative >= (arrivalFocus.HasValue ? ScenicJourneyEnding.CandidateCount : 1))
             { Finish("No fully validated finite ending; last evidence: " + lastFailure); return; }
             if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return;
             using (work)
             {
-                candidate = ScenicJourneyEnding.Propose(section, id, alternative++, arrivalFocus, arrivalSubject);
+                candidate = arrivalFocus.HasValue
+                    ? ScenicJourneyEnding.Propose(section, id, alternative++, arrivalFocus, arrivalSubject)
+                    : ScenicJourneyEnding.Refuge(section, id);
+                if (!arrivalFocus.HasValue) alternative++;
                 if (candidate == null) return;
-                evaluator.Begin(candidate, visibility, aspect, nearClip, moveCarrier);
+                if (!candidate.IsPictureOnly) evaluator.Begin(candidate, visibility, aspect, nearClip, moveCarrier);
             }
+        }
+        if (candidate.IsPictureOnly)
+        {
+            StepRefuge(); return;
         }
         bool complete = evaluator.Step(6);
         if (!complete && (evaluator.FailureKind == ScenicRejectionKind.None ||
@@ -86,13 +93,43 @@ internal sealed class ScenicJourneyEndingPlanner : IDisposable
                     lastFailure = "Ending did not resolve the observed arrival subject";
                     Reason = lastFailure; return;
                 }
-                Reason = "Validated finite six-second journey ending"; return;
+                Reason = "Validated finite six-second Journey arrival pan"; return;
             }
             lastFailure = "Terrain fitting moved the journey ending seam";
         }
         else lastFailure = evaluator.Reason;
         candidate = null; evaluator.Reset();
         Reason = "Trying a different finite ending: " + lastFailure;
+    }
+
+    private void StepRefuge()
+    {
+        if (candidate == null || !CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return;
+        using (work)
+        {
+            bool valid = ScenicStationaryProof.Check(candidate, visibility, aspect, nearClip, moveCarrier,
+                out ScenicRejectionKind kind, out string reason);
+            if (CameraSpatialScene.Shared.Epoch != requestedEpoch)
+            { Finish("Scene changed while validating the Journey refuge"); return; }
+            if (valid)
+            {
+                bool arrival = arrivalSubject != null && candidate.Feature == arrivalSubject && arrivalFocus.HasValue &&
+                    ScenicJourneyEnding.AimsAtObservedArrival(candidate, arrivalFocus.Value);
+                if (arrivalSubject != null && !arrival)
+                { lastFailure = "Stationary ending does not frame the observed arrival subject"; candidate = null; return; }
+                Ready = candidate; Epoch = requestedEpoch; ValidatedAt = Time.unscaledTime; Complete = true; ArrivalFramed = arrival;
+                Reason = arrival ? "Validated exact stationary Journey arrival" : "Validated exact stationary Journey refuge";
+                return;
+            }
+            lastFailure = kind + ": " + reason;
+            // Retain this exact query while the observation owner supplies its
+            // missing evidence. No pending result becomes a certified ending.
+            if (kind == ScenicRejectionKind.SurveyIncomplete || kind == ScenicRejectionKind.Geometry || kind == ScenicRejectionKind.Acquisition)
+            { Reason = "Waiting to certify the Journey refuge: " + lastFailure; return; }
+            candidate = null;
+            if (!arrivalFocus.HasValue) Finish("Journey endpoint refuge is not valid: " + lastFailure);
+            else Reason = "Trying another observed arrival composition: " + lastFailure;
+        }
     }
 
     private void Finish(string reason)

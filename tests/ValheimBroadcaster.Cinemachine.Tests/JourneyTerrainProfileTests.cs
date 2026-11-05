@@ -12,6 +12,7 @@ internal static class JourneyTerrainProfileTests
         yield return ("Journey terrain profile rejects a rise that cannot preserve its incoming tangent", ImpossibleRise);
         yield return ("Journey elevation alternatives are gradual and retain exact first two points", Elevated);
         yield return ("Journey terrain fitting rejects unknown or malformed observations", Invalid);
+        yield return ("Independent departure can start a measured climb without inheriting the old shot's flat tangent", IndependentClimb);
     }
     private static void Check(bool condition, string reason) { if (!condition) throw new Exception(reason); }
     private static Vector3[] Knots(float height = 5) => new[] { new Vector3(0, height, 0), new Vector3(2, height, 0),
@@ -52,5 +53,17 @@ internal static class JourneyTerrainProfileTests
         Check(!JourneyTerrainProfile.TryFit(knots, new[] { 2f, 2, float.NaN, 2, 2, 2 }, 3, 0, out _, out _), "Unknown terrain became a usable floor");
         Check(!JourneyTerrainProfile.TryFit(knots, new[] { 2f, 2 }, 3, 0, out _, out _), "Mismatched measurements accepted");
         Check(!JourneyTerrainProfile.TryFit(knots, new[] { 2f, 2, 2, 2, 2, 2 }, 3, float.PositiveInfinity, out _, out _), "Unbounded lift accepted");
+    }
+    private static void IndependentClimb()
+    {
+        var knots = Knots(); var floors = new[] { 2f, 5.5f, 6, 6, 6, 6 };
+        Check(!JourneyTerrainProfile.TryFit(knots, floors, 1, 0, out _, out _), "A connected seam unexpectedly changed its tangent");
+        Check(JourneyTerrainProfile.TryFit(knots, floors, 1, 0, out var fitted, out string reason, preserveIncomingTangent: false), reason);
+        Check(fitted[0] == knots[0] && fitted[1].y >= 5.5f && fitted[1].y <= 5.8001f,
+            "Independent fitting either moved the observed opening or failed its bounded initial climb");
+        for (int i = 1; i < fitted.Length; i++)
+            Check(fitted[i].y >= floors[i] && Mathf.Abs(fitted[i].y - fitted[i - 1].y) <=
+                Vector3.ProjectOnPlane(fitted[i] - fitted[i - 1], Vector3.up).magnitude * JourneyTerrainProfile.MaximumGrade + .0001f,
+                "Independent departure bypassed its measured surface or slope bounds");
     }
 }

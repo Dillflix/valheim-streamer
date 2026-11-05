@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.48";
+    public const string PluginVersion = "0.8.49";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -71,6 +71,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private float presentedScenicProgress;
     private Vector3? presentedScenicFocus;
     private bool presentedScenicBlocked;
+    private ScenicRejectionKind presentedScenicFailure;
     private readonly TargetRoster roster = new TargetRoster();
     private readonly CameraRig rig = new CameraRig();
     private readonly List<string> visibleCoverageIds = new List<string>(6);
@@ -269,6 +270,15 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 cameraFixtures.CancelPending("Fixture interrupted by observer state " + observer.Phase, idle);
             cameraFixtures?.Update(ZNet.instance.GetWorldUID(), false, idle);
             if (probe.Active || observer.Active && observer.Phase != ObserverPhase.Watching) playerShots.Reset();
+            // Mission deadlines and authority continue even when no Scenic
+            // picture/scene can be rendered. Picture availability cannot revoke
+            // travel ownership or silently turn it into a Scenic teleport.
+            idle.UpdateJourneyAuthority(ZNet.instance.GetWorldUID(),
+                observer.Active && (!remote.Isolated || remote.Approved),
+                observer.Phase == ObserverPhase.Watching, director.IsHolding,
+                !director.IsEnabled || probe.Active || selfTest ||
+                coverage.Preference == CoveragePreference.Player || coverage.Preference == CoveragePreference.Creature ||
+                coverage.Mode == CoverageMode.Player && !coverage.IsWildlifeCutaway);
             bool recentPicture = cameraReady && Time.frameCount - presentedFrame <= 2;
             bool currentIdlePresentation = presentedMode == coverage.Mode && presentedRevision == coverage.Revision &&
                 (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature) &&
@@ -282,7 +292,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 idle.ReportPresentation(presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                     recentPicture && frameHold.HasRecentLiveFrame,
                     recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
-                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus, CapturedScenicSample());
+                    presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus, CapturedScenicSample(), presentedScenicFailure);
             if (!probe.Active && !director.IsHolding && coverage.Mode == CoverageMode.Scenic &&
                 presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                 recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable &&
@@ -307,7 +317,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             RecordVisibleCoverage(recentPicture);
             ObserveLocalActivity(recentPicture);
             bool cutawayAllowed = wildlife.Update(roster, remote,
-                coverage.Preference != CoveragePreference.Auto || !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding ||
+                coverage.Preference != CoveragePreference.Auto || !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding || idle.JourneyOwnsTravel ||
                 !observer.RemoteSession || observer.Phase != ObserverPhase.Watching || automatic?.ControlsSelection != true ||
                 automatic.RouteActive || HasFreshEncounter(), coverage.IsWildlifeCutaway);
             // Select the cutaway before the automatic director can rotate or
@@ -335,11 +345,12 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 coverage.Mode == CoverageMode.Scenic && idle.ContentExhausted,
                 recentPicture && frameHold.HasRecentLiveFrame && presentedRelatedPlayerView &&
                     presentedPlayerId == CurrentTarget()?.Identity.Id,
-                coverage.Mode == CoverageMode.Scenic && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true),
+                coverage.Mode == CoverageMode.Scenic && (idle.FixtureActive || cameraFixtures?.PendingPlayback == true),
                 cameraFixtures?.AwaitingStart == true || idle.FixturePreparing,
                 scenicEditBoundary: coverage.Mode != CoverageMode.Scenic || idle.RelocationBoundary,
                 preference: coverage.Preference,
-                scenicJourneyPending: coverage.Mode == CoverageMode.Scenic && idle.ManualJourneyPending);
+                scenicJourneyPending: coverage.Mode == CoverageMode.Scenic && idle.ManualJourneyPending,
+                scenicJourneyOwnsTravel: idle.JourneyOwnsTravel);
             idle.SetDestinationSubject(observer.Phase == ObserverPhase.Travelling
                 ? automatic?.ActiveTravelInterest : automatic?.ScenicInterest);
             if (observer.Phase == ObserverPhase.Travelling)
@@ -399,7 +410,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     roster.ConnectedOthers, !selfTest && (coverage.Preference == CoveragePreference.Auto && coverage.IsWildlifeCutaway
                         ? readyPlayer : idle.SceneReady),
                     !CoveragePreferences.AllowsCreatures(coverage.Preference) ||
-                    !coverage.IsWildlifeCutaway && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true ||
+                    !coverage.IsWildlifeCutaway && (idle.JourneyOwnsTravel || idle.FixtureActive || cameraFixtures?.PendingPlayback == true ||
                         idle.ManualJourneyPending && idle.HasUsableScenicPicture && !idle.RecoveryExpired)
                         ? Array.Empty<string>() : ReadyCreatureShots(), director.IsHolding, usableIdlePicture,
                     coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id,
@@ -412,20 +423,21 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 if (coverage.Mode == CoverageMode.Scenic) idle.BeginScenicPath(resume: true);
                 // Presentation readiness belongs to the camera hook, not a provisional director cut.
             }
-            if (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature && !coverage.IsWildlifeCutaway)
+            if (coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Creature && !coverage.IsWildlifeCutaway ||
+                coverage.Mode == CoverageMode.Recovery && idle.JourneyOwnsTravel)
             {
                 cameraFixtures?.Update(ZNet.instance.GetWorldUID(), observer.Active && observer.Phase == ObserverPhase.Watching &&
                     coverage.Mode == CoverageMode.Scenic && !probe.Active && !selfTest && (!remote.Isolated || remote.Approved), idle);
                 // The environmental director prepares and edits its own shots.
                 // Coverage's independent clock still permits wildlife cutaways.
                 if (idle.Search(settings, observer.Active, director.IsHolding,
-                    allowActivate: coverage.Mode == CoverageMode.Scenic) && coverage.Mode == CoverageMode.Scenic)
+                    allowActivate: coverage.Mode == CoverageMode.Scenic || coverage.Mode == CoverageMode.Recovery && idle.JourneyOwnsTravel) && coverage.Mode == CoverageMode.Scenic)
                     presentedIdleUsable = false;
             }
             else if (coverage.Mode == CoverageMode.Player)
             {
                 if (cameraFixtures?.PendingPlayback == true) cameraFixtures.CancelPending("Player coverage preempted the fixture", idle);
-                if (idle.JourneyActive || idle.ManualJourneyPending) idle.StopJourney();
+                if (idle.JourneyOwnsTravel || idle.ManualJourneyPending) idle.StopJourney();
             }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
@@ -710,7 +722,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         activeWorld = parked ? ZNet.instance : null;
         cameraReady = false;
         presentedPlayerId = null; presentedFrame = -100; presentedIdleUsable = false; presentedRevision = presentedScenicPlan = -1; presentedScenicIdentity = default;
-        presentedScenicFocus = null;
+        presentedScenicFocus = null; presentedScenicBlocked = false; presentedScenicFailure = ScenicRejectionKind.None;
         RestoreReference();
         rig.Restore();
     }
@@ -905,6 +917,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             plugin.presentedScenicFocus = scenicPlan != null && plugin.cameraReady
                 ? plugin.rig.IsProcedural ? plugin.rig.ScenicPresentedFocus : focus : null;
             plugin.presentedScenicBlocked = scenicPlan != null && plugin.rig.IsProcedural && !plugin.rig.ScenicMovementAccepted;
+            plugin.presentedScenicFailure = scenicPlan != null && plugin.rig.IsProcedural
+                ? plugin.rig.ScenicFailureKind : ScenicRejectionKind.None;
             plugin.presentedIdleUsable = !plugin.probe.Active && plugin.cameraReady && plugin.rig.LastPictureUsable &&
                 (plugin.coverage.Mode == CoverageMode.Scenic || plugin.coverage.Mode == CoverageMode.Creature);
             plugin.presentedFrame = Time.frameCount;

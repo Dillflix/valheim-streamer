@@ -203,6 +203,29 @@ internal sealed class ScenicVisibility
         return result.CameraClear && result.FocusVisible && result.Score >= 0.5f;
     }
 
+    // Planning-only: a terrain hillside visible along the desired travel
+    // bearing is valid landscape subject matter. Trees/buildings in front of
+    // it remain obstructions, and the actual lens/body/foliage validator still
+    // screens this newly authored focus through the complete native trajectory.
+    internal Vector3 LandscapeFocus(Vector3 camera, Vector3 desired, float nearClip)
+    {
+        if (!TargetRoster.Finite(camera) || !TargetRoster.Finite(desired)) return desired;
+        Vector3 delta = desired - camera; float range = delta.magnitude;
+        if (range < 4) return desired;
+        if (obstructionMask == 0) obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        int count = Physics.RaycastNonAlloc(camera, delta / range, hits, range, obstructionMask, QueryTriggerInteraction.Ignore);
+        if (count == hits.Length) return desired; // incomplete observation, never guess which hit is nearest
+        int nearest = -1;
+        for (int i = 0; i < count; i++)
+            if (Solid(hits[i].collider) && (nearest < 0 || hits[i].distance < hits[nearest].distance)) nearest = i;
+        if (nearest < 0) return desired;
+        Collider collider = hits[nearest].collider;
+        bool terrain = collider.GetComponentInParent<Heightmap>() || collider.gameObject.layer == LayerMask.NameToLayer("terrain");
+        if (!JourneyLandscapeGaze.TryTerminate(new AutonomyPosition(camera.x, camera.y, camera.z),
+            new AutonomyPosition(desired.x, desired.y, desired.z), terrain, hits[nearest].distance, nearClip, out var focus)) return desired;
+        return new Vector3(focus.X, focus.Y, focus.Z);
+    }
+
     internal bool SegmentClear(Vector3 from, Vector3 to)
     {
         if (!TargetRoster.Finite(from) || !TargetRoster.Finite(to)) return false;

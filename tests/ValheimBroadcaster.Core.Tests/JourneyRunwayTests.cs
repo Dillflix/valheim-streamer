@@ -6,16 +6,18 @@ internal static class JourneyRunwayTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
-        yield return ("Journey startup refuses the old single 48 metre section and uses measured two-section reserve", StartupReserve);
-        yield return ("Journey proposals fit future gaze and remaining loading reach instead of waiting for a fixed window", LoadingFootprint);
-        yield return ("Journey preparation history counts complete jobs and rejects duplicate or reversed completion timestamps", MeasuredLatency);
-        yield return ("Journey reserve responds to actual slow preparation without promising unsupported cruise", SlowProducer);
-        yield return ("Journey cruise changes smoothly and hold or committed braking cannot cause catch-up acceleration", SmoothCruise);
-        yield return ("A stalled Journey producer reaches a finite ending rather than crawling forever", FiniteStall);
-        yield return ("Connected Journey reserve sustains a kilometre with nominal, seven-second and variable production at 30 and 60 fps", DelayedKilometre);
+        yield return ("One certified Journey route with a safe ending launches on physical reserve rather than a fixed section count", StartupReserve);
+        yield return ("Journey proposal windows include inherited gaze and the observed loading horizon", LoadingFootprint);
+        yield return ("Successful Journey producer observations measure metres per second without duplicate completion credit", MeasuredProduction);
+        yield return ("Slow successful preparation adapts useful cruise without creating a startup deadlock", SlowProducer);
+        yield return ("Journey braking follows stopping distance and speed changes remain bounded", SmoothCruise);
+        yield return ("Exhausted certified runway reaches a real stop rather than indefinite subminimum crawling", FiniteStop);
+        yield return ("Stopped Journey can resume its same path after useful certified reserve returns", Resume);
+        yield return ("Journey preparation fills physical metres inside its loading horizon with a bounded variable section count", DistanceBuffer);
+        yield return ("Connected Journey producer and consumer sustain travel with delayed production at 30 and 60 fps", DelayedKilometre);
         yield return ("Journey queue heads require exact predecessor identity and fresh complete evidence", QueueIdentity);
-        yield return ("Journey runway state does not survive owner reset and rejects nonfinite input", InvalidAndReset);
-        yield return ("Journey runtime budget covers its declared minimum cruise but remains finite", RuntimeBudget);
+        yield return ("Journey runway state and producer history reset between owners and reject invalid input", InvalidAndReset);
+        yield return ("Journey runtime budget covers useful adapted cruise while retaining a finite limit", RuntimeBudget);
     }
 
     private static void Check(bool ok, string reason) { if (!ok) throw new Exception(reason); }
@@ -33,66 +35,74 @@ internal static class JourneyRunwayTests
 
     private static void StartupReserve()
     {
-        // The old first48m at6m/s reaches its12m braking boundary at
-        // t=6s, before a perfectly finite7s continuation job can finish.
-        Check(JourneyHandoffPolicy.ShouldBrake(false, 48 - 6 * 6, 6, false, false),
-            "The original48m producer deadline regression was not represented");
-        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(5);
-        Check(!policy.TryStart(1, 48, 6, out _) && !policy.Started,
-            "The original eight-second single-section launch still acquired ownership");
-        Check(!policy.TryStart(2, 16, 6, out _) && !policy.Started,
-            "Two tiny sections manufactured a useful startup reserve");
-        Check(policy.TryStart(2, 64, 6, out _) && policy.Started, "Two certified sections failed to provide usable runway");
-        Near(policy.EffectiveCruise, 6);
-        Near(policy.RequiredRunwaySeconds, 9.75);
+        var policy = new JourneyRunwayPolicy();
+        Check(!policy.TryStart(0, 1000, 12, out _), "Uncertified distant metres launched movement");
+        Check(!policy.TryStart(8, 4, 12, out _), "Eight tiny sections manufactured physical stopping room");
+        policy.ObservePreparation(120);
+        Check(policy.TryStart(1, 48, 12, out _), "A certified useful departure still waits for a second section or old latency");
+        Check(policy.EffectiveCruise >= 2 && policy.EffectiveCruise <= 12, "Initial speed exceeded its useful range");
+        Check(JourneyRunwayPolicy.StoppingDistance(policy.EffectiveCruise) +
+            policy.EffectiveCruise * JourneyRunwayPolicy.MinimumUsefulSeconds <= 48.000001,
+            "Initial departure did not reserve room for a physical stop");
+        double speed = policy.EffectiveCruise;
+        var divided = new JourneyRunwayPolicy(); divided.ObservePreparation(120);
+        Check(divided.TryStart(6, 48, 12, out _), "Dividing the same physical reserve prevented launch");
+        Near(divided.EffectiveCruise, speed);
+        Check(new JourneyRunwayPolicy().TryStart(1, 8, 12, out _), "A short but useful certified window could not start at an adapted speed");
     }
 
     private static void LoadingFootprint()
     {
-        // At 6m/s the old body-only test accepted 48m from a seam40m away,
-        // even though its focus projects another21m beyond the route.
         Near(JourneyRunwayPolicy.WindowMetres(6, 40, 48), 24);
         Near(JourneyRunwayPolicy.WindowMetres(6, 57, 48), 0);
+        Near(JourneyRunwayPolicy.WindowMetres(6, 10, 48, 60, 35), 15);
+        Near(JourneyRunwayPolicy.WindowMetres(6, 0, 48, 85, 80), 0);
         foreach (double speed in new[] { 2d, 6, 12 })
+        foreach (double inherited in new[] { 0d, 28, 50 })
         for (int seam = 0; seam <= 100; seam++)
         {
-            double window = JourneyRunwayPolicy.WindowMetres(speed, seam, 64);
+            double window = JourneyRunwayPolicy.WindowMetres(speed, seam, 64, 72, inherited);
             Check(window == 0 || window >= 8 && window <= 64 &&
-                seam + window + JourneyRunwayPolicy.GazeReach(speed) <= 85.000001,
+                seam + window + Math.Max(JourneyRunwayPolicy.GazeReach(speed), inherited) <= 72.000001,
                 "Proposal exceeded its full camera/focus loading footprint");
         }
         Near(JourneyRunwayPolicy.WindowMetres(2, 0, 1000), 64);
         Near(JourneyRunwayPolicy.WindowMetres(6, 10, 7.9), 0);
     }
 
-    private static void MeasuredLatency()
+    private static void MeasuredProduction()
     {
         var policy = new JourneyRunwayPolicy();
-        Check(policy.ObservePreparation(10, 16), "A real completed route+ending job was ignored");
-        Near(policy.PreparationSeconds, 8);
-        for (int i = 0; i < 100; i++) Check(!policy.ObservePreparation(15, 16), "Polling completed work replaced measured history");
-        Check(!policy.ObservePreparation(20, 19) && !policy.ObservePreparation(10, 15), "Reversed completion clocks were accepted");
+        Check(policy.ObservePreparation(32, 10, 18), "A complete route+ending job was ignored");
+        Near(policy.ProductionMetresPerSecond, 4); Near(policy.PreparationSeconds, 10.5);
+        for (int i = 0; i < 100; i++) Check(!policy.ObservePreparation(32, 17, 18), "Polling a completion fabricated production");
+        Check(!policy.ObservePreparation(32, 20, 19) && !policy.ObservePreparation(32, 10, 17), "Reversed clocks entered throughput");
         Check(policy.Samples == 1, "Invalid clocks multiplied producer evidence");
-        for (int i = 0; i < 7; i++) policy.ObservePreparation(2);
-        Near(policy.PreparationSeconds, 8); Check(policy.Samples == 8, "History is not bounded");
-        policy.ObservePreparation(2); Near(policy.PreparationSeconds, 3);
-        Check(policy.Samples == 8, "Old measurements were retained without bound");
+        Check(policy.ObservePreparation(48, 18, 24), "A later successful candidate was ignored");
+        Near(policy.ProductionMetresPerSecond, 80d / 14);
+        // Duration-only legacy callers cannot invent the distance of that work.
+        policy.ObservePreparation(100); Near(policy.ProductionMetresPerSecond, 80d / 14);
+        for (int i = 0; i < JourneyRunwayPolicy.HistoryCapacity; i++)
+            Check(policy.ObservePreparation(32, 25 + 4 * i, 29 + 4 * i), "A distinct newer successful candidate was ignored");
+        Near(policy.ProductionMetresPerSecond, 8); Near(policy.PreparationSeconds, 5.5);
+        Check(policy.Samples == JourneyRunwayPolicy.HistoryCapacity, "Producer history grew without bound");
     }
 
     private static void SlowProducer()
     {
-        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(7);
-        Check(policy.TryStart(2, 64, 6, out _) && policy.EffectiveCruise < 6 && policy.EffectiveCruise >= 3,
-            "Observed slow production either promised full cruise or forced an unusable crawl");
-        var impossible = new JourneyRunwayPolicy(); impossible.ObservePreparation(30);
-        Check(!impossible.TryStart(2, 64, 6, out _) && !impossible.Started,
-            "A service time exceeding local reserve was hidden behind a near-zero launch speed");
-        foreach (double speed in new[] { 2d, 6, 12 })
+        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(32, 0, 7);
+        Check(policy.TryStart(1, 32, 12, out _), "Physical startup still depends on an impossible latency-based horizon");
+        Near(policy.EffectiveCruise, 32d / 7 * .9);
+        var slow = new JourneyRunwayPolicy(); slow.ObservePreparation(16, 0, 60);
+        Check(slow.TryStart(1, 16, 12, out _), "A completed useful path cannot start after a slow successful job");
+        Near(slow.EffectiveCruise, 2);
+        // The slow case can legitimately need to stop/replan later. It cannot
+        // claim that its producer will replenish travel at the requested12m/s.
+        Check(slow.ProductionMetresPerSecond < 2 && slow.DesiredCruise(12) == 2, "Throughput was inflated to the requested speed");
+        foreach (double requested in new[] { 2d, 6, 12 })
         {
-            var bounded = new JourneyRunwayPolicy(); bounded.ObservePreparation(2);
-            Check(bounded.TryStart(2, 64, speed, out _), "Feasible startup was rejected");
-            Check(bounded.EffectiveCruise >= JourneyRunwayPolicy.MinimumCruise(speed) && bounded.EffectiveCruise <= speed,
-                "Startup cruise exceeded the explicit useful range");
+            var bounded = new JourneyRunwayPolicy(); bounded.TryStart(1, 64, requested, out _);
+            Check(bounded.EffectiveCruise >= 2 && bounded.EffectiveCruise <= requested, "Startup speed escaped its bounds");
         }
     }
 
@@ -100,96 +110,119 @@ internal static class JourneyRunwayTests
     {
         foreach (int fps in new[] { 30, 60 })
         {
-            var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(2); policy.TryStart(2, 64, 6, out _);
+            var policy = new JourneyRunwayPolicy(); policy.TryStart(1, 64, 6, out _);
             double dt = 1d / fps;
+            Near(policy.StepSpeed(6, 64, 100, held: true), 6);
             for (int i = 0; i < fps * 5; i++)
             {
-                double before = policy.EffectiveCruise, after = policy.StepSpeed(6, 12, dt);
-                Check(before - after <= JourneyRunwayPolicy.Deceleration * dt + .000001 && after >= 3,
-                    "Falling runway caused a speed jump or indefinite crawl");
+                double before = policy.EffectiveCruise, after = policy.StepSpeed(6, 64, dt, braking: true);
+                Check(before - after <= JourneyRunwayPolicy.Deceleration * dt + .000001 && after >= 0,
+                    "Braking caused a speed surge or invalid speed");
             }
-            Near(policy.EffectiveCruise, 3);
-            Near(policy.StepSpeed(6, 80, 100, held: true), 3);
-            Near(policy.StepSpeed(6, 80, 100, braking: true), 3);
-            double resumed = policy.StepSpeed(6, 80, 100);
-            Check(resumed > 3 && resumed <= 3.1, "A delayed update accumulated catch-up acceleration");
-            for (int i = 0; i < fps * 4; i++)
+            Near(policy.EffectiveCruise, 0);
+            double resumed = policy.StepSpeed(6, 64, 100);
+            Check(resumed > 0 && resumed <= .1, "A delayed update accumulated catch-up acceleration");
+            for (int i = 0; i < fps * 6; i++)
             {
-                double before = policy.EffectiveCruise, after = policy.StepSpeed(6, 80, dt);
+                double before = policy.EffectiveCruise, after = policy.StepSpeed(6, 64, dt);
                 Check(after - before <= JourneyRunwayPolicy.Acceleration * dt + .000001 && after <= 6,
-                    "New validated reserve caused an acceleration surge");
+                    "New proof caused an acceleration surge");
             }
             Near(policy.EffectiveCruise, 6);
         }
+        Near(JourneyRunwayPolicy.StoppingDistance(12), .5 + 3 + 48);
+        Near(JourneyRunwayPolicy.MaximumSafeSpeed(JourneyRunwayPolicy.StoppingDistance(12)), 12);
+        Near(JourneyRunwayPolicy.MaximumSafeSpeed(.25), 0);
     }
 
-    private static void FiniteStall()
+    private static void FiniteStop()
     {
-        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(4); policy.TryStart(2, 64, 6, out _);
-        double remaining = 64, elapsed = 0; bool committed = false;
-        while (!committed)
+        foreach (int fps in new[] { 10, 30, 60 })
+        foreach (double runway in new[] { 8d, 16, 32, 57 })
         {
-            double speed = policy.StepSpeed(6, remaining, .05);
-            committed = JourneyHandoffPolicy.ShouldBrake(false, remaining, speed, false, false);
-            if (!committed) remaining -= speed * .05;
-            elapsed += .05;
-            Check(elapsed < 25 && remaining > 0, "Missing producer led to an endless crawl or unvalidated motion");
+            var policy = new JourneyRunwayPolicy(); Check(policy.TryStart(1, runway, 12, out _), "Stop fixture cannot launch");
+            double remaining = runway, elapsed = 0, dt = 1d / fps;
+            while (!policy.Stopped)
+            {
+                double speed = policy.StepSpeed(12, remaining, dt);
+                remaining -= speed * dt; elapsed += dt;
+                Check(remaining >= JourneyRunwayPolicy.StopMarginMetres - .000001,
+                    "The consumer crossed the certified runway before stopping");
+                Check(remaining + .000001 >= speed * speed / (2 * JourneyRunwayPolicy.Deceleration),
+                    "The consumer did not retain its physical braking distance");
+                Check(elapsed < 20, "A starved producer caused an indefinite near-zero crawl");
+            }
+            for (int i = 0; i < fps * 20; i++) Near(policy.StepSpeed(12, remaining, dt), 0);
         }
-        Check(remaining >= 4 && remaining <= 12, "Stalled producer did not leave a finite braking reserve");
-        double speedAtCommit = policy.EffectiveCruise;
-        policy.StepSpeed(6, 100, .1, braking: true);
-        Check(policy.EffectiveCruise <= speedAtCommit, "Late producer evidence cancelled committed deceleration");
+    }
+
+    private static void Resume()
+    {
+        var policy = new JourneyRunwayPolicy(); policy.TryStart(1, 32, 6, out _);
+        for (int i = 0; i < 60; i++) policy.StepSpeed(6, 32, .1, braking: true);
+        Check(policy.Stopped && policy.Started, "A local stop destroyed the admitted mission's speed owner");
+        for (int i = 0; i < 100; i++) Near(policy.StepSpeed(6, 2, .1), 0);
+        double resumed = policy.StepSpeed(6, 32, .1);
+        Check(resumed > 0 && resumed <= .1 && policy.Started, "Fresh useful runway could not restart the same path smoothly");
+    }
+
+    private static void DistanceBuffer()
+    {
+        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(32, 0, 8);
+        double target = policy.TargetRunwayMetres(12, 57);
+        Check(target > 32 && target <= 57, "Scheduling ignored throughput or the loading horizon");
+        Check(policy.NeedsPreparation(16, 12, 57) && !policy.NeedsPreparation(57, 12, 57),
+            "A fixed count displaced the distance-based replenishment threshold");
+        Check(policy.TargetSectionCount(12, 57, 8) > 2 && policy.TargetSectionCount(12, 57, 48) == 1,
+            "Short windows still stop filling after two entries");
+        Check(policy.TargetSectionCount(12, 10000, .1) <= JourneyRunwayPolicy.MaximumBufferedSections,
+            "Fragmented paths caused an unbounded memory queue");
+        Near(policy.TargetRunwayMetres(12, 0), 0);
+        Check(!policy.NeedsPreparation(0, 12, 0), "Unknown local horizon was treated as open space");
     }
 
     private static void DelayedKilometre()
     {
-        // A deterministic producer fixture, not a Unity geometry simulation.
-        // Every section becomes available only after its delayed route+ending
-        // completion; no speculative metres count toward reserve or playback.
+        // Producer/consumer arithmetic only, not a substitute for the integrated
+        // mission/scene/proof tests or a live Unity geometry acceptance run.
         foreach (int fps in new[] { 30, 60 })
         foreach (double[] latencies in new[] { new[] { 3.5 }, new[] { 7d }, new[] { 3.5, 5, 7, 4, 6 } })
         {
-            var policy = new JourneyRunwayPolicy();
-            policy.ObservePreparation(latencies[0]); policy.ObservePreparation(latencies[1 % latencies.Length]);
-            Check(policy.TryStart(2, 64, 6, out _), "Initial two-section reserve unavailable");
-            var ends = new Queue<double>(); ends.Enqueue(32); ends.Enqueue(64);
-            double position = 0, tail = 64, now = 0, pendingEnd = 0, readyAt = -1, serviceSeconds = 0;
-            int completed = 2, handoffs = 0;
-            double dt = 1d / fps;
+            var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(32, 0, latencies[0]);
+            Check(policy.TryStart(1, 32, 6, out _), "One physical departure could not start");
+            var ends = new Queue<double>(); ends.Enqueue(32);
+            double position = 0, tail = 32, now = 10, pendingEnd = 0, readyAt = -1, jobStarted = 0;
+            int completed = 1, handoffs = 0; double dt = 1d / fps;
             while (position < 1000)
             {
                 if (readyAt >= 0 && now >= readyAt)
                 {
+                    policy.ObservePreparation(pendingEnd - tail, jobStarted, now);
                     ends.Enqueue(pendingEnd); tail = pendingEnd; readyAt = -1; completed++;
-                    policy.ObservePreparation(serviceSeconds);
                 }
-                while (ends.Count > 0 && position >= ends.Peek() - .000001)
-                { ends.Dequeue(); handoffs++; }
-                Check(ends.Count > 0, "Delayed production exhausted the certified connected path");
-                // The actual carrier can lead into a certified connected next
-                // section, but never into the route still being prepared.
+                while (ends.Count > 0 && position >= ends.Peek() - .000001) { ends.Dequeue(); handoffs++; }
+                Check(ends.Count > 0, "Producer exhausted the current certified path");
                 double carrier = Math.Min(tail, position + 24);
-                if (readyAt < 0 && ends.Count < 3)
+                double horizon = 85 - JourneyRunwayPolicy.GazeReach(6) + carrier - position;
+                if (readyAt < 0 && ends.Count < JourneyRunwayPolicy.MaximumBufferedSections &&
+                    policy.NeedsPreparation(tail - position, 6, horizon))
                 {
                     double length = JourneyRunwayPolicy.WindowMetres(6, Math.Max(0, tail - carrier), 48);
                     if (length >= 8)
                     {
-                        serviceSeconds = latencies[completed % latencies.Length];
-                        pendingEnd = tail + length; readyAt = now + serviceSeconds;
+                        jobStarted = now; pendingEnd = tail + length;
+                        readyAt = now + latencies[completed % latencies.Length];
                     }
                 }
                 double speed = policy.StepSpeed(6, tail - position, dt);
-                bool nextReady = ends.Count >= 2;
-                Check(!JourneyHandoffPolicy.ShouldBrake(false, ends.Peek() - position, speed, nextReady, false),
-                    $"Producer failed the next handoff at {now:0.00}s/{position:0.0}m, latency {serviceSeconds}, {fps}fps");
+                Check(speed > 0, $"Supported delayed production stopped at {position:0.0}m/{now:0.0}s");
                 double step = Math.Min(speed * dt, Math.Min(1000 - position, ends.Peek() - position));
-                Check(step >= 0 && position + step <= tail + .000001,
-                    "The fixture consumed speculative path length before its validation completed");
+                Check(step >= 0 && position + step <= tail + .000001, "Speculative metres were consumed before certification");
                 position += step; now += dt;
-                Check(now < 350, "Sustained programme became an indefinite slow journey");
+                Check(now < 510, "Delayed production became indefinite low-speed travel");
             }
-            Check(completed > 20 && handoffs > 20, "Kilometre fixture bypassed actual producer/consumer handoffs");
-            Check(now >= 1000d / 6 - .1, "Travel exceeded the requested cruise ceiling");
+            Check(completed > 20 && handoffs > 20, "Long-distance fixture skipped real producer handoffs");
+            Check(now - 10 >= 1000d / 6 - .1, "Travel exceeded the requested cruise ceiling");
         }
     }
 
@@ -212,17 +245,21 @@ internal static class JourneyRunwayTests
 
     private static void InvalidAndReset()
     {
-        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(4); policy.TryStart(2, 64, 6, out _); policy.Reset();
-        Check(!policy.Started && policy.Samples == 0 && policy.EffectiveCruise == 0, "A new Journey inherited another owner's timing state");
+        var policy = new JourneyRunwayPolicy(); policy.ObservePreparation(32, 0, 8); policy.TryStart(1, 32, 6, out _); policy.Reset();
+        Check(!policy.Started && !policy.Stopped && policy.Samples == 0 && policy.EffectiveCruise == 0 && policy.ProductionMetresPerSecond == 0,
+            "A new owner inherited another mission's state or throughput");
         foreach (double value in new[] { -1, double.NaN, double.PositiveInfinity })
         {
             bool rejected = false;
             try { policy.ObservePreparation(value); } catch (ArgumentOutOfRangeException) { rejected = true; }
-            Check(rejected, "Invalid preparation duration entered the latency estimator");
+            Check(rejected, "Invalid preparation duration entered history");
+            rejected = false;
+            try { JourneyRunwayPolicy.MaximumSafeSpeed(value); } catch (ArgumentOutOfRangeException) { rejected = true; }
+            Check(rejected, "Unknown distance supplied stopping room");
         }
         bool premature = false;
         try { policy.StepSpeed(6, 60, .1); } catch (InvalidOperationException) { premature = true; }
-        Check(premature, "Cruise advanced before a certified startup reserve was admitted");
+        Check(premature, "Unadmitted runway advanced cruise");
     }
 
     private static void RuntimeBudget()
@@ -231,18 +268,19 @@ internal static class JourneyRunwayTests
         Check(ScenicJourneyItinerary.TrySelect(P(0), P(1), new[] { destination }, null, 1000, 10, null,
             out var itinerary, out _), "Known destination fixture was unavailable");
         var journey = new ScenicJourneyPolicy(); journey.Start(7, itinerary!, 6);
-        Check(journey.MaximumSeconds >= 1000 / JourneyRunwayPolicy.MinimumCruise(6) + 6 && journey.MaximumSeconds < 600,
-            "Runtime budget expires before sustained declared minimum cruise or lost its finite bound");
+        double minimum = JourneyRunwayPolicy.MinimumCruise(6);
+        Check(journey.MaximumSeconds >= 1000 / minimum + 6 && journey.MaximumSeconds < 1000,
+            "Runtime budget excludes useful adapted cruise or lost its finite bound");
         double now = 0, position = 0; long id = 10;
-        var section = Section(id);
-        journey.Observe(section, now, 0, true, false, P(0));
+        var section = Section(id); journey.Observe(section, now, 0, true, false, P(0));
         while (position < 990)
         {
-            now += .1; position += .3;
+            now += .1; position += minimum * .1;
             if (position >= (id - 9) * 32) { id++; section = Section(id, id - 1, (id - 10) * 32); }
             journey.Observe(section, now, Math.Min(1, Math.Max(0, (position - (id - 10) * 32) / 32)), true, false, P((float)position));
-            Check(!journey.BudgetExpired, "Continuous legitimate minimum-speed travel exhausted a nominal-speed deadline");
+            Check(!journey.BudgetExpired, "Continuous useful adapted travel exhausted a nominal-speed deadline");
         }
-        Check(journey.TravelMetres > 989 && journey.ShownSeconds > 300, "Budget regression did not exercise slower real presentation");
+        Check(journey.TravelMetres > 989 && journey.ShownSeconds > 490,
+            "Budget fixture did not exercise actual minimum-speed presentation");
     }
 }

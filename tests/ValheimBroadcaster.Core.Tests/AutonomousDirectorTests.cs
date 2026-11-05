@@ -29,6 +29,10 @@ internal static class AutonomousDirectorTests
         ("Ready and distant players preempt a pending Scenic edit", ScenicDeparturePlayerPriority),
         ("Holding resets the pending Scenic edit deadline without catch-up", ScenicDepartureHold),
         ("Journey ownership and world reset clear pending Scenic relocation timing", ScenicDepartureOwnership),
+        ("Journey mission ownership survives Scenic dwell missing pictures and local recovery", JourneyMissionRetainsTravel),
+        ("Journey mission cancels only an unstarted ordinary Scenic relocation", JourneyMissionPendingTravel),
+        ("Journey mission never blocks actual player acquisition", JourneyMissionPlayerPriority),
+        ("Fixture picture failure remains ordinary recovery without Journey mission authority", JourneyFixtureSeparation),
         ("Failed scenic destinations yield to alternatives", ScenicFailure),
         ("Multi-hour scenery history remains bounded", BoundedHistory),
         ("Full scenic history preserves unexpired revisit exclusions", FullHistoryCooldown),
@@ -338,6 +342,75 @@ internal static class AutonomousDirectorTests
         Throws(() => window.CanDepart(double.NaN, false));
         window.CanDepart(10, false); Throws(() => window.CanDepart(9, false));
     }
+    private static void MissionStep(AutonomousDirector d, double now, bool owns = true, bool ready = true,
+        bool expired = false, bool exhausted = false, IReadOnlyList<AutonomyPlayer>? players = null,
+        string? shown = null, bool fixture = false) =>
+        d.Tick(now, 1, players ?? Array.Empty<AutonomyPlayer>(), DepartureRegions(), Origin, shown, ready,
+            idleSceneAvailable: ready, idleSearchExpired: expired, scenicContentExhausted: exhausted,
+            scenicJourneyActive: fixture, scenicEditBoundary: true, scenicJourneyOwnsTravel: owns);
+
+    private static void JourneyMissionRetainsTravel()
+    {
+        var d = New(); d.RegionSeconds = 120;
+        // Actual integration order: prior footage, a mission running through
+        // ordinary dwell, missing picture/recovery, then readable local repair.
+        // Neither an edit boundary nor content exhaustion owns a mission exit.
+        for (int second = 0; second <= 600; second++)
+        {
+            bool missing = second >= 130 && second <= 200 || second >= 400 && second <= 450;
+            MissionStep(d, second, ready: !missing, expired: missing && second % 130 > 30,
+                exhausted: second > 100);
+            Assert(d.PendingTravel == null && d.ActiveTravel == null,
+                "Ordinary Scenic relocation stole Journey ownership at " + second);
+            Assert(!d.ScenicDepartureWaiting);
+        }
+        Eq(0L, d.CompletedTravels); Eq(0L, d.FailedTravels);
+        // The owner releases explicitly; then normal recovery can acquire a
+        // fresh destination. No hidden extra timeout is inherited from Journey.
+        MissionStep(d, 601, owns: false, ready: false, expired: true);
+        Eq(AutonomyTravelKind.Scenic, Request(d).Kind);
+    }
+
+    private static void JourneyMissionPendingTravel()
+    {
+        var pending = New(); Step(pending, 0, regions: DepartureRegions()); Step(pending, 1, regions: DepartureRegions());
+        Eq(AutonomyTravelKind.Scenic, Request(pending).Kind);
+        MissionStep(pending, 2, ready: false, expired: true);
+        Assert(pending.PendingTravel == null); Eq(0L, pending.FailedTravels);
+        var travelling = New(); Step(travelling, 0, regions: DepartureRegions()); Step(travelling, 1, regions: DepartureRegions());
+        long token = Request(travelling).Token; travelling.TravelStarted(token, 1);
+        MissionStep(travelling, 2, ready: false, expired: true);
+        Eq(token, travelling.ActiveTravel!.Token);
+        Eq(AutonomyState.Travelling, travelling.State);
+    }
+
+    private static void JourneyMissionPlayerPriority()
+    {
+        var loaded = New(); MissionStep(loaded, 0); MissionStep(loaded, 1, ready: false, expired: true,
+            players: new[] { P("player") }, shown: "player");
+        Eq("player", loaded.TargetId); Eq(AutonomyState.Following, loaded.State);
+        Assert(loaded.PendingTravel == null);
+        var distant = New(); MissionStep(distant, 0); MissionStep(distant, 1, ready: false, expired: true,
+            players: new[] { P("player", 1000, false) });
+        Eq("player", distant.TargetId); Eq(AutonomyTravelKind.Player, Request(distant).Kind);
+        MissionStep(distant, 2, ready: false, expired: true);
+        Eq(AutonomyTravelKind.Player, Request(distant).Kind);
+    }
+
+    private static void JourneyFixtureSeparation()
+    {
+        var fixture = New(); MissionStep(fixture, 0, owns: false, fixture: true);
+        MissionStep(fixture, 1, owns: false, ready: false, expired: true, fixture: true);
+        Eq(AutonomyTravelKind.Scenic, Request(fixture).Kind);
+        var mission = New(); mission.SetHolding(true);
+        MissionStep(mission, 0, ready: false, expired: true);
+        MissionStep(mission, 100, ready: false, expired: true);
+        mission.SetHolding(false); MissionStep(mission, 101, ready: false, expired: true);
+        Assert(mission.PendingTravel == null);
+        MissionStep(mission, 102, owns: false, ready: false, expired: true);
+        Eq(AutonomyTravelKind.Scenic, Request(mission).Kind);
+    }
+
     private static void ScenicNovelty()
     {
         var d = New(); var regions = new[] { R("c", 600), R("b", 300), R("a", 0) };

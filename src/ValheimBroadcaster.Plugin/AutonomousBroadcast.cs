@@ -145,7 +145,7 @@ internal sealed class AutonomousBroadcast
                 observer.RemoteSession && remote.Approved && (discoveryFresh || sites.Count > 0));
             journeyCataloguePublished = true; lastDiscoveryFresh = discoveryFresh;
         }
-        if (idle.JourneyActive)
+        if (idle.JourneyOwnsTravel)
         { destinationVisit.Reset(); currentInterest = null; }
         if (observedJourneyEnd == idle.JourneyEndRevision) return;
         observedJourneyEnd = idle.JourneyEndRevision;
@@ -182,7 +182,8 @@ internal sealed class AutonomousBroadcast
     internal void Tick(float dt, TargetRoster roster, string? presentedId, bool idleReady, bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? localActivities = null, bool usablePlayerFootage = true,
         bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool scenicPicture = false, bool creaturePicture = false, bool destinationSubjectShown = false, bool destinationSubjectUnavailable = false, bool destinationSubjectSatisfied = false,
         bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false,
-        bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto, bool scenicJourneyPending = false)
+        bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto, bool scenicJourneyPending = false,
+        bool scenicJourneyOwnsTravel = false)
     {
         if (!observer.RemoteSession || !remote.Approved || !observer.Active || !Player.m_localPlayer) return;
         policy.SetEnabled(WantsEnabled);
@@ -300,7 +301,8 @@ internal sealed class AutonomousBroadcast
             wildlifeCutaway && observer.Phase == ObserverPhase.Watching, activity, usablePlayerFootage, idleSceneAvailable, idleSearchExpired,
             scenicFootageReady: scenicPicture && (ScenicInterest == null || destinationSubjectShown), scenicFootageDelta: Math.Min(dt, .25),
             scenicContentExhausted: scenicContentExhausted, relatedPlayerView: relatedPlayerView, scenicJourneyActive: scenicJourneyActive, scenicPreparationActive: scenicPreparationActive,
-            scenicEditBoundary: scenicEditBoundary, preference: preference, scenicJourneyPending: scenicJourneyPending);
+            scenicEditBoundary: scenicEditBoundary, preference: preference, scenicJourneyPending: scenicJourneyPending,
+            scenicJourneyOwnsTravel: scenicJourneyOwnsTravel);
         if (destinationVisit.Id != null && !justArrived)
         {
             // A player/creature takeover or operator interruption is not a failed destination.

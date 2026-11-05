@@ -226,7 +226,8 @@ namespace ValheimBroadcaster.Core
             bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
             bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool? scenicFootageReady = null, double? scenicFootageDelta = null,
             bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false,
-            bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto, bool scenicJourneyPending = false)
+            bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto, bool scenicJourneyPending = false,
+            bool scenicJourneyOwnsTravel = false)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (scenicFootageDelta.HasValue) Time(scenicFootageDelta.Value, nameof(scenicFootageDelta));
@@ -257,6 +258,11 @@ namespace ValheimBroadcaster.Core
             if (WildlifeCutawayActive && (!wildlifeCutaway || Held || requestedSelection != null || requestedStep != 0 ||
                 ActiveTravel != null || PendingTravel != null || travelBusy || route != null || Find(players, targetId) == null))
                 EndWildlifeCutaway(now);
+            // A Journey is a persistent travel mission, independent of its
+            // current picture. It can supersede an unstarted ordinary Scenic
+            // relocation; never cancel native travel or a player/operator trip.
+            if (scenicJourneyOwnsTravel && ActiveTravel == null && PendingTravel?.Kind == AutonomyTravelKind.Scenic)
+            { PendingTravel = null; pendingScenic = null; scenicRelocation.Reset(); }
             if (ActiveTravel != null || travelBusy)
             {
                 scenicRelocation.Reset();
@@ -425,12 +431,12 @@ namespace ValheimBroadcaster.Core
             }
             TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady,
                 idleSceneAvailable ?? idleShotReady, idleSearchExpired, scenicFootageReady ?? idleShotReady, scenicFootageDelta.HasValue ? Math.Min(footage, scenicFootageDelta.Value) : footage,
-                scenicContentExhausted, scenicJourneyActive, scenicPreparationActive, scenicEditBoundary, scenicJourneyPending);
+                scenicContentExhausted, scenicJourneyActive, scenicPreparationActive, scenicEditBoundary, scenicJourneyPending, scenicJourneyOwnsTravel);
         }
 
         private void TickScenery(double now, double footage, int connected, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, bool ready, bool available, bool searchExpired, bool scenicPicture, double scenicFootage,
-            bool contentExhausted, bool journeyActive, bool preparationActive, bool editBoundary, bool journeyPending)
+            bool contentExhausted, bool journeyActive, bool preparationActive, bool editBoundary, bool journeyPending, bool journeyOwnsTravel)
         {
             // Useful footage advances dwell. A live picture recovering its
             // composition is not evidence that its loaded region is unavailable.
@@ -464,6 +470,17 @@ namespace ValheimBroadcaster.Core
             if (scenicAppearance.HasValue && scenicDiversity.CurrentId != null)
                 scenicAppearanceHistory.Observe(scenicDiversity.CurrentId, scenicAppearance.Value, scenicFootage, scenicPicture);
             if (Held) { scenicRelocation.Reset(); Reason += " (held)"; return; }
+            // Mission authority survives missing footage, local repair and
+            // ordinary Scenic deadlines. Its own controller must report an
+            // explicit terminal outcome before this director may teleport.
+            // Player acquisition and explicit operator travel already run above.
+            if (journeyOwnsTravel)
+            {
+                scenicRelocation.Reset();
+                Reason = ready ? "Journey owns travel; presenting its current coverage" :
+                    "Journey retains its destination while restoring local coverage";
+                return;
+            }
             if (ready) idleDwell += footage;
             // A loaded region can still fail to produce a picture. The client
             // reports a separate, actual-output recovery deadline; do not add

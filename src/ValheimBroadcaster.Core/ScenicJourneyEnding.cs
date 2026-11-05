@@ -2,24 +2,48 @@ using System;
 
 namespace ValheimBroadcaster.Core;
 
-/// <summary>A finite ending proposed at a journey section's exact endpoint.
-/// Geometry here is an intention only; the adapter must validate the entire
-/// pan, including its near plane and focus, before admitting the section.</summary>
+/// <summary>A safe endpoint refuge, or a deliberate locally observed arrival.
+/// A stationary refuge needs one complete exact-pose check. An arrival pan
+/// needs validation of its whole sweep. Neither proposal grants clearance.</summary>
 public static class ScenicJourneyEnding
 {
     public const int CandidateCount = 5;
     public const double DurationSeconds = 6;
     public const double MaximumPreparationSeconds = 8;
+    public const double StationaryArrivalAngle = 3.05;
+
+    /// <summary>Retain the exact end composition without inventing a decorative
+    /// sweep. A named arrival can use this same view only when its locally
+    /// observed focus is already framed; native pose validation still verifies
+    /// the actual subject and its visibility before admitting the refuge.</summary>
+    public static ScenicShotPlan? Refuge(ScenicShotPlan section, long id,
+        AutonomyPosition? observedArrivalFocus = null, ScenicFeature? arrivalSubject = null)
+    {
+        ValidateSource(section, id, observedArrivalFocus, arrivalSubject);
+        ScenicShotSample end = section.Sample(1);
+        if (observedArrivalFocus.HasValue)
+        {
+            AutonomyPosition focus = observedArrivalFocus.Value;
+            double distance = end.CameraPosition.Distance(focus);
+            if (distance < 2 || distance > 80 || end.CameraPosition.HorizontalDistance(focus) < .75 ||
+                Angle(end.CameraPosition, end.AimPosition, focus) > StationaryArrivalAngle) return null;
+        }
+        try
+        {
+            return ScenicShotPlan.Picture(id, arrivalSubject ?? section.Feature!,
+                arrivalSubject == null ? section.Role : ScenicShotRole.Establish,
+                end.CameraPosition, end.AimPosition, section.FieldOfView, end.ScreenX, end.ScreenY)
+                .WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance);
+        }
+        catch (ArgumentException) { return null; }
+    }
 
     public static ScenicShotPlan? Propose(ScenicShotPlan section, long id, int alternative,
         AutonomyPosition? observedArrivalFocus = null, ScenicFeature? arrivalSubject = null)
     {
-        if (section == null || !section.IsJourney || section.Feature == null)
-            throw new ArgumentException("An admitted journey section is required.", nameof(section));
-        if (id <= 0 || id == section.Id || alternative < 0 || alternative >= CandidateCount)
+        ValidateSource(section, id, observedArrivalFocus, arrivalSubject);
+        if (alternative < 0 || alternative >= CandidateCount)
             throw new ArgumentOutOfRangeException(nameof(alternative));
-        if (arrivalSubject != null && !observedArrivalFocus.HasValue)
-            throw new ArgumentException("An arrival subject needs its locally observed focus.", nameof(observedArrivalFocus));
         ScenicShotSample end = section.Sample(1);
         AutonomyPosition aim;
         if (alternative == 0)
@@ -30,8 +54,8 @@ public static class ScenicJourneyEnding
             double turn = Angle(end.CameraPosition, end.AimPosition, aim);
             // A remote catalogue point is never enough to supply this value.
             // The caller supplies a locally observed arrival subject only.
-            if (distance < 2 || distance > 80 || end.CameraPosition.HorizontalDistance(aim) < .75 ||
-                turn < 3.05 || turn > 12) return null;
+            if (distance < 2 || distance > 80 || end.CameraPosition.HorizontalDistance(aim) < .75 || turn > 12) return null;
+            if (turn <= StationaryArrivalAngle) return Refuge(section, id, observedArrivalFocus, arrivalSubject);
         }
         else
         {
@@ -48,7 +72,7 @@ public static class ScenicJourneyEnding
         {
             // No identity, position, lens or composition jump is hidden in the
             // ending. It belongs to ordinary direction after journey handoff.
-            return ScenicShotPlan.Pan(id, arrivalSubject ?? section.Feature, ScenicShotRole.Establish,
+            return ScenicShotPlan.Pan(id, arrivalSubject ?? section.Feature!, ScenicShotRole.Establish,
                 end.CameraPosition, end.AimPosition, aim, section.FieldOfView,
                 end.ScreenX, end.ScreenY).WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance);
         }
@@ -57,6 +81,16 @@ public static class ScenicJourneyEnding
 
     public static bool AimsAtObservedArrival(ScenicShotPlan ending, AutonomyPosition focus) =>
         ending != null && Angle(ending.Sample(1).CameraPosition, ending.Sample(1).AimPosition, focus) <= 12;
+
+    private static void ValidateSource(ScenicShotPlan section, long id,
+        AutonomyPosition? observedArrivalFocus, ScenicFeature? arrivalSubject)
+    {
+        if (section == null || !section.IsJourney || section.Feature == null)
+            throw new ArgumentException("An admitted journey section is required.", nameof(section));
+        if (id <= 0 || id == section.Id) throw new ArgumentOutOfRangeException(nameof(id));
+        if (arrivalSubject != null && !observedArrivalFocus.HasValue)
+            throw new ArgumentException("An arrival subject needs its locally observed focus.", nameof(observedArrivalFocus));
+    }
 
     private static double Angle(AutonomyPosition origin, AutonomyPosition a, AutonomyPosition b)
     {

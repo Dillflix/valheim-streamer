@@ -19,8 +19,10 @@ public sealed partial class BroadcasterPlugin
             if (!settings.ProceduralPlayers.Value)
             { context?.AddString("Enable broadcast camera procedural before requesting a journey."); return; }
             if (!director.IsEnabled || !observer.Active || observer.Phase != ObserverPhase.Watching ||
-                coverage.Mode != CoverageMode.Scenic || selfTest || probe.Active || remote.Isolated && !remote.Approved)
-            { context?.AddString("Start a protected observer's Scenic coverage before requesting a journey."); return; }
+                (coverage.Preference != CoveragePreference.Auto && coverage.Preference != CoveragePreference.Scenic) ||
+                (coverage.Mode != CoverageMode.Scenic && coverage.Mode != CoverageMode.Recovery) ||
+                selfTest || probe.Active || remote.Isolated && !remote.Approved)
+            { context?.AddString("Select Auto or Scenic mode on a protected observer before requesting a journey; a recovery slate does not prevent departure planning."); return; }
             StopLiveTimelapse("Operator requested a journey");
             settings.ScenicJourneys.Value = true;
             SetHolding(false);
