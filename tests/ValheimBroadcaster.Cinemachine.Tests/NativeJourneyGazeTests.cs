@@ -15,6 +15,7 @@ internal static class NativeJourneyGazeTests
         yield return ("Incremental native gaze verification preserves rejection and acceptance across work slices", IncrementalVerification);
         yield return ("Incremental native gaze verification cannot reuse a replaced or reset path", InvalidatedVerification);
         yield return ("Incremental native gaze verification rejects invalid timing without accepting an incomplete path", InvalidTiming);
+        yield return ("Native journey gaze preserves a smooth outward view when observed terrain terminates its focus rays", ObservedTerrainFocus);
     }
     private static AutonomyPosition P(double x, double y = 12, double z = 0) => new AutonomyPosition((float)x, (float)y, (float)z);
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
@@ -179,6 +180,29 @@ internal static class NativeJourneyGazeTests
             evaluation.Begin(native, duration);
             Check(evaluation.Complete && !evaluation.Accepted && evaluation.CheckedIntervals == 0,
                 "Invalid duration entered or passed native gaze verification");
+        }
+    }
+
+    private static void ObservedTerrainFocus()
+    {
+        var body = new AutonomyPosition[13]; for (int i = 0; i < body.Length; i++) body[i] = P(i * 4);
+        Check(JourneyGazePolicy.TryBuild(body, P(24, 10), 6, null, null, out var aims, out var reason), reason);
+        for (int i = 0; i < aims.Length; i++)
+        {
+            Check(JourneyLandscapeGaze.TryTerminate(body[i], aims[i], true, 14 + Math.Sin(i * Math.PI / 12) * 3,
+                .3, out var observed), "Observed hill did not terminate its travel focus ray");
+            aims[i] = observed;
+        }
+        var plan = ScenicShotPlan.Spatial(22, Feature(), ScenicShotRole.Traverse, body, aims, 61).AsJourney(19, 21, 8);
+        using var native = new ScenicSplinePath(); Check(native.Prepare(plan, 1), "Native observed-landscape route failed");
+        Check(NativeJourneyGaze.WithinRate(native, native.Length / 6), "Terrain termination introduced a fast native gaze turn");
+        for (int i = 0; i <= 256; i++)
+        {
+            var frame = native.Sample(i / 256f);
+            Check(frame.AimPosition.Distance(frame.CameraPosition) > 4 && frame.AimPosition.X > frame.CameraPosition.X,
+                "Interpolated observed landscape gaze collapsed onto the camera or turned backwards");
+            Check(Angle(frame, frame.WithAimPosition(P(frame.CameraPosition.X + 24, frame.CameraPosition.Y - 2))) < 2,
+                "Native focus-range variation changed the purposeful outward view");
         }
     }
 }

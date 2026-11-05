@@ -42,9 +42,9 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
         => BeginPlan(route, epoch, validatedAt, cameraAspect, cameraNearClip, moveObserver, false);
 
     private void BeginPlan(ScenicShotPlan ending, long epoch, float validatedAt,
-        float cameraAspect, float cameraNearClip, bool moveObserver, bool pan)
+        float cameraAspect, float cameraNearClip, bool moveObserver, bool endpoint)
     {
-        if (ending == null || (pan ? !ending.IsPan || ending.IsJourney : !ending.IsJourney) || ending.Feature == null ||
+        if (ending == null || (endpoint ? (!ending.IsPan && !ending.IsPictureOnly) || ending.IsJourney : !ending.IsJourney) || ending.Feature == null ||
             !Finite(cameraAspect) || cameraAspect <= 0 || !Finite(cameraNearClip) || cameraNearClip <= 0 ||
             !Finite(validatedAt) || validatedAt < 0)
             throw new ArgumentException("A finite already validated journey ending and camera format are required.");
@@ -64,6 +64,10 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
             return;
         }
         long sceneEpoch = CameraSpatialScene.Shared.Epoch;
+        if (Plan.IsPictureOnly)
+        {
+            RefreshRefuge(now, sceneEpoch, force); return;
+        }
         if (IsRefreshing && evaluatingEpoch != sceneEpoch)
         { evaluator.Reset(); IsRefreshing = false; retryAt = 0; }
         if (!IsRefreshing)
@@ -98,13 +102,34 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
             complete && evaluator.Accepted ? ScenicRejectionKind.InvalidPlan : evaluator.FailureKind);
     }
 
+    private void RefreshRefuge(float now, long sceneEpoch, bool force)
+    {
+        if (Plan == null || now < retryAt || !force && CanAdmit && now - ValidatedAt < JourneyHandoffPolicy.RefreshProofAfterSeconds) return;
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return;
+        using (work)
+        {
+            if (!ScenicStationaryProof.Check(Plan, visibility, aspect, nearClip, moveCarrier,
+                out ScenicRejectionKind kind, out string reason))
+            { Reject(reason, kind); return; }
+            if (sceneEpoch != CameraSpatialScene.Shared.Epoch)
+            { Reject("Scene changed during Journey refuge renewal", ScenicRejectionKind.Geometry); return; }
+            if (!proof.TryAccept(now))
+            { Reject("Journey refuge validation completed after its renewal window", ScenicRejectionKind.InvalidPlan); return; }
+            // This is the complete proof for an immutable single viewpoint,
+            // not a newly fitted route or sixteen copies of the same sample.
+            Epoch = sceneEpoch; ValidatedAt = now; IsRefreshing = false;
+            Reason = "The exact stationary Journey refuge has current complete scene validation";
+        }
+    }
+
     private static bool IdenticalEnding(ScenicShotPlan original, ScenicShotPlan evaluated)
     {
-        if (original.IsPan != evaluated.IsPan || original.IsJourney != evaluated.IsJourney ||
+        if (original.IsPan != evaluated.IsPan || original.IsPictureOnly != evaluated.IsPictureOnly || original.IsJourney != evaluated.IsJourney ||
             original.Id != evaluated.Id || original.JourneyId != evaluated.JourneyId ||
             original.ContinuationOf != evaluated.ContinuationOf || original.UseNativeSpline != evaluated.UseNativeSpline ||
             original.Feature != evaluated.Feature ||
-            original.FieldOfView != evaluated.FieldOfView || original.DurationSeconds != evaluated.DurationSeconds) return false;
+            original.FieldOfView != evaluated.FieldOfView || original.DurationSeconds != evaluated.DurationSeconds ||
+            original.StableWaterClearance != evaluated.StableWaterClearance) return false;
         // A fitted endpoint alone is not sufficient: preserve every sampled
         // point of the ending that the programme has already committed to use.
         for (int i = 0; i <= 64; i++)

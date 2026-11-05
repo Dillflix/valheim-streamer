@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.49 Journey mission and execution architecture
+
+[Architecture and runtime acceptance](JOURNEY-0.8.49-ARCHITECTURE.md) distinguish mission authority, captured travel playback, physical navigation, picture availability and ordinary Scenic editing. Deterministic coverage includes the mission lifecycle, independent travel clock, observed departure openings, physical stopping reserve, and full automatic-director sequences crossing ordinary dwell and sustained missing-picture recovery. Player acquisition, operator release and already-started native travel remain separate cases. The synchronized trace replay retains the observed failure timing without pretending to replay Unity geometry.
+
+The runtime acceptance is a captured 1,000 m / 6 m/s baseline followed by the reported 5,000 m / 12 m/s request, with shoreline, forest, missing-observation, local-repair, arrival and preemption cases. Completion must follow measured destination/arrival evidence; a short trip or a held endpoint is not a pass. Actual Unity world streaming, visual continuity, rendering and sustained A/V performance are **not established by compilation or policy tests**. Observer protocol remains 3 and no server update is required.
+
 ## 0.8.48 Journey interruption repair
 
 The supplied 0.8.47 footage/trace demonstrates a queued water-clearance contradiction leading directly to a premature Journey ending, plus matched moving footage earning zero measured distance. [Investigation and acceptance cases](JOURNEY-0.8.48-RECOVERY.md) document the evidence and repair. Deterministic tests cover changing water, subsecond travel sections, captured-frame identity, proof revocation/revalidation, queue-prefix retention, scene rebinding and mission/picture ownership. Real-assembly audits verify the water-envelope assumptions against Valheim 1.0.21. These checks do not run the Unity scene: sustained 5,000m travel at 12m/s, actual local repair cuts, forest obstruction and shoreline transitions still require captured in-game acceptance.

@@ -29,10 +29,12 @@ public static class JourneyGazePolicy
 
     public static bool TryBuild(IReadOnlyList<AutonomyPosition> camera, AutonomyPosition firstAim,
         double speed, AutonomyPosition? measuredWaterDirection, AutonomyPosition? observedArrivalFocus,
-        out AutonomyPosition[] aims, out string reason)
+        out AutonomyPosition[] aims, out string reason, double contextYawDegrees = 0, double contextElevation = 0)
     {
         aims = Array.Empty<AutonomyPosition>(); reason = "Invalid journey viewing path";
-        if (camera == null || camera.Count < 3 || camera.Count > 16 || !Finite(speed) || speed < 2 || speed > 12) return false;
+        if (camera == null || camera.Count < 3 || camera.Count > 16 || !Finite(speed) || speed < 2 || speed > 12 ||
+            !Finite(contextYawDegrees) || Math.Abs(contextYawDegrees) > 24 ||
+            !Finite(contextElevation) || Math.Abs(contextElevation) > 8) return false;
         var distance = new double[camera.Count];
         for (int i = 1; i < camera.Count; i++)
         {
@@ -71,6 +73,16 @@ public static class JourneyGazePolicy
             {
                 Vec water = V(measuredWaterDirection.Value).Horizontal;
                 if (water.Length > .001) look += water.Normalized * (lookAhead * .16);
+            }
+            if (!observedArrivalFocus.HasValue)
+            {
+                // The exact incoming aim is retained, then the existing angular
+                // limit develops a locally screened alternative view of travel.
+                // This is not another writer moving the live camera's target.
+                Vec offset = look - position;
+                double yaw = contextYawDegrees * Math.PI / 180;
+                look = position + new Vec(offset.X * Math.Cos(yaw) + offset.Z * Math.Sin(yaw),
+                    offset.Y + contextElevation, offset.Z * Math.Cos(yaw) - offset.X * Math.Sin(yaw));
             }
             Vec desired = (look - position).Normalized;
             double seconds = (distance[i] - distance[i - 1]) / speed;

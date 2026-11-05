@@ -48,7 +48,7 @@ public sealed partial class BroadcasterPlugin
             return;
         }
         scenicEnvironment.SetTimelapse(null);
-        bool available = permitted && live && presentedIdleUsable && presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision && !director.IsHolding && !idle.JourneyActive && !idle.FixtureActive &&
+        bool available = permitted && live && presentedIdleUsable && presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision && !director.IsHolding && !idle.JourneyOwnsTravel && !idle.FixtureActive &&
             cameraFixtures?.PendingPlayback != true;
         if (!liveTimelapse.Opportunity(now, available))
         {
