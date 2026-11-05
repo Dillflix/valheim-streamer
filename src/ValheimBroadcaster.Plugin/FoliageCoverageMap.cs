@@ -21,6 +21,16 @@ internal sealed class FoliageCoverageMap
 
     internal void Invalidate() => Unbounded = true;
 
+    // Cancelling a scan cannot erase newly discovered uncertainty that has
+    // already invalidated its published predecessor. Both maps use the same
+    // published origin; an unexpected mismatch remains explicitly unknown.
+    internal void RetainUnknownFrom(FoliageCoverageMap source)
+    {
+        if (origin != source.origin || source.Unbounded) { Invalidate(); return; }
+        for (int i = 0; i < unknown.Length; i++)
+            if (source.unknown[i] && !unknown[i]) { unknown[i] = true; UnknownCells++; }
+    }
+
     internal void AddUnknown(Bounds bounds)
     {
         if (!FoliageGeometryMath.Valid(bounds)) { Invalidate(); return; }

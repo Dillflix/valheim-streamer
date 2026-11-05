@@ -92,8 +92,36 @@ internal sealed class ScenicFoliageScene
     internal void SetRegion(Vector3 point)
     {
         if (!TargetRoster.Finite(point)) return;
-        if (anchored && (point - origin).sqrMagnitude < 96 * 96) return;
-        if (!scanning) { origin = point; anchored = true; refreshedAt = float.NegativeInfinity; }
+        Retarget(point, "region");
+    }
+
+    private void Retarget(Vector3 point, string authority)
+    {
+        FoliageCatalogueAnchorAction action = FoliageCatalogueAnchorPolicy.Decide(anchored,
+            Vector3.Distance(point, origin), scanning, Radius, ScenicObservationPolicy.DetailRadius);
+        if (action == FoliageCatalogueAnchorAction.Keep) return;
+        Vector3 previous = origin;
+        // Keep completed observations at their measured old origin. A move
+        // cannot convert them into coverage of the destination or turn pending
+        // additions at the old origin back into empty/known space.
+        if (published && scanning) coverage.RetainUnknownFrom(pendingAdditions);
+        origin = point; anchored = true; refreshedAt = float.NegativeInfinity;
+        if (action == FoliageCatalogueAnchorAction.RestartScan)
+        {
+            scanning = supplemental = false;
+            collecting.Clear(); collectingCoverage.Reset(origin); groups.Clear(); seen.Clear();
+            roots.Clear(); traversal.Clear(); sceneHandles.Clear(); nodeRenderers.Clear();
+            pendingAdditions.Reset(published ? publishedOrigin : origin);
+            sceneIndex = rootIndex = totalSteps = 0;
+            // Pending projections must restart against the retained published
+            // inventory; their already completed views remain conservative.
+            Generation++;
+        }
+        if (ScenicTrace.Enabled)
+            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Row("foliage-catalogue-retarget")
+                .Field("authority", authority).Field("action", action.ToString()).Field("generation", Generation)
+                .Field("published", published).Field("retained", renderers.Count)
+                .Field("destinationCoverage", CoverageAt(point)), "previousOrigin", previous), "origin", origin));
     }
     internal void Reset()
     {
@@ -111,8 +139,7 @@ internal sealed class ScenicFoliageScene
         {
             Reset(); origin = anchor; anchored = true; epoch = currentEpoch;
         }
-        if (!scanning && (anchor - origin).sqrMagnitude > 96 * 96)
-        { origin = anchor; refreshedAt = float.NegativeInfinity; }
+        Retarget(anchor, "carrier");
         float now = Time.unscaledTime;
         if (advancedFrame != Time.frameCount) { advancedFrame = Time.frameCount; stepsThisFrame = 0; }
         if (!scanning && now >= refreshedAt && now - refreshedAt < 2) return;
