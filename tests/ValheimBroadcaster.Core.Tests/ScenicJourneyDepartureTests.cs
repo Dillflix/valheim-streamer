@@ -12,6 +12,11 @@ internal static class ScenicJourneyDepartureTests
         yield return ("Operator hold does not consume the active departure preparation budget", HeldDeparture);
         yield return ("An expired departure never gains ownership even if it later reports ready", DepartureExpiry);
         yield return ("A failed departure cannot retry the same seed until its scene or explicit request changes", FreshAttempt);
+        yield return ("Independent Journey departure survives ordinary edits and waits for minimum useful dwell", IndependentCut);
+        yield return ("Ready Journey editorial waiting does not consume computation time or revive an expired departure", ReadyCutWait);
+        yield return ("An unready independent Journey never parks an ordinary endpoint", IndependentEndpoint);
+        yield return ("Journey departure snapshot uses the observed pose rather than prior route geometry or subject envelope", ObservedSnapshot);
+        yield return ("Journey destination eviction is not withdrawal while structural report age and retry evidence remain authoritative", DestinationAge);
     }
 
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
@@ -90,6 +95,75 @@ internal static class ScenicJourneyDepartureTests
             d.Observe(10, 4, true, true, false, true, .016);
             Check(!d.OwnsCoverage, "A late completion revived expired departure work");
         }
+    }
+
+    private static void IndependentCut()
+    {
+        var d = new ScenicJourneyDeparture(); d.BeginIndependent(70, 4);
+        var ordinary = Route(71).WithDuration(16);
+        Check(!ScenicJourneyDeparture.CutReady(ordinary, 2, false), "An unrelated two-second shot could be interrupted");
+        Check(d.Observe(71, 4, false, false, false, true, 2) == ScenicJourneyDepartureState.Preparing,
+            "Ordinary edit cancelled an independent departure proposal");
+        Check(d.Observe(72, 4, false, true, false, true, 1) == ScenicJourneyDepartureState.Ready,
+            "Validated cut required its obsolete seed identity");
+        Check(ScenicJourneyDeparture.CutReady(ordinary, ScenicPacingPolicy.MinimumSeconds(ordinary.Role), false),
+            "Useful ordinary dwell never permitted the cut");
+        Check(d.Observe(72, 4, true, true, false, true, .02) == ScenicJourneyDepartureState.Admitted,
+            "Independent validated departure did not take over");
+        var stale = new ScenicJourneyDeparture(); stale.BeginIndependent(70, 4);
+        Check(stale.Observe(71, 5, true, true, false, true, .01) == ScenicJourneyDepartureState.Abandoned,
+            "Independent cut bypassed scene validity");
+    }
+
+    private static void ReadyCutWait()
+    {
+        var d = new ScenicJourneyDeparture(); d.BeginIndependent(70, 4);
+        d.Observe(70, 4, false, false, false, true, 8);
+        d.Observe(71, 4, false, true, false, true, 9);
+        Check(d.Pending && d.ElapsedSeconds == 8, "Ready editorial dwell consumed route preparation time");
+        // The adapter revokes readiness when either route/ending proof expires.
+        d.Observe(71, 4, false, false, false, true, 4.1);
+        Check(d.State == ScenicJourneyDepartureState.Abandoned, "Revoked proof renewed preparation indefinitely");
+        d.Observe(71, 4, true, true, false, true, .01);
+        Check(!d.OwnsCoverage, "Late validation revived an abandoned departure");
+    }
+
+    private static void IndependentEndpoint()
+    {
+        var d = new ScenicJourneyDeparture(); d.BeginIndependent(70, 4);
+        var director = new ScenicDirector(); director.Accept(Route(70), 0); director.Stage(Route(71));
+        Check(d.Observe(70, 4, true, false, false, true, 1) == ScenicJourneyDepartureState.Preparing && !d.OwnsCoverage,
+            "An unready departure owned an ordinary completed endpoint");
+        director.Accept(director.TakePrepared()!, 1);
+        Check(d.Observe(71, 4, false, false, false, true, 1) == ScenicJourneyDepartureState.Preparing && director.Current?.Id == 71,
+            "Ordinary endpoint could not advance while independent departure prepared");
+        Check(ScenicJourneyDeparture.CutReady(Route(72), 0, true), "An already due replacement could not accept valid Journey coverage");
+    }
+
+    private static void ObservedSnapshot()
+    {
+        var structure = new ScenicFeature("hall", ScenicFeatureKind.Structure,
+            new AutonomyPosition(10, 3, 0), new AutonomyPosition(1, 0, 0), 8, 6, 1,
+            measuredBounds: new PlaceBounds(new AutonomyPosition(2, 0, -4), new AutonomyPosition(18, 6, 4)));
+        var picture = ScenicShotPlan.Picture(15, structure, ScenicShotRole.Detail,
+            new AutonomyPosition(0, 4, -20), structure.Center, 53);
+        var observed = new AutonomyPosition(3, 5, -18);
+        var seed = ScenicJourneyDeparture.Snapshot(picture, observed, structure.Center, 61);
+        Check(seed.Sample(0).CameraPosition.Distance(observed) < .001 && seed.FieldOfView == 61,
+            "Departure ignored the observed camera position/lens");
+        Check(seed.IsPictureOnly && seed.Feature!.MeasuredBounds == null && seed.Feature.Kind == ScenicFeatureKind.Landscape,
+            "New Journey inherited structure framing or pretended its seed was a validated route");
+        Check(!ScenicJourneyDeparture.CutReady(picture, 3.9, true) && !ScenicJourneyDeparture.CutReady(picture, 3.9, false) && ScenicJourneyDeparture.CutReady(picture, 4, false),
+            "Independent availability picture lost its own minimum dwell");
+    }
+
+    private static void DestinationAge()
+    {
+        Check(ScenicJourneyDeparture.DestinationCurrent(true, 10, 900, false), "Static natural destination expired solely because its page was evicted");
+        Check(ScenicJourneyDeparture.DestinationCurrent(false, 400, 199, false), "Unexpired structural observation was treated as withdrawn");
+        Check(!ScenicJourneyDeparture.DestinationCurrent(false, 400, 200, false), "Evicted structure report remained fresh beyond its actual lifetime");
+        Check(!ScenicJourneyDeparture.DestinationCurrent(true, 0, 0, true), "Fresh explicit retry evidence did not revoke the destination");
+        Check(!ScenicJourneyDeparture.DestinationCurrent(true, 0, -1, false), "Clock reversal retained an unverifiable destination");
     }
 
     private static void FreshAttempt()

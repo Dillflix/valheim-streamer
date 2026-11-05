@@ -38,17 +38,18 @@ internal sealed partial class ScenicProduction
     internal string FixtureStatus { get; private set; } = "No camera fixture requested";
     internal bool JourneyActive => journeyOwned && journey.Active && HasUsablePicture &&
         (Plan?.JourneyId == journey.Id || Plan?.Id == journeyExitId);
-    internal string JourneyStatus => journeyStatus + $"; {(departure.Pending && !journeyOwned ? "Preparing (not on air)" : journey.Outcome.ToString())}; measured {journey.TravelMetres:F0}/{journey.TargetMetres:F0}m" +
+    internal string JourneyStatus => journeyStatus + $"; {(departure.Pending && !journeyOwned ? "Preparing (not on air)" : requestedJourney ? "Requested (not on air)" : journey.Outcome.ToString())}; measured {journey.TravelMetres:F0}/{journey.TargetMetres:F0}m" +
         $"; destination {journey.Itinerary?.Description ?? "not selected"}; route progress {journey.RouteProgressMetres:F0}m; arrival shown {journey.ArrivalShownSeconds:F1}s" +
         $"; displacement {journey.DisplacementMetres:F0}m; objective advance {journey.ObjectiveAdvanceMetres:F0}m; cruise {journey.CruiseSpeed:F1}m/s" +
-        $"; achieved {journey.AchievedMetresPerSecond:F1}m/s; shown {journey.ShownSeconds:F1}s; queued {journeyQueue.Count}; ahead {journeyPlanner.Reason}";
+        $"; achieved {journey.AchievedMetresPerSecond:F1}m/s; shown {journey.ShownSeconds:F1}s; queued {journeyQueue.Count}; ahead {journeyPlanner.Reason}; selection {journeySelectionEvidence}";
     internal string RequestJourney()
     {
         if (journeyOwned) return JourneyStatus;
         requestedJourney = true; journeyRequestExpiresAt = Time.unscaledTime + 90; nextJourneyAt = 0;
         if (!journey.Active) departure.Reset();
         else { manualJourney = true; requestedJourney = false; }
-        return journeyStatus = "Journey requested; awaiting a validated departure from a readable moving shot (up to 90 seconds)";
+        journeyStatus = "Journey requested; preparing an independently validated departure (up to 90 seconds)";
+        nextJourneyWaitingTrace = 0; TraceJourney("request"); return journeyStatus;
     }
     internal void StopJourney()
     { FinishJourney("Journey stopped; resume ordinary local scenery", ScenicJourneyOutcome.Interrupted); }
@@ -126,8 +127,12 @@ internal sealed partial class ScenicProduction
     private ScenicShotPlan? testing, best;
     private bool searching, planning, trimmed, elevated, forceReplacement, revalidating, deadlineHandled;
     private string? testingKey;
-    private int attempts, accepted, sweep, sections, elevations;
-    private double bestScore;
+    private int attempts, sweep, sections, elevations;
+    private readonly ScenicSearchComparison comparison = new ScenicSearchComparison();
+    private int searchCurrentIndex;
+    private bool developingSearch;
+    private string comparisonMode = "idle", comparisonEnd = "not started", lastComparison = "none";
+    private float nextComparisonTrace;
     private float retryAt, preparedAt, proposed, bestValidatedAt;
     private float surveyRefreshAt;
     private bool refreshingSurvey;
@@ -157,8 +162,8 @@ internal sealed partial class ScenicProduction
     private string RecoveryStatus => recovery.Active ?
         $"; no usable idle picture {recovery.ElapsedSeconds:F1}s; " +
         (recovery.Expired ? "local recovery budget exhausted" : $"recovery budget {recovery.RemainingSeconds:F1}s") : "";
-    internal string SearchStatus => (!survey.Complete ? survey.Diagnostics :
-        Reason + "; routes " + attempts + ", accepted " + accepted + ", clear sections " + sections +
+    internal string SearchStatus => (!journeyOwned && (ManualJourneyPending || departure.Pending) ? "Journey: " + journeyStatus + "; " : "") + (!survey.Complete ? survey.Diagnostics :
+        Reason + "; " + ComparisonStatus + "; salvage attempts " + sections +
         ", canopy alternatives " + elevations + "; last rejection " + lastRejection +
         (planning ? "; " + spatial.Reason : "")) + RecoveryStatus;
     internal int RejectedViews { get; private set; }
@@ -167,7 +172,7 @@ internal sealed partial class ScenicProduction
         $"shot {Plan?.Id ?? 0}; progress {(Plan?.IsPictureOnly == true ? 0 : director.Progress):P0}; shown {ShownSeconds:F1}/{Plan?.DurationSeconds ?? 0:F1}s; " +
         $"independent picture {Plan?.IsPictureOnly == true}; settled coverage {pictures.TotalPictureSeconds:F1}s; content exhausted {ContentExhausted}; " +
         $"lens {Plan?.FieldOfView ?? 0:F0}; blocked {director.BlockedSeconds:F1}s; staged {director.Prepared?.Id ?? 0}; " +
-        $"search {Searching}, routes {attempts}, accepted {accepted}, rejected {RejectedViews}; last rejection {lastRejection}; " +
+        $"search {Searching}; {ComparisonSummary}; last comparison: {lastComparison}; rejected {RejectedViews}; last rejection {lastRejection}; " +
         $"recovery exhausted {RecoveryExhausted}{RecoveryStatus}; {spatial.Diagnostics}; {survey.Diagnostics}; " +
         PlaceSurvey.Shared.Diagnostics + "; " + CameraSpatialScene.Shared.Diagnostics + "; destination: " + DestinationSubjectStatus + "; " + JourneyStatus + "; " + FixtureStatus;
 
@@ -194,6 +199,7 @@ internal sealed partial class ScenicProduction
         }
         // A subject change invalidates only unshown preparation. A readable
         // current picture can remain on air while its purposeful replacement is prepared.
+        CancelComparison("preparation invalidated");
         director.TakePrepared(); testing = best = null; searching = planning = false;
         evaluator.Reset(); spatial.Reset(); subjectRetry.Clear(); retryAt = 0;
         if (Plan != null && destinationSubject.Prioritize) director.RequestEdit("Preparing coverage of the selected destination");
@@ -211,7 +217,8 @@ internal sealed partial class ScenicProduction
         usingIndependentPicture = false; motionPlanId = 0; lastMotionProgress = 0;
         HasRegion = searching = planning = trimmed = elevated = forceReplacement = RecoveryExhausted = hasSettings = revalidating = deadlineHandled = false;
         HasUsablePicture = false;
-        testing = best = null; attempts = accepted = sweep = RejectedViews = 0;
+        testing = best = null; attempts = sweep = RejectedViews = 0;
+        comparison.Reset(); comparisonMode = "idle"; comparisonEnd = "not started"; lastComparison = "none";
         sections = elevations = 0;
         retryAt = preparedAt = proposed = 0; lastRejection = "none"; Reason = "Awaiting scenic region";
         bestEpoch = preparedEpoch = 0;
@@ -263,6 +270,7 @@ internal sealed partial class ScenicProduction
         {
             lastPresentedPlan = shown;
             lastPresentedFocus = actualFocus!.Value;
+            RememberJourneyDeparturePose(shown, actualCapture, lastPresentedFocus);
             liveSceneReadiness.Presented(shown.Id, lastPresentedFocus);
             if (!shown.IsPictureOnly)
             {
@@ -400,7 +408,7 @@ internal sealed partial class ScenicProduction
         if (allowActivate && recovery.Expired && !deadlineHandled)
         {
             deadlineHandled = true;
-            return FinishSearch(held, allowActivate);
+            return FinishSearch(held, allowActivate, "picture recovery deadline");
         }
         if (!hasSettings || plannedFov != settings.FieldOfView.Value ||
             plannedComposition != settings.DeliberateComposition.Value || plannedNative != settings.NativeSplineDolly.Value)
@@ -410,6 +418,7 @@ internal sealed partial class ScenicProduction
                 .Field("dynamic", settings.DynamicShots.Value).Field("motion", settings.ShotMotion.Value));
             hasSettings = true; plannedFov = settings.FieldOfView.Value;
             plannedComposition = settings.DeliberateComposition.Value; plannedNative = settings.NativeSplineDolly.Value;
+            CancelComparison("preparation invalidated");
             director.TakePrepared(); testing = best = null; searching = planning = false;
             evaluator.Reset(); spatial.Reset(); subjectRetry.Clear(); retryAt = 0;
         }
@@ -428,27 +437,36 @@ internal sealed partial class ScenicProduction
             // again before admission rather than trusting stale loaded objects.
             if (NeedsReplacement && Time.unscaledTime - preparedAt <= 6f && preparedEpoch == CameraSpatialScene.Shared.Epoch)
                 return Activate(staged, preparedEpoch);
-            testing = staged; revalidating = true; trimmed = elevated = false; searching = true; attempts = 0; accepted = 0; best = null; bestScore = double.NegativeInfinity;
+            testing = staged; revalidating = true; trimmed = elevated = false; searching = true; attempts = 0; best = null;
             planning = false; spatial.Reset(); testingKey = null;
             sections = elevations = 0;
+            BeginComparison("revalidation"); comparison.PlannedRoute();
             BeginEvaluation(settings, moveCarrier); return false;
         }
         if (!searching && director.Prepared == null && (NeedsReplacement || director.ShouldPrefetch || director.ElapsedSeconds >= 2) && Time.unscaledTime >= retryAt)
         {
             journeyOrdinarySearchOrigin = origin;
-            searching = true; revalidating = false; testing = best = null; attempts = accepted = 0; bestScore = double.NegativeInfinity;
+            searching = true; revalidating = false; testing = best = null; attempts = 0;
             planning = false; spatial.Reset(); CaptureSubjects();
+            searchCurrentIndex = CurrentFeatureIndex();
+            developingSearch = HasUsablePicture && !director.BlocksMovement;
             sections = elevations = 0;
+            BeginComparison(allowActivate && !HasUsablePicture ? "acquisition" : "comparison");
             Reason = NeedsReplacement ? "Planning a readable moving shot" : "Preparing the next environmental shot";
         }
         if (!searching) return false;
+        RefreshComparisonCandidates();
+        TraceComparison("progress");
+        string? stopReason = comparison.FinishReason(Time.unscaledTime,
+            !allowActivate || HasUsablePicture, allowActivate && !held &&
+            (forceReplacement || !usingIndependentPicture && director.BlocksMovement), planning || testing != null);
+        if (stopReason != null) return FinishSearch(held, allowActivate, stopReason);
         if (testing == null)
         {
             if (!planning)
             {
-                if (subjects.Count == 0 || ScenicCandidateSchedule.ComparisonComplete(attempts, best != null) ||
-                    attempts >= ScenicCandidateSchedule.SpatialAttemptLimit(subjects, CurrentFeatureIndex(), sweep))
-                    return FinishSearch(held, allowActivate);
+                if (subjects.Count == 0 || attempts >= ScenicCandidateSchedule.SpatialAttemptLimit(subjects, searchCurrentIndex, sweep))
+                    return FinishSearch(held, allowActivate, "schedule exhausted");
                 if (!BeginSpatialCandidate(settings, moveCarrier, recovery.Active && allowActivate)) return false;
             }
             if (recovery.Active && allowActivate) spatial.PromoteUrgent();
@@ -461,8 +479,9 @@ internal sealed partial class ScenicProduction
                 RejectedViews++; lastRejection = spatial.Reason; RememberFailure();
                 return admittedPicture;
             }
+            comparison.PlannedRoute();
             if (!director.CanOffer(testing))
-            { RejectedViews++; lastRejection = "Measured route repeats completed coverage"; testing = null; RememberFailure(); return false; }
+            { comparison.Skip(); RejectedViews++; lastRejection = "Measured route repeats completed coverage"; testing = null; RememberFailure(); return false; }
             trimmed = elevated = false;
             BeginEvaluation(settings, moveCarrier);
         }
@@ -471,14 +490,14 @@ internal sealed partial class ScenicProduction
         // route for ranking, trimming, staging and playback, never the original
         // below-surface proposal that was used to begin the search.
         testing = evaluator.EvaluatedPlan ?? testing;
+        comparison.EvaluatedRoute(testing!.Id, evaluator.Accepted);
         if (evaluator.Accepted)
         {
             if (director.CanOffer(testing!))
             {
-                accepted++;
                 double score = director.Rank(testing!, evaluator.Score) + (testing!.Feature == null ? 0 : destinationSubject.Priority(testing.Feature));
-                if (score > bestScore)
-                { best = testing; bestScore = score; bestValidatedAt = Time.unscaledTime; bestEpoch = evaluator.SceneEpoch; }
+                comparison.Offer(testing!, score, evaluator.SceneEpoch, Time.unscaledTime);
+                RefreshComparisonCandidates();
             }
             else { RejectedViews++; lastRejection = "Validated route repeats completed feature coverage"; }
         }
@@ -517,8 +536,10 @@ internal sealed partial class ScenicProduction
             RememberFailure();
         }
         testing = null;
-        if (best != null && (recovery.Active && allowActivate || Plan == null || revalidating || ScenicCandidateSchedule.ComparisonComplete(attempts, true)))
-            return FinishSearch(held, allowActivate);
+        stopReason = comparison.FinishReason(Time.unscaledTime, !allowActivate || HasUsablePicture,
+            allowActivate && !held && (forceReplacement || !usingIndependentPicture && director.BlocksMovement), planning || testing != null);
+        if (stopReason != null) return FinishSearch(held, allowActivate, stopReason);
+        if (comparisonMode == "revalidation") return FinishSearch(held, allowActivate, "revalidation failed");
         revalidating = false;
         return false;
     }
@@ -557,6 +578,7 @@ internal sealed partial class ScenicProduction
         director.TakePrepared(); director.Accept(selected, Time.unscaledTime); readiness.Reset();
         fixturePlanId = selected.Id; requestedFixture = null; fixtureEvaluating = false;
         usingIndependentPicture = false; forceReplacement = false; proposed = 0;
+        CancelComparison("fixture admitted");
         searching = planning = false; testing = best = null; evaluator.Reset(); spatial.Reset();
         FixtureStatus = "Saved camera fixture admitted after full current-scene validation";
         changed = true; return true;
@@ -578,10 +600,11 @@ internal sealed partial class ScenicProduction
 
     private bool BeginSpatialCandidate(BroadcastSettings settings, bool moveCarrier, bool urgent)
     {
-        ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.SelectSpatial(subjects, CurrentFeatureIndex(), sweep, attempts++,
-            developing: !urgent && HasUsablePicture && !director.BlocksMovement);
+        comparison.Schedule();
+        ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.SelectSpatial(subjects, searchCurrentIndex, sweep, attempts++,
+            developing: developingSearch);
         ScenicFeature feature = subjects[candidate.FeatureIndex];
-        if (!director.CanDevelopSubject(feature)) return false;
+        if (!director.CanDevelopSubject(feature)) { comparison.Skip(); return false; }
         ScenicShotRole preferred = urgent ? director.PreferredRole(feature) : director.PreferredNextRole(feature);
         bool anticipatedDevelopment = !urgent && director.Current?.FeatureId == feature.Id &&
             director.Current.Role == ScenicShotRole.Establish && director.ElapsedSeconds >= 2 && preferred != ScenicShotRole.Establish;
@@ -590,7 +613,7 @@ internal sealed partial class ScenicProduction
             preferred = ScenicShotRole.Establish;
         ScenicShotRole role = ScenicCandidateSchedule.Role(feature, preferred, candidate.RoleIndex);
         testingKey = feature.Id + "/" + role;
-        if (subjectRetry.TryGetValue(testingKey, out float retry) && Time.unscaledTime < retry) return false;
+        if (subjectRetry.TryGetValue(testingKey, out float retry) && Time.unscaledTime < retry) { comparison.Skip(); return false; }
         Camera? camera = Camera.main;
         float aspect = camera ? camera.aspect : Screen.height > 0 ? (float)Screen.width / Screen.height : 16f / 9f;
         float nearClip = camera ? camera.nearClipPlane : .3f;
@@ -763,9 +786,72 @@ internal sealed partial class ScenicProduction
         float nearClip = camera ? camera.nearClipPlane : .3f;
         evaluator.Begin(testing!, planningVisibility, aspect, nearClip, moveCarrier);
     }
-    private bool FinishSearch(bool held, bool allowActivate)
+    private string ComparisonSummary => $"{comparisonMode}: scheduled {comparison.Scheduled}, skipped {comparison.Skipped}, planned {comparison.Planned}, " +
+        $"evaluated {comparison.Evaluated} ({comparison.EvaluationPasses} passes), validated {comparison.Validated}, eligible {comparison.Eligible}, retained {comparison.Retained}/3; " +
+        (searching ? (Time.unscaledTime < comparison.Deadline ? $"comparison budget {comparison.Deadline - Time.unscaledTime:F1}s" :
+            $"finishing pending evaluation; hard limit {Math.Max(0, comparison.DrainDeadline - Time.unscaledTime):F1}s") : "ended: " + comparisonEnd);
+    private string ComparisonStatus => ComparisonSummary +
+        (comparisonMode == "revalidation" ? "; prior comparison: " + lastComparison : "");
+
+    private void BeginComparison(string mode)
     {
-        searching = planning = revalidating = false; testing = null; evaluator.Reset(); spatial.Reset(); sweep = (sweep + 1) % 8;
+        comparisonMode = mode; comparisonEnd = "running"; nextComparisonTrace = 0;
+        comparison.Begin(Time.unscaledTime, mode == "comparison" ? 6 : 10,
+            mode == "comparison" ? null : mode, pendingGraceSeconds: mode == "comparison" ? 4 : 0);
+        TraceComparison("start");
+    }
+    private void CancelComparison(string reason)
+    {
+        bool active = searching && comparison.Active;
+        searching = false; comparisonEnd = reason;
+        if (active)
+        {
+            TraceComparison("cancel");
+            if (comparisonMode != "revalidation") lastComparison = ComparisonSummary;
+        }
+        comparison.End(); best = null;
+    }
+    private void RefreshComparisonCandidates()
+    {
+        if (!searching || !comparison.Active) { best = null; return; }
+        long epoch = CameraSpatialScene.Shared.Epoch;
+        comparison.Prune(entry => entry.Epoch == epoch && entry.Plan.Id != director.Current?.Id && director.CanOffer(entry.Plan) &&
+            (!journeyOwned || !Player.m_localPlayer || WithinJourneyHorizon(entry.Plan, Player.m_localPlayer.transform.position)));
+        best = null;
+        // Prefer current validation when available. An older best may still be
+        // staged, but keeps its original timestamp and must be revalidated.
+        foreach (ScenicSearchComparison.Entry entry in comparison.Entries)
+        {
+            bool fresh = Time.unscaledTime >= entry.ObservedAt && Time.unscaledTime - entry.ObservedAt <= 6;
+            if (best != null && (!fresh || Time.unscaledTime - bestValidatedAt <= 6)) continue;
+            best = entry.Plan; bestEpoch = entry.Epoch; bestValidatedAt = (float)entry.ObservedAt;
+        }
+    }
+    private void TraceComparison(string action)
+    {
+        if (!ScenicTrace.Enabled || action == "progress" && Time.unscaledTime < nextComparisonTrace) return;
+        nextComparisonTrace = Time.unscaledTime + 1;
+        ScenicTrace.Record(ScenicTrace.Row("scenic-search").Field("action", action).Field("mode", comparisonMode)
+            .Field("scheduled", comparison.Scheduled).Field("skipped", comparison.Skipped).Field("planned", comparison.Planned)
+            .Field("evaluated", comparison.Evaluated).Field("evaluationPasses", comparison.EvaluationPasses)
+            .Field("validated", comparison.Validated).Field("eligible", comparison.Eligible).Field("retained", comparison.Retained)
+            .Field("salvageAttempts", sections).Field("canopyAlternatives", elevations)
+            .Field("startedAt", comparison.StartedAt).Field("deadline", comparison.Deadline).Field("drainDeadline", comparison.DrainDeadline)
+            .Field("reason", comparisonEnd).Field("selected", best?.Id ?? 0));
+    }
+
+    private bool FinishSearch(bool held, bool allowActivate, string endReason)
+    {
+        RefreshComparisonCandidates();
+        bool active = searching && comparison.Active;
+        comparisonEnd = endReason; searching = false;
+        if (active)
+        {
+            TraceComparison("finish");
+            if (comparisonMode != "revalidation") lastComparison = ComparisonSummary;
+        }
+        comparison.End();
+        planning = revalidating = false; testing = null; evaluator.Reset(); spatial.Reset(); sweep = (sweep + 1) % 8;
         if (best != null && bestEpoch != CameraSpatialScene.Shared.Epoch)
         { best = null; retryAt = 0; Reason = "Observed geometry changed; replan the prepared route"; return false; }
         if (best == null)
@@ -774,7 +860,7 @@ internal sealed partial class ScenicProduction
             RecoveryExhausted = !HasUsablePicture && (recovery.Expired || NeedsReplacement);
             Reason = HasUsablePicture ? "Retaining a readable picture while developing fresh local coverage; " + lastRejection :
                 "No fully readable moving route; " + lastRejection;
-            retryAt = Time.unscaledTime + 3f;
+            retryAt = Time.unscaledTime + (comparisonMode == "revalidation" ? 0 : 3f);
             return false;
         }
         ScenicShotPlan selected = best; best = null;

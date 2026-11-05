@@ -226,7 +226,7 @@ namespace ValheimBroadcaster.Core
             bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
             bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool? scenicFootageReady = null, double? scenicFootageDelta = null,
             bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false,
-            bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto)
+            bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto, bool scenicJourneyPending = false)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (scenicFootageDelta.HasValue) Time(scenicFootageDelta.Value, nameof(scenicFootageDelta));
@@ -425,12 +425,12 @@ namespace ValheimBroadcaster.Core
             }
             TickScenery(now, footage, players.Count, regions, currentPosition, idleShotReady,
                 idleSceneAvailable ?? idleShotReady, idleSearchExpired, scenicFootageReady ?? idleShotReady, scenicFootageDelta.HasValue ? Math.Min(footage, scenicFootageDelta.Value) : footage,
-                scenicContentExhausted, scenicJourneyActive, scenicPreparationActive, scenicEditBoundary);
+                scenicContentExhausted, scenicJourneyActive, scenicPreparationActive, scenicEditBoundary, scenicJourneyPending);
         }
 
         private void TickScenery(double now, double footage, int connected, IReadOnlyList<ScenicRegion> regions,
             AutonomyPosition currentPosition, bool ready, bool available, bool searchExpired, bool scenicPicture, double scenicFootage,
-            bool contentExhausted, bool journeyActive, bool preparationActive, bool editBoundary)
+            bool contentExhausted, bool journeyActive, bool preparationActive, bool editBoundary, bool journeyPending)
         {
             // Useful footage advances dwell. A live picture recovering its
             // composition is not evidence that its loaded region is unavailable.
@@ -478,6 +478,11 @@ namespace ValheimBroadcaster.Core
             // or the missing-picture/scene exhaustion evaluated here.
             if (preparationActive)
             { scenicRelocation.Reset(); Reason = "Preparing the explicitly requested camera fixture within its bounded acquisition deadline"; return; }
+            // An explicit Journey request has a bounded adapter-owned lifetime.
+            // Keep a readable departure area during preparation; never use this
+            // intent as authority over player acquisition or picture recovery.
+            if (journeyPending && ready && !exhausted)
+            { scenicRelocation.Reset(); Reason = "Preparing the operator-requested Journey while retaining readable Scenic coverage"; return; }
             if (journeyActive && ready && !exhausted)
             { scenicRelocation.Reset(); Reason = "Following a continuous scenic journey or camera fixture"; return; }
             if (idleDwell < RegionSeconds && !exhausted && !seekFreshContent) { scenicRelocation.Reset(); return; }

@@ -1,6 +1,8 @@
-# Scenic journeys, camera fixtures and timelapse — 0.8.42
+# Scenic journeys, camera fixtures and timelapse — 0.8.46
 
-Version 0.8.42 replaces the projected Journey endpoint and inherited view offset with a selected catalogue destination, an observed itinerary and independently directed forward gaze. Each admitted section includes a prepared six-second ending; ordinary Scenic preparation runs concurrently. Actual captured-frame identity, position, progress and time now drive travel and arrival evidence. See [the recorded failure, new contract and limits](SCENIC-0.8.42-JOURNEYS.md).
+Version 0.8.46 corrects sparse-catalogue selection and independent departure scheduling; see [evidence and current behavior](SCENIC-0.8.46-PLANNING.md).
+
+Version 0.8.42 replaced the projected Journey endpoint and inherited view offset with a selected catalogue destination, an observed itinerary and independently directed forward gaze. Each admitted section includes a prepared six-second ending; ordinary Scenic preparation runs concurrently. Actual captured-frame identity, position, progress and time now drive travel and arrival evidence. See [the recorded failure, new contract and limits](SCENIC-0.8.42-JOURNEYS.md).
 
 The ordinary-shot pacing, context-qualified site sequences, fixture schema 3 and matching native-arrival preparation introduced in 0.8.41 remain in place. See [the ordinary Scenic quality changes](SCENIC-0.8.41-QUALITY.md).
 
@@ -24,7 +26,7 @@ The destination catalogue supplies landscape/coast regions and available structu
 
 Execution sections remain locally bounded, generally **32–64 m** with speed. Up to two successors can prepare ahead while the protected loading anchor supports the accepted route. The anchor may lead up to 24 m only where its carrier geometry is already loaded; this does not permit a camera jump or teleport through an unknown corridor. Native distance-based camera movement follows the itinerary, while an independently evaluated aim path looks forward through turns and can develop toward an observed arrival subject. Continuations retain the exact accepted seam and lens. A section boundary is not an editorial cut.
 
-**Departure preparation does not own the picture.** Automatic journeys require eligible shown Scenic coverage, an ordinary prepared successor and a current catalogue. Preparation runs near the existing shot's end, retaining ordinary movement and recovery priorities. Admission requires the first section and its independently validated ending. Departure deliberately reframes with a validated cut; it does not inherit a backward-facing ordinary composition. Changed or failed preparation leaves ordinary coverage in charge.
+**Departure preparation does not own the picture.** Journeys require readable Scenic coverage and a current catalogue. Their own departure prepares while ordinary movement and recovery continue; it does not require an ordinary prepared successor or the old shot's endpoint. A connected metadata guide is preferred when available; sparse catalogues can supply a bearing to a real known destination, with every local corridor still independently validated. Admission requires the first section and its independently validated ending. Departure deliberately reframes with a validated cut; it does not inherit a backward-facing ordinary composition. Changed or failed preparation leaves ordinary coverage in charge.
 
 **Every admitted section has a prepared ending.** When a successor is not ready before the braking point, the director commits to that ending. A late successor cannot cancel braking and create a speed surge. The six-second ending is validated with the section before admission, rather than searched for after motion runs out. Ordinary survey and replacement planning continue near the live carrier during Journey playback. Scene invalidation and player takeover retain priority; a prepared ending is not permission to display an invalid picture.
 
@@ -42,7 +44,7 @@ broadcast journey off
 broadcast journey on
 ```
 
-`start` requests a journey from protected-observer Scenic coverage for up to 90 seconds of unheld operation; it does not cut immediately or bypass validation. An unsuccessful departure can leave the request pending for another eligible shot within that bound. `stop` ends the current request and resumes ordinary direction; `off` also disables future automatic journeys. Distance and speed changes apply to the **next** journey. For compatibility, `broadcast journey duration <seconds>` sets desired itinerary scale to seconds multiplied by the current cruise speed, provided the result is 256–5,000 m. It no longer establishes a hard shot-duration goal.
+`start` requests a journey from protected-observer Scenic coverage for up to 90 seconds of unheld operation; it does not cut immediately or bypass validation. An unsuccessful departure can leave the request pending for another validated departure within that bound. `stop` ends the current request and resumes ordinary direction; `off` also disables future automatic journeys. Distance and speed changes apply to the **next** journey. For compatibility, `broadcast journey duration <seconds>` sets desired itinerary scale to seconds multiplied by the current cruise speed, provided the result is 256–5,000 m. It no longer establishes a hard shot-duration goal.
 
 | Configuration | Default | Purpose |
 | --- | --- | --- |
@@ -50,7 +52,7 @@ broadcast journey on
 | `Idle.JourneyDistanceMetres` | `1000` | Desired known-destination itinerary scale, 256–5,000 m |
 | `Idle.JourneyCruiseMetresPerSecond` | `6` | Independent cruise speed, 2–12 m/s |
 
-**Configuration migration:** preserve the existing configuration file. The old `Idle.ScenicJourneySeconds` and `Idle.ScenicJourneySpeed` entries are no longer read. New keys give existing installations the new defaults instead of silently retaining the previous 1 m/s speed. An old `Camera.ShotMotion` value does not scale admitted journey cruising. The ordinary seed keeps its existing movement setting while departure is pending: at `ShotMotion=0`, the request waits for a moving seed rather than overriding that setting. `Camera.DynamicShots=false` still disables moving journeys.
+**Configuration migration:** preserve the existing configuration file. The old `Idle.ScenicJourneySeconds` and `Idle.ScenicJourneySpeed` entries are no longer read. New keys give existing installations the new defaults instead of silently retaining the previous 1 m/s speed. An old `Camera.ShotMotion` value does not scale admitted journey cruising. Ordinary coverage keeps its existing movement setting while departure is pending; independent Journey cruise is not multiplied by `ShotMotion`. `Camera.DynamicShots=false` still disables moving journeys.
 
 ## Correct motion and editorial clocks
 

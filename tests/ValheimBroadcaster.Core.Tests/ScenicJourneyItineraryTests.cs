@@ -7,7 +7,13 @@ internal static class ScenicJourneyItineraryTests
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
         yield return ("Journey destination is an identified observed place rather than a projected distance point", KnownDestination);
-        yield return ("A Journey cannot invent a distant endpoint or bridge a disconnected metadata catalogue", NoInventedDestination);
+        yield return ("A Journey cannot invent a distant endpoint absent from the destination catalogue", NoInventedDestination);
+        yield return ("Sparse destination metadata can guide a Journey without pretending to certify the corridor", SparseDestination);
+        yield return ("A full sparse paged catalogue does not require a fabricated chain of intermediate destinations", SparseCatalogue);
+        yield return ("Destination selection reports exact freshness cooldown and scale exclusions", SelectionEvidence);
+        yield return ("Sparse guidance still respects recent destinations and forward continuity", SparseExclusions);
+        yield return ("Destination bearing guidance never credits unobserved travel or arrival", SparseNoCredit);
+        yield return ("Independent departure can frame a known rear destination while preserving a forward preference", IndependentDepartureHeading);
         yield return ("Journey selection rejects stale destination reports and active destination cooldowns", FreshDestination);
         yield return ("Natural and coastal Journey destinations remain competitive with many structure candidates", LandscapeVariety);
         yield return ("Journey destination memory prevents immediate repeated arrivals", RecentDestination);
@@ -50,11 +56,79 @@ internal static class ScenicJourneyItineraryTests
     private static void NoInventedDestination()
     {
         foreach (var regions in new IReadOnlyList<ScenicRegion>[] { Array.Empty<ScenicRegion>(),
-            new[] { Region("near", 40) }, new[] { Region("near", 80), Region("island", 1000) } })
+            new[] { Region("near", 40) }, new[] { Region("near", 80), Region("too-far", 2000) } })
         {
             Check(!ScenicJourneyItinerary.TrySelect(P(0), P(1), regions, null, 1000, 10, null, out var route, out _) && route == null,
-                "Unknown or disconnected destination was fabricated");
+                "Unknown or out-of-scale destination was fabricated");
         }
+    }
+    private static void SparseDestination()
+    {
+        var route = Select(new[] { Region("near", 80), Region("known-coast", 1000, landscape: ScenicLandscape.Coast) }, 1000);
+        Check(route.Destination.Id == "known-coast" && !route.UsesConnectedObservations,
+            "Sparse destination was rejected or falsely described as connected observations");
+        Check(route.Waypoints.Count == 2 && route.WaypointIds[1] == "known-coast", "Invented intermediate metadata");
+        Near(route.RouteMetres, 1000); Near(route.SteeringGoal(P(0)).X, 48);
+        Check(Select(Line()).UsesConnectedObservations, "Available connected guidance was discarded");
+    }
+    private static void SparseCatalogue()
+    {
+        // Discovery pages contain only selected interesting destinations, not
+        // every generated zone. Its 1024-entry cache may contain no local chain.
+        var regions = new List<ScenicRegion> { Region("known-coast", 1000, landscape: ScenicLandscape.Coast) };
+        for (int i = 1; i < 1024; i++) regions.Add(Region("distant-" + i, 4000 + i * 4, i % 7 * 64));
+        Check(ScenicJourneyItinerary.TrySelect(P(0), P(1), regions, null, 1000, 10, null,
+            out var route, out _, out var evidence), "Paged destination catalogue still required unprovided topology");
+        Check(route != null && !route.UsesConnectedObservations && route.Destination.Id == "known-coast", "Lost actual destination");
+        Check(evidence.CatalogueRegions == 1024 && evidence.UsableObservations == 1 && evidence.RadiusExcluded == 1023 &&
+            evidence.NearDeparture == 0 && evidence.ConnectedObservations == 0 && evidence.BearingCandidates == 1,
+            "Selection evidence did not distinguish catalogue size from route connectivity");
+    }
+    private static void SelectionEvidence()
+    {
+        var sites = new Dictionary<string, WorldInterestSite> { ["headland"] = Site(age: 600) };
+        var regions = new[] { Region("headland", 1000), Region("retry", 900, after: 11),
+            Region("recent", 1000), Region("behind", -1000), Region("near", 80), Region("far", 2000) };
+        Check(!ScenicJourneyItinerary.TrySelect(P(0), P(1), regions, sites, 1000, 10, new[] { "recent" },
+            out var route, out string reason, out var evidence) && route == null, "Ineligible sparse destination was selected");
+        Check(evidence.StaleExcluded == 1 && evidence.CooldownExcluded == 1 && evidence.RadiusExcluded == 1 &&
+            evidence.RecentExcluded == 1 && evidence.HeadingExcluded == 1 && evidence.ScaleExcluded == 1,
+            "Rejection causes were conflated");
+        Check(reason.Contains("stale 1") && reason.Contains("bearing destinations 0"), "Failure omitted measured exclusion evidence");
+    }
+    private static void SparseExclusions()
+    {
+        foreach (var regions in new[] { new[] { Region("behind", -1000) }, new[] { Region("recent", 1000) },
+            new[] { Region("cooldown", 1000, after: 11) } })
+            Check(!ScenicJourneyItinerary.TrySelect(P(0), P(1), regions, null, 1000, 10, new[] { "recent" },
+                out _, out _), "Sparse guidance bypassed destination eligibility");
+    }
+    private static void SparseNoCredit()
+    {
+        var route = Select(new[] { Region("known", 1000) }, 1000);
+        var policy = new ScenicJourneyPolicy(); policy.Start(1, route, 6);
+        Near(policy.TravelMetres, 0); Near(policy.ShownSeconds, 0);
+        Check(!policy.AtArrival && !policy.TargetReached && policy.Windows == 0, "Intended route claimed execution or arrival");
+        var plan = Plan();
+        policy.Observe(plan, 1, .5, false, false, P(1000));
+        policy.ObserveArrival(1, false, false, P(1000), true);
+        Near(policy.TravelMetres, 0); Check(!policy.TargetReached, "Unshown destination falsely completed the sparse journey");
+    }
+    private static void IndependentDepartureHeading()
+    {
+        var behind = Region("known-behind", -1000);
+        Check(!ScenicJourneyItinerary.TrySelect(P(0), P(1), new[] { behind }, null, 1000, 10, null,
+            out _, out _, out var legacy) && legacy.HeadingExcluded == 1,
+            "A continuous departure silently lost its heading constraint");
+        Check(ScenicJourneyItinerary.TrySelect(P(0), P(1), new[] { behind }, null, 1000, 10, null,
+            out var independent, out _, out var evidence, allowReverseDeparture: true),
+            "An independently framed cut inherited an irrelevant continuity veto");
+        Check(independent != null && independent.Destination.Id == "known-behind" &&
+            independent.Destination.Position.Distance(behind.Position) < .001 && evidence.HeadingExcluded == 0,
+            "Reverse departure fabricated its target or claimed a heading rejection");
+        Check(ScenicJourneyItinerary.TrySelect(P(0), P(1), new[] { behind, Region("known-ahead", 1000) }, null, 1000, 10, null,
+            out var preferred, out _, out _, allowReverseDeparture: true) && preferred?.Destination.Id == "known-ahead",
+            "Independent departure discarded forward continuity as a ranking preference");
     }
     private static void FreshDestination()
     {

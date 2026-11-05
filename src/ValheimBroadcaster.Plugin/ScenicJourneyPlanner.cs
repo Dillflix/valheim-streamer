@@ -16,7 +16,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private ScenicShotPlan? previous, candidate;
     private long nextId, journeyId;
     private float length, speed, aspect, nearClip, started, retryAt;
-    private bool moveCarrier, exitRamp, departureCut;
+    private bool moveCarrier, exitRamp, departureCut, nativeSpline;
     private int alternative;
     private AutonomyPosition? goal, arrivalFocus, arrivalCenter;
     private double arrivalRadius;
@@ -32,7 +32,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     internal void Begin(ScenicShotPlan predecessor, long id, long journey, float metres, float metresPerSecond,
         float cameraAspect, float cameraNearClip, bool moveObserver, bool finalWindow = false,
         AutonomyPosition? objectiveGoal = null, AutonomyPosition? observedArrivalFocus = null, bool departureCut = false,
-        AutonomyPosition? arrivalCenter = null, double arrivalRadius = 0)
+        AutonomyPosition? arrivalCenter = null, double arrivalRadius = 0, bool? nativeSplineOverride = null)
     {
         Reset(); previous = predecessor; nextId = id; journeyId = journey;
         // Existing spatial routes support <=80m/16 knots. The programme owns
@@ -40,7 +40,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         length = Mathf.Clamp(metres, 1, 64); speed = metresPerSecond; aspect = cameraAspect; nearClip = cameraNearClip;
         moveCarrier = moveObserver; exitRamp = finalWindow; goal = objectiveGoal; arrivalFocus = observedArrivalFocus;
         this.arrivalCenter = arrivalCenter; this.arrivalRadius = arrivalRadius;
-        this.departureCut = departureCut; started = Time.unscaledTime;
+        this.departureCut = departureCut; nativeSpline = nativeSplineOverride ?? predecessor.UseNativeSpline; started = Time.unscaledTime;
         Reason = "Measuring goal-directed journey corridors";
     }
 
@@ -59,6 +59,11 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     {
         Vector3 incoming = TerminalDirection(preceding);
         Vector3 horizontal = Vector3.ProjectOnPlane(incoming, Vector3.up).normalized;
+        if (horizontal.sqrMagnitude < .5f)
+        {
+            ScenicShotSample pose = preceding.Sample(1);
+            horizontal = Vector3.ProjectOnPlane(V(pose.AimPosition) - V(pose.CameraPosition), Vector3.up).normalized;
+        }
         if (horizontal.sqrMagnitude < .5f) horizontal = Vector3.forward;
         ScenicFeature? feature = preceding.Feature;
         Vector3 axis = horizontal;
@@ -228,7 +233,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         try
         {
             ScenicShotPlan proposed = ScenicShotPlan.Spatial(nextId, feature, ScenicShotRole.Traverse, body, aims,
-                preceding.FieldOfView, end.ScreenX, end.ScreenY, preceding.UseNativeSpline);
+                preceding.FieldOfView, end.ScreenX, end.ScreenY, nativeSpline);
             double seconds = proposed.TravelMetres / speed / ScenicJourneyMotion.CruiseFraction(departureCut || !preceding.IsJourney, exitRamp);
             if (arrivalCenter.HasValue) seconds = Math.Max(1, seconds);
             result = (departureCut ? proposed.AsJourneyDeparture(journeyId, seconds) : proposed.AsJourney(journeyId, preceding.Id, seconds))

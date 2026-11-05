@@ -140,6 +140,7 @@ internal static class Program
             .Concat(LiveScenicTimelapseTests.Cases())
             .Concat(ScenicCandidateScheduleTests.Cases())
             .Concat(ScenicSequencePrefetchTests.Cases())
+            .Concat(ScenicSearchComparisonTests.Cases())
             .Concat(ScenicEditContinuityTests.Cases())
             .Concat(CameraObservationBudgetTests.Cases())
             .Concat(SharedObservationTests.Cases())
