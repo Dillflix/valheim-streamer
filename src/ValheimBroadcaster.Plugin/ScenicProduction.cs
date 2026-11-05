@@ -37,8 +37,8 @@ internal sealed partial class ScenicProduction
     internal bool FixturePreparing => requestedFixture != null;
     internal bool FixtureActive => requestedFixture != null || fixturePlanId > 0 && Plan?.Id == fixturePlanId;
     internal string FixtureStatus { get; private set; } = "No camera fixture requested";
-    internal bool JourneyActive => journeyOwned && journey.Active && HasUsablePicture &&
-        (Plan?.JourneyId == journey.Id || Plan?.Id == journeyExitId);
+    internal bool JourneyActive => journeyOwned && journey.Active &&
+        (journeyRecovery.Active || HasUsablePicture && (Plan?.JourneyId == journey.Id || Plan?.Id == journeyExitId));
     internal string JourneyStatus => journeyStatus + $"; {(departure.Pending && !journeyOwned ? "Preparing (not on air)" : requestedJourney ? "Requested (not on air)" : journey.Outcome.ToString())}; measured {journey.TravelMetres:F0}/{journey.TargetMetres:F0}m" +
         $"; destination {journey.Itinerary?.Description ?? "not selected"}; route progress {journey.RouteProgressMetres:F0}m; arrival shown {journey.ArrivalShownSeconds:F1}s" +
         $"; displacement {journey.DisplacementMetres:F0}m; objective advance {journey.ObjectiveAdvanceMetres:F0}m; requested cruise {journey.CruiseSpeed:F1}m/s; effective cruise {journeyRunway.EffectiveCruise:F1}m/s" +
@@ -59,6 +59,14 @@ internal sealed partial class ScenicProduction
         get
         {
             if (!JourneyActive || Plan == null) return null;
+            if (journeyRecovery.Active)
+            {
+                if (!HasUsablePicture) return null;
+                Camera? currentCamera = Camera.main;
+                // Repair owns no speculative loading path. Keep the protected
+                // carrier with the actual independently validated picture.
+                return currentCamera ? currentCamera.transform.position : FromCore(Plan.Sample(proposed).CameraPosition);
+            }
             if (!Plan.IsJourney || journeyBraking) return FromCore(Plan.Sample(1).CameraPosition);
             // Lead may cross a seam only through already certified successors.
             // The observer still enforces its 32m camera tether and live loaded
@@ -270,7 +278,7 @@ internal sealed partial class ScenicProduction
     {
         if (usingIndependentPicture) return proposed = 0;
         bool explicitFixture = fixturePlanId > 0 && Plan?.Id == fixturePlanId;
-        bool travelling = journeyOwned && journey.Active;
+        bool travelling = journeyOwned && journey.Active && (!journeyRecovery.Active || journeyRecovery.OwnsPreparedEnding);
         float motion = travelling ? 1 : explicitFixture ? fixtureMotion : Mathf.Clamp(settings.ShotMotion.Value, 0, 1.5f);
         lastMovementEnabled = (explicitFixture ? fixtureDynamic : settings.DynamicShots.Value) && motion > 0;
         double step = Mathf.Max(0, dt);

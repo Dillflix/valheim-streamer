@@ -11,10 +11,12 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
 {
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
     private readonly ScenicVisibility visibility = new ScenicVisibility("journey-ending-refresh");
+    private readonly JourneyProofRenewalPolicy proof = new JourneyProofRenewalPolicy();
     private float aspect, nearClip, started, retryAt;
     private long evaluatingEpoch;
-    private bool moveCarrier, proofAvailable;
-    internal bool Contradicted { get; private set; }
+    private bool moveCarrier;
+    internal bool Contradicted => Plan != null && proof.MustRetire(Time.unscaledTime);
+    internal bool RevalidatingReadability => Plan != null && proof.RevalidatingReadability && !Contradicted;
     internal double ProofSecondsRemaining => CanAdmit ? Math.Max(0, JourneyHandoffPolicy.MaximumProofAgeSeconds - (Time.unscaledTime - ValidatedAt)) : 0;
     internal bool RefreshDue => Plan != null && (!CanAdmit || Time.unscaledTime - ValidatedAt >= JourneyHandoffPolicy.RefreshProofAfterSeconds);
 
@@ -22,7 +24,7 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
     internal long Epoch { get; private set; }
     internal float ValidatedAt { get; private set; }
     internal bool IsRefreshing { get; private set; }
-    internal bool CanAdmit => proofAvailable && Plan != null &&
+    internal bool CanAdmit => proof.Available && Plan != null && !Contradicted &&
         IsCurrent(Epoch, ValidatedAt, CameraSpatialScene.Shared.Epoch, Time.unscaledTime);
     internal string Reason { get; private set; } = "No journey ending proof retained";
 
@@ -48,13 +50,19 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
             throw new ArgumentException("A finite already validated journey ending and camera format are required.");
         Reset(); Plan = ending; Epoch = epoch; ValidatedAt = validatedAt;
         aspect = cameraAspect; nearClip = cameraNearClip; moveCarrier = moveObserver;
-        proofAvailable = true; Reason = "Retaining the exact validated Journey plan";
+        proof.Begin(validatedAt); Reason = "Retaining the exact validated Journey plan";
     }
 
     internal void Step(bool force = false)
     {
         if (Plan == null) return;
         float now = Time.unscaledTime;
+        if (proof.MustRetire(now))
+        {
+            if (IsRefreshing) { evaluator.Reset(); IsRefreshing = false; }
+            if (proof.RevalidatingReadability) Reason = "Journey readability proof did not recover within its 2s renewal window";
+            return;
+        }
         long sceneEpoch = CameraSpatialScene.Shared.Epoch;
         if (IsRefreshing && evaluatingEpoch != sceneEpoch)
         { evaluator.Reset(); IsRefreshing = false; retryAt = 0; }
@@ -70,7 +78,7 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
             }
         }
         if (now - started > ScenicJourneyEnding.MaximumPreparationSeconds)
-        { Reject("Journey proof refresh expired: " + evaluator.Reason, false); return; }
+        { Reject("Journey proof refresh expired: " + evaluator.Reason, ScenicRejectionKind.None); return; }
         bool complete = evaluator.Step(6);
         if (!complete && (evaluator.FailureKind == ScenicRejectionKind.None ||
             evaluator.FailureKind == ScenicRejectionKind.SurveyIncomplete))
@@ -79,12 +87,15 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
         if (complete && evaluator.Accepted && evaluated != null && evaluator.SceneEpoch == sceneEpoch &&
             IdenticalEnding(Plan, evaluated))
         {
-            Epoch = sceneEpoch; ValidatedAt = now; proofAvailable = true; Contradicted = false;
+            if (!proof.TryAccept(now))
+            { Reject("Journey proof validation completed after its renewal window", ScenicRejectionKind.InvalidPlan); return; }
+            Epoch = sceneEpoch; ValidatedAt = now;
             evaluator.Reset(); IsRefreshing = false;
             Reason = "The exact Journey plan has current complete scene validation";
         }
-        else Reject(complete && evaluator.Accepted ? "Journey fitting changed its admitted geometry" : evaluator.Reason,
-            complete && evaluator.Accepted || IsContradiction(evaluator.FailureKind));
+        else Reject(complete && evaluator.Accepted ? "Journey fitting changed its admitted geometry" :
+            evaluator.FailureKind != ScenicRejectionKind.None ? evaluator.FailureReason : evaluator.Reason,
+            complete && evaluator.Accepted ? ScenicRejectionKind.InvalidPlan : evaluator.FailureKind);
     }
 
     private static bool IdenticalEnding(ScenicShotPlan original, ScenicShotPlan evaluated)
@@ -106,16 +117,11 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
         return true;
     }
 
-    private static bool IsContradiction(ScenicRejectionKind kind) =>
-        kind == ScenicRejectionKind.SurfaceClearance || kind == ScenicRejectionKind.CameraCollision ||
-        kind == ScenicRejectionKind.CorridorCollision || kind == ScenicRejectionKind.Focus ||
-        kind == ScenicRejectionKind.Foliage || kind == ScenicRejectionKind.InvalidPlan;
-
-    private void Reject(string reason, bool contradiction)
+    private void Reject(string reason, ScenicRejectionKind kind)
     {
         // New negative evidence immediately revokes the preceding proof; do
         // not continue using it for the remainder of an arbitrary age window.
-        proofAvailable = false; Contradicted = contradiction; IsRefreshing = false; evaluator.Reset();
+        proof.Reject(kind, Time.unscaledTime); IsRefreshing = false; evaluator.Reset();
         retryAt = Time.unscaledTime + .5f; Reason = "Ending proof unavailable: " + reason;
     }
 
@@ -123,7 +129,7 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
     {
         evaluator.Reset(); visibility.Reset(); Plan = null; Epoch = evaluatingEpoch = 0;
         ValidatedAt = aspect = nearClip = started = retryAt = 0;
-        IsRefreshing = proofAvailable = moveCarrier = Contradicted = false; Reason = "No journey ending proof retained";
+        IsRefreshing = moveCarrier = false; proof.Reset(); Reason = "No journey ending proof retained";
     }
     public void Dispose() { Reset(); evaluator.Dispose(); }
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

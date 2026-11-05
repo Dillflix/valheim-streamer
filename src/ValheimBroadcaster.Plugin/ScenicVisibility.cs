@@ -36,12 +36,12 @@ internal sealed class ScenicVisibility
 
     internal readonly struct Result
     {
-        internal readonly bool CameraClear, FocusVisible, SurveyComplete;
+        internal readonly bool CameraClear, FocusVisible, SurveyComplete, InsideVegetation;
         internal readonly float Score, ForegroundOcclusion;
         internal readonly string Reason;
-        internal Result(bool clear, bool visible, bool complete, float score, float foreground, string reason)
+        internal Result(bool clear, bool visible, bool complete, float score, float foreground, string reason, bool insideVegetation = false)
         { CameraClear = clear; FocusVisible = visible; SurveyComplete = complete;
-          Score = score; ForegroundOcclusion = foreground; Reason = reason; }
+          Score = score; ForegroundOcclusion = foreground; Reason = reason; InsideVegetation = insideVegetation; }
     }
 
     internal void Reset()
@@ -147,7 +147,7 @@ internal sealed class ScenicVisibility
             foreground = blocked / 12f;
         }
         float score = (focusVisible ? 1f : 0.3f) * (1f - 0.85f * foreground) * (complete ? 1f : 0.65f);
-        string reason = !complete ? "Scenic foliage survey incomplete: " + gap + " (" + refreshAction + ")" : insideLeaves ? "Scenic camera intersects retained vegetation bounds" :
+        string reason = insideLeaves ? "Scenic camera intersects retained vegetation bounds" : !complete ? "Scenic foliage survey incomplete: " + gap + " (" + refreshAction + ")" :
             foreground >= 0.5f ? "Foreground vegetation dominates the scenic frame" :
             !focusVisible ? "Scenic feature is outside the frame or hidden" : "Readable scenic composition";
         if (ScenicTrace.Enabled)
@@ -158,6 +158,7 @@ internal sealed class ScenicVisibility
                 .Field("retained", foliage.RetainedCount).Field("omitted", omitted).Field("candidates", candidates)
                 .Field("detailed", detailed).Field("coarse", coarseCount).Field("detailRemaining", detailRemaining)
                 .Field("activeBounds", activeCount).Field("surveyMilliseconds", surveyMilliseconds).Field("focusVisible", focusVisible).Field("foreground", foreground)
+                .Field("insideVegetation", insideLeaves)
                 .Field("focusInFrame", projected.CenterInFrame).Field("focusRayResult", focusRayResult)
                 .Field("focusBlocker", focusBlocker).Field("focusHitDistance", focusHitDistance)
                 .Field("focusHitX", focusHitPoint.x).Field("focusHitY", focusHitPoint.y).Field("focusHitZ", focusHitPoint.z)
@@ -167,7 +168,7 @@ internal sealed class ScenicVisibility
             ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Vector(row, "camera", camera), "origin", origin), "focus", focus));
         }
         if (!complete) ScenicTrace.Incomplete(owner, gap, displacement, coveredRadius, omitted);
-        return new Result(true, focusVisible, complete, Mathf.Clamp01(score), foreground, reason);
+        return new Result(!insideLeaves, focusVisible, complete, Mathf.Clamp01(score), foreground, reason, insideLeaves);
     }
 
     private void RefreshActive()

@@ -2,6 +2,17 @@ using System;
 
 namespace ValheimBroadcaster.Core;
 
+/// <summary>Identity retained at the camera solve, before rendering. The next
+/// Update must use this snapshot, not the camera's already-expired frame context.</summary>
+public readonly struct JourneyPresentationIdentity
+{
+    public readonly long Shot, Revision, Scene;
+    public readonly int Frame;
+    public JourneyPresentationIdentity(long shot, long revision, long scene, int frame)
+    { Shot = shot; Revision = revision; Scene = scene; Frame = frame; }
+    public bool Valid => Shot > 0 && Revision >= 0 && Scene > 0 && Frame >= 0;
+}
+
 /// <summary>The progress, clock and actual camera pose belonging to one clean
 /// captured source. Later camera solves cannot change this evidence.</summary>
 public readonly struct JourneyPresentationSample
@@ -21,6 +32,15 @@ public sealed class JourneyPresentationPolicy
 {
     private long consumedGeneration = -1;
     private int consumedFrame = -1;
+
+    public bool TryTake(JourneyPresentationSample sample, FramePresentation lastPresentation,
+        int renderedFrame, int sourceFrame, int updateFrame, double now, long generation,
+        JourneyPresentationIdentity expected, int cameraId, out JourneyPresentationSample accepted)
+    {
+        accepted = default;
+        return expected.Valid && TryTake(sample, lastPresentation, renderedFrame, sourceFrame, updateFrame,
+            now, generation, expected.Shot, expected.Revision, expected.Scene, cameraId, expected.Frame, out accepted);
+    }
 
     public bool TryTake(JourneyPresentationSample sample, FramePresentation lastPresentation,
         int renderedFrame, int sourceFrame, int updateFrame, double now, long generation,

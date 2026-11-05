@@ -50,7 +50,7 @@ public static class ScenicJourneyEnding
             // ending. It belongs to ordinary direction after journey handoff.
             return ScenicShotPlan.Pan(id, arrivalSubject ?? section.Feature, ScenicShotRole.Establish,
                 end.CameraPosition, end.AimPosition, aim, section.FieldOfView,
-                end.ScreenX, end.ScreenY).WithDuration(DurationSeconds);
+                end.ScreenX, end.ScreenY).WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance);
         }
         catch (ArgumentException) { return null; }
     }

@@ -41,5 +41,21 @@ internal static class ConnectionRecoveryAudits
             password.Parameters[0].ParameterType.MetadataType == MetadataType.String && Calls(password, "ZNet", "SendPeerInfo") == 1);
         check("Transport loss is distinct from operator logout", Calls(Method("ZNet", "RPC_Disconnect"), "Game", "Logout") == 0 &&
             Calls(Method("ZNet", "UpdatePeers"), "Game", "Logout") == 0 && Calls(Method("Menu", "Logout"), "Game", "Logout") == 1);
+        var startup = game.MainModule.Types.Single(t => t.Name == "FejdStartup");
+        check("Startup character enumeration uses native profile records", startup.Fields.Any(f => f.Name == "m_profiles" &&
+            f.FieldType is GenericInstanceType list && list.ElementType.FullName == "System.Collections.Generic.List`1" &&
+            list.GenericArguments.Count == 1 && list.GenericArguments[0].Name == "PlayerProfile"));
+        var load = Method("PlayerProfile", "Load");
+        var incompatible = Method("PlayerProfile", "HaveIncompatiblPlayerData");
+        check("Startup can reject unreadable and incompatible saved characters before joining", load.Parameters.Count == 0 &&
+            load.ReturnType.MetadataType == MetadataType.Boolean && incompatible.Parameters.Count == 0 &&
+            incompatible.ReturnType.MetadataType == MetadataType.Boolean);
+        var dedicated = game.MainModule.Types.Single(t => t.Name == "ServerJoinDataDedicated");
+        check("Startup uses the native dedicated host and explicit port representation", dedicated.Methods.Any(m => m.IsConstructor &&
+            m.Parameters.Count == 2 && m.Parameters[0].ParameterType.MetadataType == MetadataType.String &&
+            m.Parameters[1].ParameterType.MetadataType == MetadataType.UInt16));
+        var stopCinematic = Method("CinematicsManager", "Stop");
+        check("Startup can dismiss the native opening cinematic without synthetic input", stopCinematic.IsStatic && stopCinematic.Parameters.Count == 0 &&
+            game.MainModule.Types.Single(t => t.Name == "CinematicsManager").Fields.Any(f => f.Name == "s_instance" && f.IsStatic));
     }
 }

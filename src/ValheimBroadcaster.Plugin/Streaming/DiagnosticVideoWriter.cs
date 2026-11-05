@@ -25,6 +25,8 @@ internal sealed class DiagnosticVideoWriter : IDisposable
     private readonly System.Threading.Timer watchdog;
     private readonly string directory, executable, version;
     private volatile Process? process;
+    private int processId;
+    internal int ProcessId => Volatile.Read(ref processId);
     private SegmentState? sink;
     private int stopped, pending, segment;
     private long written, dropped, lastWriteTicks, stopTicks;
@@ -112,6 +114,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
                         Directory.CreateDirectory(directory); Prune(directory);
                         string path = Path.Combine(directory, "footage-" + SessionId + "-" + (++segment).ToString("D5", CultureInfo.InvariantCulture));
                         process = Start(executable, path + ".mp4", out sink);
+                        Volatile.Write(ref processId, process.Id);
                         map = new StreamWriter(new FileStream(path + ".jsonl", FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false));
                         string header = new CameraTraceRecord("video-header", item.At).Field("version", version)
                             .Field("videoSession", SessionId).Field("video", Path.GetFileName(path) + ".mp4")
@@ -148,7 +151,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
             while (queue.TryDequeue(out Item item)) { Return(item.Pixels); Interlocked.Decrement(ref pending); Drop(); }
             if (retained != null) Return(retained);
             try { map?.Dispose(); } catch { }
-            Kill(); process?.Dispose(); process = null; watchdog.Dispose();
+            Kill(); process?.Dispose(); process = null; Volatile.Write(ref processId, 0); watchdog.Dispose();
         }
     }
 
@@ -238,7 +241,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
         current.WaitForExit(); // Drain the finite progress callback after process exit.
         bool sinkFinished = sink?.Worker?.Join(3000) == true;
         int code = current.ExitCode;
-        process = null; current.Dispose(); Interlocked.Exchange(ref lastWriteTicks, 0);
+        process = null; Volatile.Write(ref processId, 0); current.Dispose(); Interlocked.Exchange(ref lastWriteTicks, 0);
         if (code != 0 || !sinkFinished || sink!.Error != null || sink.Ended != 1 || sink.EncodedFrames != expectedFrames)
             throw new IOException("Diagnostic encoder did not confirm every mapped frame.");
         sink = null;

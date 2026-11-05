@@ -30,6 +30,8 @@ internal sealed class EncoderSession
     private volatile bool publishing;
     private volatile bool errorsComplete;
     private volatile bool cleanupBlocked;
+    private int processId;
+    internal int ProcessId => closed ? 0 : Volatile.Read(ref processId);
     internal bool IsClosed => closed;
     internal bool IsStopping => stopping;
     internal bool IsPublishing => publishing && !stopping;
@@ -85,6 +87,7 @@ internal sealed class EncoderSession
                 { publishing = true; Interlocked.Exchange(ref lastProgress, clock.ElapsedMilliseconds); }
             };
             if (!process.Start()) throw new InvalidOperationException();
+            Volatile.Write(ref processId, process.Id);
             process.BeginErrorReadLine();
             process.BeginOutputReadLine();
             videoThread = Worker(WriteVideo, "Valheim video encoder");

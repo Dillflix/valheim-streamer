@@ -22,6 +22,8 @@ internal sealed class TimelapseCapture : MonoBehaviour
     private bool configured, active, pending, closing, reported, completionReported;
     private TimelapseClock? clock;
     private TimelapseVideoWriter? writer, pendingOwner;
+    internal int EncoderProcessId => writer?.ProcessId ?? 0;
+    internal bool EncoderClosed => writer == null || writer.Closed;
     private ProgramOrientationProbe? orientation;
     private RenderTexture? texture;
     private byte[]? pendingPixels;

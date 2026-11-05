@@ -7,12 +7,6 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
-internal enum ScenicRejectionKind
-{
-    None, InvalidPlan, Acquisition, Geometry, CarrierRange, CameraCollision,
-    CorridorCollision, Focus, Foliage, SurveyIncomplete, SamplingBudget, CameraFormat, SurfaceClearance
-}
-
 internal readonly struct ScenicPose
 {
     internal readonly Vector3 Position, Focus;
@@ -116,7 +110,7 @@ internal static class ScenicPoseValidation
             return Reject(ScenicRejectionKind.Geometry, "Scenic camera or feature geometry is not loaded", out kind, out reason);
         if (!continuous && (!IdleShots.Ready(pose.Position) || !IdleShots.Ready(pose.Focus)))
             return Reject(ScenicRejectionKind.Acquisition, "Scenic camera or feature area is not acquired", out kind, out reason);
-        if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason))
+        if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason, plan.StableWaterClearance))
             return Reject(ScenicRejectionKind.Geometry, surfaceReason, out kind, out reason);
         if (lift > .001f)
             return Reject(ScenicRejectionKind.SurfaceClearance, surfaceReason, out kind, out reason);
@@ -132,17 +126,21 @@ internal static class ScenicPoseValidation
         }
         ScenicFeature? feature = plan.Feature;
         Bounds? subject = feature != null ? ScenicSubjectFrame.BoundsFor(feature) : null;
-        if (feature != null && !ScenicSubjectFrame.Evaluate(feature, plan.Role, pose, aspect, nearClip, out _, out _))
-            return Reject(ScenicRejectionKind.Focus, "Final scenic pose loses the measured subject envelope or deliberate scale", out kind, out reason);
         ScenicVisibility.Result view = visibility.Evaluate(pose.Position, pose.Rotation, pose.Focus,
             pose.FieldOfView, aspect, nearClip, subject);
         score = view.Score;
+        // Physical camera failures outrank an editorial framing failure. In
+        // particular a camera inside retained vegetation must never receive
+        // the short Focus/Foliage proof-renewal allowance.
+        if (view.InsideVegetation) return Reject(ScenicRejectionKind.InsideVegetation, view.Reason, out kind, out reason);
+        if (!view.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, view.Reason, out kind, out reason);
+        if (!view.SurveyComplete) return Reject(ScenicRejectionKind.SurveyIncomplete, view.Reason, out kind, out reason);
+        if (feature != null && !ScenicSubjectFrame.Evaluate(feature, plan.Role, pose, aspect, nearClip, out _, out _))
+            return Reject(ScenicRejectionKind.Focus, "Final scenic pose loses the measured subject envelope or deliberate scale", out kind, out reason);
         if (feature != null && !LocalScenicSiteSubjects.Validate(feature, pose, visibility, aspect, nearClip, out string subjectReason))
             return Reject(ScenicRejectionKind.Focus, subjectReason, out kind, out reason);
         if (feature != null && view.SurveyComplete && !ScenicSubjectFrame.MembersVisible(feature, plan.Role, pose, visibility, aspect, nearClip))
             return Reject(ScenicRejectionKind.Focus, "Final scenic pose does not show enough independently observed site members", out kind, out reason);
-        if (!view.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, view.Reason, out kind, out reason);
-        if (!view.SurveyComplete) return Reject(ScenicRejectionKind.SurveyIncomplete, view.Reason, out kind, out reason);
         if (!view.FocusVisible) return Reject(ScenicRejectionKind.Focus, "Scenic feature is outside the frame or hidden", out kind, out reason);
         if (!PictureQuality.Scenic(view.CameraClear, view.FocusVisible, view.Score, view.ForegroundOcclusion, view.SurveyComplete).Readable)
             return Reject(ScenicRejectionKind.Foliage, view.Reason, out kind, out reason);
@@ -202,6 +200,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     }
     internal float SuggestedCanopyLift { get; private set; }
     internal ScenicRejectionKind FailureKind { get; private set; }
+    internal string FailureReason { get; private set; } = "none";
     internal string Reason { get; private set; } = "No scenic route prepared";
 
     internal void Begin(ScenicShotPlan source, ScenicVisibility survey, float cameraAspect, float cameraNearClip, bool moveObserver)
@@ -252,7 +251,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
             }
             if (fitting)
             {
-                if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason))
+                if (!ScenicSurface.TryRequiredLift(pose, aspect, nearClip, out float lift, out string surfaceReason, plan.StableWaterClearance))
                 { Fail(ScenicRejectionKind.Geometry, surfaceReason); return true; }
                 fitLift = Mathf.Max(fitLift, lift);
                 previous = pose; hasPrevious = true;
@@ -316,8 +315,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 // Rejection describes this measured pose, not every point on
                 // the route. Continue looking for a connected usable section;
                 // an occluded opening must not hide a clear middle or ending.
-                routeRejected = true; FailureKind = kind; Reason = reason;
-                if ((kind == ScenicRejectionKind.Foliage || kind == ScenicRejectionKind.Focus) &&
+                RecordRejection(kind, reason);
+                if ((kind == ScenicRejectionKind.Foliage || kind == ScenicRejectionKind.Focus || kind == ScenicRejectionKind.InsideVegetation) &&
                     visibility.TryCanopyLift(pose.Position, out float lift))
                     SuggestedCanopyLift = Mathf.Max(SuggestedCanopyLift, lift);
             }
@@ -332,10 +331,10 @@ internal sealed class ScenicPathEvaluator : IDisposable
             {
                 measuredTravel += Vector3.Distance(previous.Position, pose.Position);
                 if (corridor && !ScenicPoseValidation.Corridor(previous, pose, visibility, aspect, nearClip, out kind, out reason))
-                { corridor = false; routeRejected = true; FailureKind = kind; Reason = reason; }
+                { corridor = false; RecordRejection(kind, reason); }
             }
             bool knownRejection = kind == ScenicRejectionKind.Focus || kind == ScenicRejectionKind.Foliage ||
-                kind == ScenicRejectionKind.CameraCollision || kind == ScenicRejectionKind.CorridorCollision ||
+                kind == ScenicRejectionKind.CameraCollision || kind == ScenicRejectionKind.CorridorCollision || kind == ScenicRejectionKind.InsideVegetation ||
                 kind == ScenicRejectionKind.SurfaceClearance;
             window.Observe(fraction, measuredTravel, readable, corridor, knownRejection ? reason : null);
             previous = pose; hasPrevious = true; previousReadable = readable;
@@ -361,7 +360,13 @@ internal sealed class ScenicPathEvaluator : IDisposable
     }
 
     private void Fail(ScenicRejectionKind kind, string reason)
-    { Complete = true; Accepted = false; FailureKind = kind; Reason = reason; pending.Clear(); }
+    { Complete = true; Accepted = false; RecordRejection(kind, reason); pending.Clear(); }
+    private void RecordRejection(ScenicRejectionKind kind, string reason)
+    {
+        routeRejected = true;
+        if (JourneyProofRenewalPolicy.Stronger(FailureKind, kind) != kind) return;
+        FailureKind = kind; FailureReason = Reason = reason;
+    }
     private void StartPass()
     {
         pending.Clear(); hasPrevious = previousReadable = false; fitLift = 0; passSamples = 0;
@@ -386,7 +391,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
         fitting = false; fitLift = totalLift = 0; fitPasses = 0;
         routeRejected = previousReadable = false; measuredTravel = 0; SuggestedCanopyLift = 0; window.Reset();
         surveyWaitSeconds = 0; surveyWaitStarted = float.NegativeInfinity;
-        FailureKind = ScenicRejectionKind.None; Reason = "No scenic route prepared";
+        FailureKind = ScenicRejectionKind.None; FailureReason = "none"; Reason = "No scenic route prepared";
     }
     public void Dispose() { Reset(); solver.Dispose(); path.Dispose(); }
     private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
