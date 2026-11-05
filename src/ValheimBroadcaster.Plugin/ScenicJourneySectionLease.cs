@@ -11,6 +11,7 @@ internal sealed class ScenicJourneySectionLease : IDisposable
     private readonly ScenicJourneyEndingLease ending = new ScenicJourneyEndingLease();
     internal bool CanAdmit => route.CanAdmit && ending.CanAdmit && route.Epoch == ending.Epoch;
     internal bool Contradicted => route.Contradicted || ending.Contradicted;
+    internal bool RevalidatingReadability => route.RevalidatingReadability || ending.RevalidatingReadability;
     internal bool RefreshDue => route.RefreshDue || ending.RefreshDue;
     internal long Epoch => route.Epoch == ending.Epoch ? route.Epoch : 0;
     internal float PreparedAt => Math.Min(route.ValidatedAt, ending.ValidatedAt);

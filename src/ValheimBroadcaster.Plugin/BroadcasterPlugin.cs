@@ -21,7 +21,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.47";
+    public const string PluginVersion = "0.8.48";
+    private SupervisorBridge? supervisor;
+    private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -38,6 +40,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private int presentedFrame = -100;
     private CoverageMode presentedMode;
     private long presentedRevision = -1, presentedScenicPlan = -1;
+    private JourneyPresentationIdentity presentedScenicIdentity;
     private bool presentedIdleUsable, presentedPlayerUsable;
     private bool presentedRelatedPlayerView;
     private float nextStatusLog;
@@ -113,7 +116,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         automatic = new AutonomousBroadcast(settings, remote, observer, playerShots,
             (target, point) => rig.RequiredPlayerCameraMovement(target, point, settings), ResetShot, message => Logger.LogInfo(message));
         connection = new ConnectionRecovery(() => WantsUnattended, () => settings.ObserverConnection.Value,
-            message => Logger.LogInfo(message), reason => remote.Fail(reason), () => Stop(true));
+            message => Logger.LogInfo(message), reason => remote.Fail(reason), () => Stop(true), settings);
         connection.ManualStopped += CancelOperatorIntent;
         instance = this;
         MethodInfo? cameraMethod = AccessTools.Method(typeof(GameCamera), "UpdateCamera", new[] { typeof(float) });
@@ -126,6 +129,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         }
         try
         {
+            supervisor = SupervisorBridge.Create(message => Logger.LogWarning(message));
             harmony = new Harmony(PluginGuid);
             remote.Install(harmony);
             connection.Install(harmony);
@@ -186,6 +190,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     {
         if (settings == null) return;
         ScenicTrace.Tick();
+        if (UpdateSupervisor()) return;
         try { remote.Tick(); }
         catch (Exception error) { remote.Fail("Observer connection error: " + error.GetType().Name); }
         cameraFixtures?.SetWorld(WorldIdentity.Current);
@@ -476,7 +481,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private bool CanShow(TargetRoster.Target? target) => IsReady(target) && (!observer.RemoteSession || automatic?.CanFrame(target) == true);
     private void ResetShot(AutonomyTravelRequest? arrival = null)
     {
-        presentedScenicFocus = null;
+        presentedScenicFocus = null; presentedScenicIdentity = default;
         bool preserveArrival = arrival?.Kind == AutonomyTravelKind.Scenic && Player.m_localPlayer &&
             scenicArrival.CanAdopt(WorldIdentity.Current, arrival.Token, arrival.Position,
                 CameraSpatialScene.Shared.WorldEpoch, CorePoint(Player.m_localPlayer.transform.position), Time.unscaledTime);
@@ -536,8 +541,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     }
     private JourneyPresentationSample? CapturedScenicSample()
     {
-        long scene = rig.PictureContext?.Key.SceneEpoch ?? 0;
-        return frameHold.TryTakeScenicCapture(presentedScenicPlan, presentedRevision, scene, presentedFrame,
+        // PictureContext belongs to the camera solve's frame. During the next
+        // Update its getter intentionally returns null: retain the scene that
+        // actually rendered together with that frame's plan and revision.
+        return frameHold.TryTakeScenicCapture(presentedScenicIdentity,
             out JourneyPresentationSample sample) ? sample : (JourneyPresentationSample?)null;
     }
 
@@ -610,7 +617,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private bool WantsUnattended => unattendedOverride ?? settings.Unattended.Value;
     private void UpdateBackground()
     {
-        bool desired = WantsUnattended && (connection?.Armed == true || remote.Isolated && remote.Approved && director.IsEnabled);
+        bool desired = WantsUnattended && (connection?.Starting == true || connection?.Armed == true || remote.Isolated && remote.Approved && director.IsEnabled);
         if (desired && !backgroundOwned) { previousBackground = Application.runInBackground; backgroundOwned = true; Application.runInBackground = true; }
         else if (!desired && backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; }
     }
@@ -702,7 +709,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         selfTest = false;
         activeWorld = parked ? ZNet.instance : null;
         cameraReady = false;
-        presentedPlayerId = null; presentedFrame = -100; presentedIdleUsable = false; presentedRevision = presentedScenicPlan = -1;
+        presentedPlayerId = null; presentedFrame = -100; presentedIdleUsable = false; presentedRevision = presentedScenicPlan = -1; presentedScenicIdentity = default;
         presentedScenicFocus = null;
         RestoreReference();
         rig.Restore();
@@ -901,12 +908,14 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             plugin.presentedIdleUsable = !plugin.probe.Active && plugin.cameraReady && plugin.rig.LastPictureUsable &&
                 (plugin.coverage.Mode == CoverageMode.Scenic || plugin.coverage.Mode == CoverageMode.Creature);
             plugin.presentedFrame = Time.frameCount;
+            plugin.presentedScenicIdentity = default;
             if (plugin.liveTimelapse.OnAir && (plugin.coverage.Mode != CoverageMode.Scenic ||
                 plugin.observer.Phase != ObserverPhase.Watching || plugin.presentedScenicPlan != plugin.liveTimelapse.PlanId))
                 plugin.StopLiveTimelapse("Presentation changed; natural lighting restored before render");
             if (plugin.cameraReady && plugin.rig.OutputCamera)
             {
                 RenderedPictureContext? picture = plugin.rig.PictureContext;
+                plugin.presentedScenicIdentity = new JourneyPresentationIdentity(plugin.presentedScenicPlan, plugin.presentedRevision, picture?.Key.SceneEpoch ?? 0, plugin.presentedFrame);
                 plugin.frameHold.RecordApplied(plugin.rig.OutputCamera!, plugin.rig.AcceptedRenderPose,
                     plugin.presentedMode == CoverageMode.Scenic ? plugin.presentedScenicPlan : plugin.rig.PresentedActorShotId,
                     plugin.presentedRevision, picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1,
@@ -1258,6 +1267,41 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         Stop();
     }
 
+    private bool UpdateSupervisor()
+    {
+        if (supervisor == null) return false;
+        bool authorized = remote.Isolated && remote.Approved;
+        bool observing = authorized && observer.Active && observer.Phase == ObserverPhase.Watching && director.IsEnabled && activeWorld == ZNet.instance;
+        if (!observing) supervisorLiveAt = float.NegativeInfinity;
+        else if (cameraReady && Time.frameCount - presentedFrame <= 2 && frameHold.CurrentPresentation == FramePresentation.Live && frameHold.HasRecentLiveFrame &&
+            (presentedMode == CoverageMode.Player ? presentedPlayerUsable : presentedIdleUsable))
+            supervisorLiveAt = Time.realtimeSinceStartup;
+        bool pictureLive = observing && cameraReady && Time.realtimeSinceStartup - supervisorLiveAt <= 5;
+        bool blocked = connection?.Blocked == true || output?.Blocked == true;
+        bool stopped = connection?.StoppedByOperator == true || output?.ManualSuppressed == true;
+        bool configured = settings.StartupEnabled.Value && settings.ObserverConnection.Value && WantsUnattended;
+        string state = blocked ? "blocked" : stopped ? "stopped" : !configured ? "blocked" :
+            observing ? "broadcasting" : connection?.Starting == true || connection?.Recovering == true ? "joining" : "starting";
+        string category = connection?.Blocked == true ? connection.FailureCategory : output?.Blocked == true ? "streaming" : !configured && !stopped ? "configuration" : "none";
+        supervisor.Tick(state, authorized, observing, stream?.IsPublishing == true, category,
+            stopped ? "operator_stopped" : category == "none" ? "none" : category, stream?.EncoderProcessId ?? 0, pictureLive,
+            new[] { stream?.EncoderProcessId ?? 0, diagnosticCapture?.EncoderProcessId ?? 0, timelapseCapture?.EncoderProcessId ?? 0 }
+                .Where(value => value > 0).Distinct().ToArray());
+        if (!supervisor.ShutdownRequested) return false;
+        CancelIntent();
+        diagnosticCapture?.StopCapture(); timelapseCapture?.StopCapture("Supervisor shutdown");
+        if (connection?.SupervisorShutdown() == true && stream?.EncoderClosed != false &&
+            diagnosticCapture?.EncoderClosed != false && timelapseCapture?.EncoderClosed != false)
+        { supervisor.Exiting(); Application.Quit(); }
+        return true;
+    }
+
+    private void OnApplicationQuit()
+    {
+        supervisor?.Exiting();
+        connection?.OnManualStop(true);
+    }
+
     private void OnDisable() { connection?.Dispose(); CancelIntent(); remote?.Close(); Stop(true); RestoreBackground(); ScenicTrace.Stop(); }
     private void OnDestroy()
     {
@@ -1275,7 +1319,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private void RestoreBackground()
     { if (backgroundOwned) { Application.runInBackground = previousBackground; backgroundOwned = false; } }
 
-    private string Diagnostics() => Status() + "\n" + frameHold.Diagnostics + "\nArrival preparation: " + scenicArrivalStatus + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
+    private string Diagnostics() => connection?.StartupStatus + "\n" + Status() + "\n" + frameHold.Diagnostics + "\nArrival preparation: " + scenicArrivalStatus + "\n" + CameraWorkBudget.Shared.Diagnostics + "\n" + rig.Diagnostics + "\n" + pictureMonitor.Diagnostics + "\n" + playerShots.Diagnostics + "\n" + idle.Diagnostics + "\n" + wildlife.Diagnostics + "\n" + observer.Diagnostics +
         "\n" + ScenicTrace.Status + "\n" + diagnosticCapture?.Status + "\n" + timelapseCapture?.Status + "\n" + LiveTimelapseStatus + "\n" + scenicEnvironment?.Status + "\n" + cameraFixtures?.Status + "\n" + remote.DiscoveryStatus + "\n" + remote.ContextStatus + "\n" + remote.EventStatus + "\n" + remote.InterestStatus + "\n" + automatic?.Diagnostics + "\n" + connection?.Status + "\n" + output?.Diagnostics;
 
     private void CameraCommand(string[] args, Terminal context)
@@ -1404,7 +1448,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     {
         public override string Name => "broadcast";
         public override string Help => "broadcast journey start|stop|on|off|status|distance <metres>|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
-            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|startup profiles|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1442,6 +1486,12 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                         catch (InvalidOperationException error) { context?.AddString(error.Message); }
                         return;
                     case "unattended": plugin.UnattendedCommand(args, context); return;
+                    case "startup":
+                        if (args.Length == 2 && args[1] == "profiles")
+                        { foreach (string profile in plugin.connection!.StartupProfiles()) context?.AddString(profile); }
+                        else if (args.Length == 2 && args[1] == "status") context?.AddString(plugin.connection?.StartupStatus);
+                        else context?.AddString("broadcast startup profiles|status");
+                        return;
                     case "observer":
                         try { plugin.ObserverCommand(args, context); }
                         catch (InvalidOperationException error) { context?.AddString(error.Message); }

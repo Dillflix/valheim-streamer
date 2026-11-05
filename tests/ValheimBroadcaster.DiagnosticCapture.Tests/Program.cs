@@ -80,9 +80,16 @@ internal static class Program
             string map = new CameraTraceRecord("video-sample", at).Field("seq", n + 1).Field("sourceTime", at)
                 .Field("sourceFrame", n * 3).Field("traceSession", "synthetic-test").Field("presentation", "Live").ToString();
             Check(writer.Submit(buffer, map, at, n < 16 ? 1 : 2), "frame accepted with its capture metadata");
+            if (n == 0)
+            {
+                Wait(() => writer.ProcessId > 0, "diagnostic child identity is available to its owning supervisor");
+                using Process child = Process.GetProcessById(writer.ProcessId);
+                Check(!child.HasExited && child.Id != Environment.ProcessId, "diagnostic identity names a live separate encoder");
+            }
             Thread.Sleep(10);
         }
         writer.Dispose(); Wait(() => writer.Closed, "diagnostic encoder drains and exits");
+        Check(writer.ProcessId == 0, "diagnostic encoder identity is cleared after finalization");
         Check(writer.Error == null, "real FFmpeg encoder confirms mapped output: " + writer.Error);
         string[] maps = Directory.GetFiles(dir, "*.jsonl");
         Check(maps.Length == 2, "compositor generation splits video segments");

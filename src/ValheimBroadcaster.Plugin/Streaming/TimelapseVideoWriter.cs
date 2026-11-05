@@ -27,6 +27,8 @@ internal sealed class TimelapseVideoWriter : IDisposable
     private readonly TimelapseClock settings;
     private readonly long videoLimit;
     private volatile Process? process;
+    private int processId;
+    internal int ProcessId => Volatile.Read(ref processId);
     private int stopped, pending, encodedFrames, progressEnded;
     private long written, dropped, ioTicks, stopTicks;
     private string? error, sinkError;
@@ -145,7 +147,7 @@ internal sealed class TimelapseVideoWriter : IDisposable
             lock (gate) Interlocked.Exchange(ref stopped, 1);
             while (queue.TryDequeue(out Item item)) { Return(item.Pixels); Interlocked.Decrement(ref pending); Drop(); }
             try { map?.Dispose(); } catch { }
-            Kill(); sinkWorker?.Join(3000); process?.Dispose(); process = null; watchdog.Dispose(); wake.Dispose();
+            Kill(); sinkWorker?.Join(3000); process?.Dispose(); process = null; Volatile.Write(ref processId, 0); watchdog.Dispose(); wake.Dispose();
             while (buffers.TryDequeue(out _)) { }
         }
     }
@@ -170,6 +172,7 @@ internal sealed class TimelapseVideoWriter : IDisposable
             if (line == "progress=end") Volatile.Write(ref progressEnded, 1);
         };
         if (!child.Start()) throw new IOException("Could not start timelapse encoder.");
+        Volatile.Write(ref processId, child.Id);
         child.BeginErrorReadLine();
         sinkWorker = new Thread(() =>
         {

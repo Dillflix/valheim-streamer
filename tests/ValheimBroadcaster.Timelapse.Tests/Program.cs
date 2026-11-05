@@ -51,8 +51,15 @@ internal static class Program
             double at = i < 6 ? i * 2 : 10 + i * 2;
             Check(writer.Submit(Pixels(writer), Metadata(at, i * 120), at), "interval image submitted");
             Wait(() => writer.Written == i + 1 || writer.Error != null, "encoder consumes source photograph");
+            if (i == 0)
+            {
+                Check(writer.ProcessId > 0, "timelapse child identity is available to its owning supervisor");
+                using Process child = Process.GetProcessById(writer.ProcessId);
+                Check(!child.HasExited && child.Id != Environment.ProcessId, "timelapse identity names a live separate encoder");
+            }
         }
         writer.Complete("Test complete"); Wait(() => writer.Closed, "timelapse finalizes asynchronously");
+        Check(writer.ProcessId == 0, "timelapse encoder identity is cleared after finalization");
         Check(writer.Error == null, "real encoder confirms clip: " + writer.Error);
         using JsonDocument probe = JsonDocument.Parse(Run("ffprobe", "-v error -count_frames -show_entries stream=codec_type,nb_read_frames,avg_frame_rate -show_entries format=duration -of json \"" + writer.OutputPath + "\""));
         var streams = probe.RootElement.GetProperty("streams");

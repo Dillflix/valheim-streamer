@@ -47,15 +47,15 @@ internal sealed class FrameHold
     internal DiagnosticPictureContext OperatorPicture => sourceContext;
     internal string OperatorSubject => sourceSubject;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;
-    internal bool TryTakeScenicCapture(long shot, long revision, long scene, int expectedFrame, out JourneyPresentationSample sample)
+    internal bool TryTakeScenicCapture(JourneyPresentationIdentity identity, out JourneyPresentationSample sample)
     {
         sample = default;
         if (!active() || hardFailure() || !camera || !renderer || !renderer.isActiveAndEnabled ||
             !frame || !frame.IsCreated() || captureFailed || sourceContext.Mode != "Scenic" || !sourceContext.Usable)
             return false;
         return journeyPresentation.TryTake(journeyCapture, renderedPresentation, renderedFrame, sourceFrame,
-            Time.frameCount, Time.unscaledTimeAsDouble, program.Generation, shot, revision, scene,
-            camera.GetInstanceID(), expectedFrame, out sample);
+            Time.frameCount, Time.unscaledTimeAsDouble, program.Generation, identity,
+            camera.GetInstanceID(), out sample);
     }
     internal string LastFailure { get; set; } = "none";
     internal string Diagnostics => $"Presentation: {lastPresentation}; {holds} held frames, {slates} slate frames; last gap: {LastFailure}; camera compositor {(renderer && renderedFrame >= Time.frameCount - 1 ? "active" : "awaiting render")}; clean program epoch {program.Generation}; capture {(captureFailed ? "unavailable" : "available")}; graphics {SystemInfo.graphicsDeviceType}. " + PoseAuditDiagnostics;

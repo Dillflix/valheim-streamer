@@ -50,6 +50,9 @@ namespace ValheimBroadcaster.Core
         public long JourneyId { get; private set; }
         public long ContinuationOf { get; private set; }
         public bool IsJourney => JourneyId > 0;
+        /// <summary>Journey routes and their prepared endings are certified
+        /// against a future wave envelope, not one instantaneous water height.</summary>
+        public bool StableWaterClearance { get; private set; }
         /// <summary>Local salvage ended this route just before a measured
         /// rejection. Revalidating the retained prefix does not establish that
         /// extending through its discarded tail is now possible.</summary>
@@ -224,13 +227,18 @@ namespace ValheimBroadcaster.Core
         }
 
         /// <summary>Immutable retiming preserves the complete authored geometry.
-        /// Capture fixtures may run for up to seven days without changing the path.</summary>
+        /// Capture fixtures may run for up to seven days without changing the path.
+        /// Internal Journey sections can be shorter than one second: joining
+        /// their certified geometry does not introduce an editorial cut.</summary>
         public ScenicShotPlan WithDuration(double seconds)
         {
-            if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 1 || seconds > 604800)
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < (IsJourney ? .1 : 1) || seconds > 604800)
                 throw new ArgumentOutOfRangeException(nameof(seconds));
             var copy = (ScenicShotPlan)MemberwiseClone(); copy.DurationSeconds = seconds; copy.HasExplicitDuration = true; return copy;
         }
+
+        public ScenicShotPlan WithStableWaterClearance(bool enabled = true)
+        { var copy = (ScenicShotPlan)MemberwiseClone(); copy.StableWaterClearance = enabled; return copy; }
 
         /// <summary>Attach measured pre-admission timing without changing a
         /// camera point, aim or lens. An authored duration always remains the
@@ -264,7 +272,9 @@ namespace ValheimBroadcaster.Core
         {
             if (!IsSpatial || IsPictureOnly || journeyId <= 0 || predecessor <= 0 || predecessor == Id)
                 throw new ArgumentOutOfRangeException(nameof(journeyId));
-            var copy = WithDuration(seconds); copy.JourneyId = journeyId; copy.ContinuationOf = predecessor; copy.ConstantSpeed = true; return copy;
+            var copy = (ScenicShotPlan)MemberwiseClone();
+            copy.JourneyId = journeyId; copy.ContinuationOf = predecessor; copy.ConstantSpeed = copy.StableWaterClearance = true;
+            return copy.WithDuration(seconds);
         }
 
         /// <summary>A separately composed and fully validated departure cut.
@@ -274,7 +284,9 @@ namespace ValheimBroadcaster.Core
         {
             if (!IsSpatial || IsPictureOnly || journeyId <= 0)
                 throw new ArgumentOutOfRangeException(nameof(journeyId));
-            var copy = WithDuration(seconds); copy.JourneyId = journeyId; copy.ContinuationOf = 0; copy.ConstantSpeed = true; return copy;
+            var copy = (ScenicShotPlan)MemberwiseClone();
+            copy.JourneyId = journeyId; copy.ContinuationOf = 0; copy.ConstantSpeed = copy.StableWaterClearance = true;
+            return copy.WithDuration(seconds);
         }
 
         public ScenicShotPlan WithConstantSpeed(bool enabled = true)
@@ -409,8 +421,12 @@ namespace ValheimBroadcaster.Core
                 .WithJourneyRamps(JourneyEaseIn, JourneyEaseOut), 1);
         }
 
-        private ScenicShotPlan RetainEndEvidence(ScenicShotPlan replacement, double endFraction) =>
-            HasRejectedContinuation && endFraction >= 1 - .000001 ? replacement.WithRejectedContinuation(ContinuationRejection) : replacement;
+        private ScenicShotPlan RetainEndEvidence(ScenicShotPlan replacement, double endFraction)
+        {
+            replacement = replacement.WithStableWaterClearance(StableWaterClearance);
+            return HasRejectedContinuation && endFraction >= 1 - .000001
+                ? replacement.WithRejectedContinuation(ContinuationRejection) : replacement;
+        }
 
         /// <summary>Bounded non-looping movement starts/ends at rest. A paused
         /// caller samples the same progress; previews never advance state.

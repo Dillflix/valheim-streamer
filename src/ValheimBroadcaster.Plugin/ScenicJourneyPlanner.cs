@@ -208,6 +208,14 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         var positions = new List<Vector3>(16) { start };
         var floors = new List<float>(16);
         if (!MeasureFloor(start, out float firstFloor)) return false;
+        // An independent departure is not yet an owned seam. Establish its
+        // route above the future wave envelope before screening any movement.
+        // Later sections must retain the exact existing seam and tangent.
+        if (departureCut)
+        {
+            start.y = Mathf.Max(start.y, firstFloor + .5f);
+            positions[0] = start;
+        }
         floors.Add(firstFloor);
         float clearance = Mathf.Clamp(start.y - firstFloor, .25f, 18f);
         float travelled = 0;
@@ -228,6 +236,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         else while (travelled < length - .01f && positions.Count < 16)
         {
             float step = Mathf.Min(length - travelled, positions.Count == 1 ? 2f : stepLength);
+            // Consume a numerical/short tail with the preceding segment. A
+            // leftover centimetre is not a useful control point and violates
+            // Spatial's minimum separation even in completely open water.
+            if (length - travelled - step < .1f) step = length - travelled;
             if (positions.Count == 1) position += incoming * step;
             else
             {
@@ -247,7 +259,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         if (!JourneyTerrainProfile.TryFit(positions, floors, clearance, loft, out Vector3[] fitted, out string fitReason))
         { lastFailure = Reason = fitReason; return false; }
         var body = new AutonomyPosition[fitted.Length];
-        body[0] = end.CameraPosition;
+        body[0] = departureCut ? P(start) : end.CameraPosition;
         for (int i = 1; i < fitted.Length; i++)
         {
             if (!WorldPoint(fitted[i])) { lastFailure = Reason = "Journey composition exceeds world bounds"; return false; }
@@ -276,15 +288,19 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 .WithJourneyRamps(departureCut || !preceding.IsJourney, exitRamp);
             return true;
         }
-        catch (ArgumentException)
-        { lastFailure = Reason = "Candidate exceeded native spatial path or composition bounds"; return false; }
+        catch (ArgumentException error)
+        {
+            lastFailure = Reason = "Candidate exceeded native spatial path or composition bounds: " +
+                error.ParamName + ": " + error.Message.Replace('\n', ' ').Replace('\r', ' ');
+            return false;
+        }
     }
 
     private bool MeasureFloor(Vector3 point, out float floor)
     {
         floor = 0;
         if (!ScenicSurface.TryGroundHeight(point, out float ground) ||
-            !ScenicSurface.TryWaterHeight(point, out bool water, out float waterLevel))
+            !ScenicSurface.TryWaterHeight(point, out bool water, out float waterLevel, stableEnvelope: true))
         {
             WaitingForLoading = true;
             lastFailure = Reason = "Journey terrain/water ahead has not been observed yet"; return false;

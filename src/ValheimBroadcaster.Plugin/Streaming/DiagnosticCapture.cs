@@ -26,6 +26,8 @@ internal sealed class DiagnosticCapture : MonoBehaviour
     private string pendingMetadata = "";
     private DiagnosticVideoWriter? pendingOwner;
     private byte[]? pendingPixels;
+    internal int EncoderProcessId => writer?.ProcessId ?? 0;
+    internal bool EncoderClosed => writer == null || writer.Closed;
     internal string Status => "Footage capture: " + (failure.Length != 0 ? failure :
         active ? orientation?.Ready != true ? "calibrating orientation" :
         $"640x360 / 12 fps / no audio; {writer?.Written ?? 0} frames, {writer?.Dropped ?? 0} dropped; {directory}" :

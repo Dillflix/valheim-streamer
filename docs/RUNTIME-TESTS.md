@@ -1,5 +1,17 @@
 # Validation and runtime test record
 
+## 0.8.48 Journey interruption repair
+
+The supplied 0.8.47 footage/trace demonstrates a queued water-clearance contradiction leading directly to a premature Journey ending, plus matched moving footage earning zero measured distance. [Investigation and acceptance cases](JOURNEY-0.8.48-RECOVERY.md) document the evidence and repair. Deterministic tests cover changing water, subsecond travel sections, captured-frame identity, proof revocation/revalidation, queue-prefix retention, scene rebinding and mission/picture ownership. Real-assembly audits verify the water-envelope assumptions against Valheim 1.0.21. These checks do not run the Unity scene: sustained 5,000m travel at 12m/s, actual local repair cuts, forest obstruction and shoreline transitions still require captured in-game acceptance.
+
+## 0.8.48 Windows updater audit
+
+The updater formerly existed only on `feature-unattended-client-updates`; it was absent from the complete 0.8.47 main-line client. Its startup/bridge and host supervisor are now integrated with current observer, camera and encoder code, with startup disabled by default. Observer admission remains protocol 3. The [audit report](UPDATER-0.8.48-AUDIT.md) records demonstrated defects, fixes and the exact remaining acceptance sequence; the [setup guide](UNATTENDED-UPDATES.md) describes the required new CI-built bootstrap client.
+
+Automated scope includes source-ancestry qualification, the current twelve-file payload and manifest, archive/path checks, filesystem transaction fault injection, unresolved-journal launch prevention, stale/mismatched heartbeat rejection, manual takeover, exact Sandboxie process ownership, and all three encoder lifecycles. Local executable Python cases pass. A Windows junction case and three real-process cases are explicitly skipped on this host: the latter require a runner whose `/proc` namespace matches reported process IDs. The normal Linux CI job executes those subprocess cases; Windows CI covers Windows filesystem/ACL behavior. Final test totals and real-reference build outcomes belong to the completed workflow for the delivered source revision.
+
+**Actual Windows 11 / Sandboxie / Steam / Valheim cold startup, authentication, NVENC publishing, automatic update, rollback and long-run operation remain not run here.** The native adapter fixtures and Linux temporary executable do not establish those outcomes. No live installation, sandbox termination or server change is performed by the audit.
+
 ## 0.8.47 Journey continuation
 
 The user reports that 0.8.46 now starts Journey but ends after a short trip. No new capture accompanies that report. Source inspection establishes a one-section startup reserve, fixed-window loading gates, incompatible preparation/playback timing, maintenance contention, latched preparation failures and missing queued-proof renewal. [Defects, correction and runtime acceptance](JOURNEY-0.8.47-CONTINUATION.md).

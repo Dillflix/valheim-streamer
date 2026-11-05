@@ -7,6 +7,8 @@ internal static class JourneyPresentationTests
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
         yield return ("Journey consumes the preceding clean render while the current output frame is not rendered", PreviousRender);
+        yield return ("Journey keeps the applied scene identity when frame-local camera context expires at the next Update", FrameScopedScene);
+        yield return ("Recorded 0.8.47 movement earns distance through the retained production scene identity", RecordedSceneHandoff);
         yield return ("Recorded 0.8.41 departure poses earn actual distance through the production presentation gate", RecordedDeparture);
         yield return ("Sixty-fps render then Update ordering credits travel once using the captured clock", FrameLoop);
         yield return ("A missing production capture breaks credit across even a single unreadable frame", MissingCaptureGap);
@@ -38,8 +40,9 @@ internal static class JourneyPresentationTests
         int frameDelta = 1, double age = 1d / 60, long generation = 3, long shot = 20,
         long revision = 1, long scene = Scene, int camera = Camera, int sourceOffset = 0, int expectedOffset = 0) =>
         policy.TryTake(sample, mode, sample.Audit.CaptureFrame, sample.Audit.CaptureFrame + sourceOffset,
-            sample.Audit.CaptureFrame + frameDelta, sample.Time + age, generation, shot, revision, scene,
-            camera, sample.Audit.CaptureFrame + expectedOffset, out accepted);
+            sample.Audit.CaptureFrame + frameDelta, sample.Time + age, generation,
+            new JourneyPresentationIdentity(shot, revision, scene, sample.Audit.CaptureFrame + expectedOffset),
+            camera, out accepted);
     private static void Check(bool condition, string reason = "Journey presentation assertion failed")
     { if (!condition) throw new Exception(reason); }
     private static void Near(double actual, double expected, double tolerance = .00001) =>
@@ -90,6 +93,68 @@ internal static class JourneyPresentationTests
         }
         Check(distance > .59 && journey.TravelMetres > .59, "Recorded visible departure still earns zero distance");
         Near(journey.TravelMetres, distance); Near(journey.ShownSeconds, frames[4].Time - frames[0].Time);
+    }
+    private static void FrameScopedScene()
+    {
+        const int rendered = 4446;
+        long FrameLocalContext(int frame) => frame == rendered ? Scene : 0;
+        var capture = Sample(frame: rendered);
+        // This is the same immutable solve-time handoff used by the plugin and
+        // FrameHold. The scene getter has expired before Update consumes render.
+        var applied = new JourneyPresentationIdentity(20, 1, FrameLocalContext(rendered), rendered);
+        var expired = new JourneyPresentationIdentity(20, 1, FrameLocalContext(rendered + 1), rendered);
+        var policy = new JourneyPresentationPolicy();
+        bool Consume(JourneyPresentationSample sample, JourneyPresentationIdentity identity) =>
+            policy.TryTake(sample, FramePresentation.Live, sample.Audit.CaptureFrame,
+                sample.Audit.CaptureFrame, sample.Audit.CaptureFrame + 1, sample.Time + 1d / 60,
+                3, identity, Camera, out _);
+        Check(!Consume(capture, expired),
+            "An absent next-frame context must not be substituted for the captured scene");
+        Check(!Consume(capture, default), "A reset camera solve must not authorize a capture");
+        Check(Consume(capture, applied),
+            "Retained render identity should admit the preceding matched capture");
+        Check(!Consume(capture, applied),
+            "Latching scene identity must preserve once-only capture consumption");
+        var next = Sample(frame: rendered + 1, at: capture.Time + 1d / 60, scene: Scene + 1);
+        Check(!Consume(next, applied), "The previous solve must not authorize a new capture");
+        Check(!Consume(next, new JourneyPresentationIdentity(20, 1, Scene, rendered + 1)),
+            "The previous scene must not authorize a new scene's capture");
+        Check(Consume(next, new JourneyPresentationIdentity(20, 1, Scene + 1, rendered + 1)));
+    }
+
+    private static void RecordedSceneHandoff()
+    {
+        // Reduced poses and render times from Journey 63 in the supplied 0.8.47
+        // capture. Both source audits matched, but the frame-local scene lookup
+        // in the following Update returned 0 and rejected all travel credit.
+        var frames = new[] {
+            Sample(9052, 166.01690673828125, .01, -2410.203125, shot: 64,
+                y: 36.5, z: -1671.54296875),
+            Sample(9057, 166.10023498535156, .02, -2410.1416015625, shot: 64,
+                y: 36.4996337890625, z: -1671.427734375)
+        };
+        var journey = new ScenicJourneyPolicy(); var start = frames[0].Position;
+        journey.Start(63, 5000, 12, start, new AutonomyPosition(1, 0, 0));
+        AutonomyPosition Offset(float x) => new AutonomyPosition(start.X + x, start.Y, start.Z);
+        var plan = ScenicShotPlan.Spatial(64,
+            new ScenicFeature("coast", ScenicFeatureKind.Coastline, start, new AutonomyPosition(1, 0, 0), 20, 5, 1),
+            ScenicShotRole.Traverse, new[] { start, Offset(24), Offset(48) },
+            new[] { Offset(10), Offset(34), Offset(58) }, 75).AsJourney(63, 11, 8);
+        var gate = new JourneyPresentationPolicy();
+        foreach (var frame in frames)
+        {
+            var applied = new JourneyPresentationIdentity(64, 1, Scene, frame.Audit.CaptureFrame);
+            var expired = new JourneyPresentationIdentity(64, 1, 0, frame.Audit.CaptureFrame);
+            bool Consume(JourneyPresentationIdentity identity, out JourneyPresentationSample accepted) =>
+                gate.TryTake(frame, FramePresentation.Live, frame.Audit.CaptureFrame, frame.Audit.CaptureFrame,
+                    frame.Audit.CaptureFrame + 1, frame.Time + 1d / 60, 3, identity, Camera, out accepted);
+            Check(!Consume(expired, out _), "The original expired-context handoff unexpectedly earned credit");
+            Check(Consume(applied, out var accepted), "The production identity snapshot rejected the matched render");
+            journey.Observe(plan, accepted.Time, accepted.Progress, true, false, accepted.Position);
+        }
+        Near(journey.TravelMetres, frames[0].Position.Distance(frames[1].Position));
+        Check(journey.TravelMetres > .13, "The captured moving picture still earned zero distance");
+        Near(journey.ShownSeconds, frames[1].Time - frames[0].Time);
     }
 
     private static void FrameLoop()
