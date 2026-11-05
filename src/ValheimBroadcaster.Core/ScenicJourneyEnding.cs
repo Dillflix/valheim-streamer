@@ -30,10 +30,11 @@ public static class ScenicJourneyEnding
         }
         try
         {
-            return ScenicShotPlan.Picture(id, arrivalSubject ?? section.Feature!,
+            return RetainCruise(ScenicShotPlan.Picture(id, arrivalSubject ?? section.Feature!,
                 arrivalSubject == null ? section.Role : ScenicShotRole.Establish,
                 end.CameraPosition, end.AimPosition, section.FieldOfView, end.ScreenX, end.ScreenY)
-                .WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance);
+                .WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance)
+                .WithJourneyView(section.UsesJourneyView && !observedArrivalFocus.HasValue && arrivalSubject == null), section);
         }
         catch (ArgumentException) { return null; }
     }
@@ -72,12 +73,16 @@ public static class ScenicJourneyEnding
         {
             // No identity, position, lens or composition jump is hidden in the
             // ending. It belongs to ordinary direction after journey handoff.
-            return ScenicShotPlan.Pan(id, arrivalSubject ?? section.Feature!, ScenicShotRole.Establish,
+            return RetainCruise(ScenicShotPlan.Pan(id, arrivalSubject ?? section.Feature!, ScenicShotRole.Establish,
                 end.CameraPosition, end.AimPosition, aim, section.FieldOfView,
-                end.ScreenX, end.ScreenY).WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance);
+                end.ScreenX, end.ScreenY).WithDuration(DurationSeconds).WithStableWaterClearance(section.StableWaterClearance)
+                .WithJourneyView(section.UsesJourneyView && !observedArrivalFocus.HasValue && arrivalSubject == null), section);
         }
         catch (ArgumentException) { return null; }
     }
+
+    private static ScenicShotPlan RetainCruise(ScenicShotPlan ending, ScenicShotPlan section) =>
+        section.JourneyCruiseSpeed > 0 ? ending.WithJourneyCruiseSpeed(section.JourneyCruiseSpeed) : ending;
 
     public static bool AimsAtObservedArrival(ScenicShotPlan ending, AutonomyPosition focus) =>
         ending != null && Angle(ending.Sample(1).CameraPosition, ending.Sample(1).AimPosition, focus) <= 12;

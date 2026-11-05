@@ -18,6 +18,8 @@ internal static class JourneyRunwayTests
         yield return ("Journey queue heads require exact predecessor identity and fresh complete evidence", QueueIdentity);
         yield return ("Journey runway state and producer history reset between owners and reject invalid input", InvalidAndReset);
         yield return ("Journey runtime budget covers useful adapted cruise while retaining a finite limit", RuntimeBudget);
+        yield return ("Journey cruise anticipates a slower connected section with bounded acceleration and deceleration", SectionLookahead);
+        yield return ("A late slower section strictly caps startup and seam speed in controller telemetry", SectionSeamLimit);
     }
 
     private static void Check(bool ok, string reason) { if (!ok) throw new Exception(reason); }
@@ -57,6 +59,8 @@ internal static class JourneyRunwayTests
         Near(JourneyRunwayPolicy.WindowMetres(6, 57, 48), 0);
         Near(JourneyRunwayPolicy.WindowMetres(6, 10, 48, 60, 35), 15);
         Near(JourneyRunwayPolicy.WindowMetres(6, 0, 48, 85, 80), 0);
+        Near(JourneyRunwayPolicy.WindowMetres(12, 40, 64, 85, 12, JourneyViewPolicy.ObservationRange), 33);
+        Near(JourneyRunwayPolicy.WindowMetres(12, 40, 64, 85, 35, JourneyViewPolicy.ObservationRange), 10);
         foreach (double speed in new[] { 2d, 6, 12 })
         foreach (double inherited in new[] { 0d, 28, 50 })
         for (int seam = 0; seam <= 100; seam++)
@@ -133,6 +137,64 @@ internal static class JourneyRunwayTests
         Near(JourneyRunwayPolicy.StoppingDistance(12), .5 + 3 + 48);
         Near(JourneyRunwayPolicy.MaximumSafeSpeed(JourneyRunwayPolicy.StoppingDistance(12)), 12);
         Near(JourneyRunwayPolicy.MaximumSafeSpeed(.25), 0);
+    }
+
+    private static void SectionLookahead()
+    {
+        foreach (int fps in new[] { 30, 60 })
+        {
+            var policy = new JourneyRunwayPolicy();
+            Check(policy.TryStart(1, 1000, 12, out _), "Lookahead fixture could not start");
+            double remaining = 80, dt = 1d / fps;
+            int frames = 0;
+            while (remaining > 0 && frames++ < fps * 30)
+            {
+                double before = policy.EffectiveCruise;
+                double speed = policy.StepSpeed(12, 1000, dt, sectionCruiseLimit: 12,
+                    nextSectionCruiseLimit: 6, remainingSectionMetres: remaining);
+                Check(before - speed <= JourneyRunwayPolicy.Deceleration * dt + .000001 &&
+                    speed - before <= JourneyRunwayPolicy.Acceleration * dt + .000001,
+                    "Normal anticipatory motion jumped its acceleration bound");
+                Check(speed <= JourneyRunwayPolicy.SectionSpeedEnvelope(12, 6, remaining) + .000001,
+                    "Cruise ignored the approaching section speed constraint");
+                remaining -= speed * dt;
+                Check(speed <= JourneyRunwayPolicy.SectionSpeedEnvelope(12, 6, Math.Max(0, remaining)) + .000001,
+                    "The proposed frame consumed braking distance without respecting the next evaluation's envelope");
+            }
+            Check(remaining <= 0 && policy.EffectiveCruise <= 6 + JourneyRunwayPolicy.Deceleration * dt + .001,
+                "Camera reached the slower seam without decelerating");
+            policy.LimitToSection(6); Near(policy.EffectiveCruise, 6);
+            for (int i = 0; i < fps * 2; i++) Near(policy.StepSpeed(12, 1000, dt, sectionCruiseLimit: 6), 6);
+            // A later straighter section can accelerate again; its larger
+            // certificate is a limit, not an instantaneous commanded speed.
+            double prior = policy.EffectiveCruise;
+            policy.LimitToSection(12); Near(policy.EffectiveCruise, prior);
+            for (int i = 0; i < fps * 6; i++)
+            {
+                double before = policy.EffectiveCruise, after = policy.StepSpeed(12, 1000, dt);
+                Check(after - before <= JourneyRunwayPolicy.Acceleration * dt + .000001,
+                    "Leaving the slow section caused an acceleration jump");
+            }
+            Near(policy.EffectiveCruise, 12);
+        }
+    }
+
+    private static void SectionSeamLimit()
+    {
+        var startup = new JourneyRunwayPolicy();
+        Check(startup.TryStart(1, 1000, 12, out _, sectionCruiseLimit: 2), "Useful certified slow departure was refused");
+        Near(startup.EffectiveCruise, 2);
+        var late = new JourneyRunwayPolicy(); late.TryStart(1, 1000, 12, out _);
+        Near(late.EffectiveCruise, 12);
+        // Proof can arrive at the seam. There is then no distance in which to
+        // anticipate it: strict current-section safety takes priority.
+        Near(late.StepSpeed(12, 1000, 1d / 60, sectionCruiseLimit: 2), 2);
+        Near(late.EffectiveCruise, 2);
+        late.LimitToSection(12); Near(late.EffectiveCruise, 2);
+        Check(late.StepSpeed(12, 1000, 1d / 60) <= 2 + JourneyRunwayPolicy.Acceleration / 60 + .000001,
+            "Restoring a larger ceiling instantly changed controller speed");
+        Near(JourneyRunwayPolicy.SectionSpeedEnvelope(12, 6, 36), 12);
+        Near(JourneyRunwayPolicy.SectionSpeedEnvelope(12, 6, 0), 6);
     }
 
     private static void FiniteStop()

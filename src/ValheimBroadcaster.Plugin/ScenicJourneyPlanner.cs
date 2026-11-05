@@ -10,7 +10,6 @@ namespace ValheimBroadcaster.Plugin;
 /// preflight. Unobserved space is a loading wait, never a usable route.</summary>
 internal sealed class ScenicJourneyPlanner : IDisposable
 {
-    private static readonly float[] turns = { 0, 20, -20, 40, -40, 70, -70 };
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
     private readonly ScenicVisibility visibility = new ScenicVisibility("journey-ahead");
     private readonly ScenicSplinePath measured = new ScenicSplinePath();
@@ -25,10 +24,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private AutonomyPosition? planningCarrier;
     private long planningEpoch;
     private float searchWindowLength;
-    private bool prefixAttempted, obstacleAttempted;
-    private float? observedObstacleAltitude;
-    private Vector3 observedObstaclePosition;
     private int candidateOption;
+    private readonly JourneyNavigationPlanner navigation;
+    private bool navigationBound;
+    internal ScenicJourneyPlanner() { navigation = new JourneyNavigationPlanner(visibility); }
     private sealed class Opening
     {
         internal readonly Vector3 Position, Aim, Heading;
@@ -43,7 +42,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private long finalizingEpoch;
     private float finalizingGeometryAt;
     private long nextId, journeyId;
-    private float length, speed, aspect, nearClip, started, retryAt;
+    private float length, speed, selectedSpeed, aspect, nearClip, started, retryAt;
     private bool moveCarrier, exitRamp, departureCut, nativeSpline;
     private int alternative;
     private AutonomyPosition? goal, arrivalFocus, arrivalCenter;
@@ -69,7 +68,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         Reset(); previous = predecessor; nextId = id; journeyId = journey;
         // Existing spatial routes support <=80m/16 knots. The programme owns
         // kilometres by joining local certificates, not by bypassing that bound.
-        length = Mathf.Clamp(metres, 1, 64); speed = metresPerSecond; aspect = cameraAspect; nearClip = cameraNearClip;
+        length = Mathf.Clamp(metres, 1, 64); speed = selectedSpeed = metresPerSecond; aspect = cameraAspect; nearClip = cameraNearClip;
         moveCarrier = moveObserver; exitRamp = finalWindow; goal = objectiveGoal; arrivalFocus = observedArrivalFocus;
         this.arrivalCenter = arrivalCenter; this.arrivalRadius = arrivalRadius;
         this.departureCut = departureCut; nativeSpline = nativeSplineOverride ?? predecessor.UseNativeSpline; started = Time.unscaledTime;
@@ -82,6 +81,9 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             bool retained = departureSpace.Bind(journey, planningEpoch, seed.CameraPosition, directionGoal,
                 this.planningCarrier ?? seed.CameraPosition, Time.unscaledTime);
             if (!retained) { openings.Clear(); searchWindowLength = 0; }
+            else foreach (Opening opening in openings)
+                if (opening.Attempts < JourneyDepartureSpace.RoutesPerOpening && navigation.MatchesOpening(opening.Position, opening.Aim))
+                { activeOpening = opening; break; }
             // A failed long path is not evidence against a shorter corridor
             // from the same observed origin. View history remains useful.
             if (Mathf.Abs(searchWindowLength - length) > .5f)
@@ -129,116 +131,167 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     {
         if (Complete || previous == null || Time.unscaledTime < retryAt) return;
         if (planningEpoch != CameraSpatialScene.Shared.Epoch)
-        { Finish("Journey planning scene changed; discard the old departure observations"); return; }
+        { Finish("Journey planning scene changed; discard mixed scene evidence"); return; }
         if (Time.unscaledTime - started > ScenicJourneyPolicy.PreparationSeconds)
-        { Finish((WaitingForLoading ? "Journey loading horizon did not become ready" : "Journey corridor search expired") + "; last evidence: " + lastFailure); return; }
+        { Finish("Bounded connected navigation search expired; " + Reason + "; last evidence: " + lastFailure); return; }
         if (finalizing != null) { StepFinalization(); return; }
         if (candidate == null)
         {
-            if (!departureCut && alternative >= turns.Length * 3)
-            { Finish("No validated route among the goal-directed lateral/elevation alternatives; last evidence: " + lastFailure); return; }
             if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return;
             using (work)
             {
-                if (departureCut && activeOpening == null && !SelectOpening()) return;
-                AttemptCount++;
-                int option = departureCut ? activeOpening!.Attempts++ : alternative;
-                candidateOption = option; prefixAttempted = obstacleAttempted = false; observedObstacleAltitude = null;
-                if (!TryCandidate(option, out candidate))
+                if (arrivalCenter.HasValue && arrivalFocus.HasValue)
                 {
-                    if (WaitingForLoading)
-                    { retryAt = Time.unscaledTime + .25f; if (departureCut) activeOpening!.Attempts--; }
-                    else { alternative++; activeOpening = null; }
-                    return;
+                    if (alternative >= 3) { Finish("No validated locally observed arrival approach: " + lastFailure); return; }
+                    if (!TryArrivalCandidate(alternative, out candidate))
+                    {
+                        if (WaitingForLoading) retryAt = Time.unscaledTime + .25f;
+                        else alternative++;
+                        return;
+                    }
                 }
+                else
+                {
+                    if (!navigationBound)
+                    {
+                        if (departureCut && activeOpening == null && !SelectOpening()) return;
+                        if (!BeginNavigation()) return;
+                    }
+                    JourneyNavigationStatus status = navigation.Step();
+                    Reason = navigation.Reason;
+                    WaitingForLoading = status == JourneyNavigationStatus.WaitingForObservations;
+                    if (status == JourneyNavigationStatus.Searching || WaitingForLoading) return;
+                    if (status != JourneyNavigationStatus.Ready || navigation.Result == null)
+                    {
+                        lastFailure = Reason;
+                        if (departureCut && status != JourneyNavigationStatus.Invalidated)
+                        {
+                            activeOpening!.Attempts = JourneyDepartureSpace.RoutesPerOpening;
+                            activeOpening = null; navigation.Reset(); navigationBound = false; return;
+                        }
+                        Finish("No connected route from this exact seam within the local search: " + Reason); return;
+                    }
+                    selectedSpeed = navigation.PlanningSpeed;
+                    if (!BuildNavigationCandidate(navigation.Result, out candidate))
+                    { navigation.RejectCandidate(); return; }
+                }
+                AttemptCount++; candidateOption = AttemptCount;
                 openingScreensSinceRoute = 0;
-                TraceCandidate(candidate!, "corridor");
+                TraceCandidate(candidate!, arrivalFocus.HasValue ? "observed-arrival" : "connected-navigation");
                 evaluator.Begin(candidate!, visibility, aspect, nearClip, moveCarrier);
             }
         }
         bool complete = evaluator.Step(6);
-        // A Journey needs a complete connected continuation. A measured bad
-        // tail can propose a useful prefix or canopy-informed replacement,
-        // each receiving its own complete native validation before admission.
-        if (!complete && evaluator.FailureKind == ScenicRejectionKind.None)
-        { Reason = evaluator.Reason; return; }
-        if (!complete && evaluator.FailureKind == ScenicRejectionKind.SurveyIncomplete)
+        if (!complete && (evaluator.FailureKind == ScenicRejectionKind.None || evaluator.FailureKind == ScenicRejectionKind.SurveyIncomplete))
         { Reason = evaluator.Reason; return; }
         ScenicShotPlan? fitted = evaluator.EvaluatedPlan;
         if (complete && evaluator.Accepted && fitted != null)
         {
-            // A departure cut has its own authored first pose. Later sections
-            // must join the preceding live section's exact complete end pose.
-            ScenicShotSample end = departureCut ? candidate!.Sample(0) : previous.Sample(1), start = fitted.Sample(0);
-            if (end.CameraPosition.Distance(start.CameraPosition) < .005 && end.AimPosition.Distance(start.AimPosition) < .005)
+            ScenicShotSample seam = departureCut ? candidate!.Sample(0) : previous.Sample(1), start = fitted.Sample(0);
+            if (seam.CameraPosition.Distance(start.CameraPosition) < .005 && seam.AimPosition.Distance(start.AimPosition) < .005)
             {
-                // Native gaze sampling is part of planning work too. Preserve
-                // this completed geometry proof while finishing it over frames;
-                // later mathematical verification cannot refresh its lifetime.
                 finalizing = fitted; finalizingEpoch = evaluator.SceneEpoch;
-                finalizingGeometryAt = Time.unscaledTime;
-                StepFinalization(); return;
+                finalizingGeometryAt = Time.unscaledTime; StepFinalization(); return;
             }
-            lastFailure = "Terrain fitting moved the exact journey seam";
+            lastFailure = "Native fitting moved the exact journey seam";
         }
         else lastFailure = evaluator.FailureKind == ScenicRejectionKind.None ? evaluator.Reason : evaluator.FailureReason;
-        ScenicRejectionKind failure = evaluator.FailureKind;
-        if (evaluator.RejectedPose.HasValue)
+        if (evaluator.RejectedPose.HasValue && ScenicTrace.Enabled)
         {
             ScenicPose rejected = evaluator.RejectedPose.Value;
-            if (evaluator.SuggestedCanopyLift > 0)
-            {
-                ScenicPose canopy = evaluator.CanopyEscapePose ?? rejected;
-                observedObstacleAltitude = canopy.Position.y + evaluator.SuggestedCanopyLift;
-                observedObstaclePosition = canopy.Position;
-            }
-            if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(
-                ScenicTrace.Row("journey-candidate-rejected").Field("plan", nextId).Field("openingOption", candidateOption)
-                .Field("rejection", failure.ToString()).Field("progress", rejected.Progress)
-                .Field("prefixMetres", evaluator.ReadableWindow.Start <= .000001 ? evaluator.ReadableWindow.TravelMetres : 0)
-                .Field("canopyLift", evaluator.SuggestedCanopyLift).Field("reason", lastFailure), "camera", rejected.Position), "focus", rejected.Focus));
+            ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Row("journey-candidate-rejected")
+                .Field("plan", nextId).Field("openingOption", candidateOption).Field("rejection", evaluator.FailureKind.ToString())
+                .Field("progress", rejected.Progress).Field("reason", lastFailure), "camera", rejected.Position), "focus", rejected.Focus));
         }
-        if (TryReadablePrefix()) return;
-        if (!obstacleAttempted && observedObstacleAltitude.HasValue &&
-            (failure == ScenicRejectionKind.Foliage || failure == ScenicRejectionKind.InsideVegetation || failure == ScenicRejectionKind.Focus))
-        {
-            // The measured canopy supplies the vertical objective; it does not
-            // grant a route. Exact connected seams and every native pose still
-            // require a new full validation.
-            if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var obstacleWork))
-            { Reason = "Waiting for work budget to validate the measured canopy alternative"; return; }
-            using (obstacleWork)
-            {
-                obstacleAttempted = true;
-                if (TryCandidate(candidateOption, out var informed, observedObstacleAltitude))
-                {
-                    candidate = informed; evaluator.Begin(candidate!, visibility, aspect, nearClip, moveCarrier);
-                    TraceCandidate(candidate!, "measured-canopy");
-                    Reason = "Validating a route informed by the observed canopy height"; return;
-                }
-                if (WaitingForLoading)
-                {
-                    obstacleAttempted = false; retryAt = Time.unscaledTime + .25f;
-                    Reason = "Waiting for observations of the measured canopy alternative: " + lastFailure; return;
-                }
-            }
-        }
-        bool wait = failure == ScenicRejectionKind.Geometry || failure == ScenicRejectionKind.Acquisition ||
-            failure == ScenicRejectionKind.CarrierRange || failure == ScenicRejectionKind.SurveyIncomplete;
-        if (!wait && departureCut && activeOpening != null && evaluator.ValidatedFraction <= .00001f &&
-            (failure == ScenicRejectionKind.Focus || failure == ScenicRejectionKind.Foliage || failure == ScenicRejectionKind.InsideVegetation))
-            activeOpening.Attempts = JourneyDepartureSpace.RoutesPerOpening;
-        candidate = null; evaluator.Reset();
-        WaitingForLoading = wait;
+        bool wait = evaluator.FailureKind == ScenicRejectionKind.Geometry || evaluator.FailureKind == ScenicRejectionKind.Acquisition ||
+            evaluator.FailureKind == ScenicRejectionKind.CarrierRange || evaluator.FailureKind == ScenicRejectionKind.SurveyIncomplete;
         if (wait)
         {
-            // Keep the same pending corridor while the carrier advances and the
-            // persistent observations mature. A missing tile is not a bad turn.
-            retryAt = Time.unscaledTime + .25f;
-            if (departureCut && activeOpening != null) activeOpening.Attempts--;
-            Reason = "Waiting for the journey loading/observation horizon: " + lastFailure;
+            // Unknown is neither a rejected graph edge nor a fresh route proof.
+            // Keep the exact proposal and retry all native samples within the
+            // original bounded planning deadline.
+            evaluator.Begin(candidate!, visibility, aspect, nearClip, moveCarrier);
+            WaitingForLoading = true; retryAt = Time.unscaledTime + .25f;
+            Reason = "Waiting for native route observations: " + lastFailure; return;
         }
-        else { alternative++; activeOpening = null; Reason = "Trying another observed opening or goal-directed corridor: " + lastFailure; }
+        RejectNavigationCandidate();
+    }
+
+    private bool BeginNavigation()
+    {
+        ScenicShotSample seam = previous!.Sample(1);
+        Vector3 origin = departureCut ? activeOpening!.Position : V(seam.CameraPosition);
+        Vector3 aim = departureCut ? activeOpening!.Aim : V(seam.AimPosition);
+        Vector3 incoming = departureCut ? activeOpening!.Heading : TerminalDirection(previous);
+        if (incoming.sqrMagnitude < .01f || Mathf.Abs(incoming.normalized.y) > .4f)
+        { Finish("Incoming Journey seam has no bounded travelling tangent"); return false; }
+        ScenicShotSample first = departureCut ? ScenicShotPlan.Picture(nextId, previous.Feature!, ScenicShotRole.Traverse,
+            P(origin), P(aim), previous.FieldOfView, 0, -.04f).Sample(0) : seam;
+        Vector3 entryAim = aim + incoming.normalized * 2;
+        if (!departureCut && previous.IsSpatial)
+        {
+            int last = previous.WaypointCount - 1;
+            float bodyStep = Vector3.Distance(V(previous.CameraWaypoint(last)), V(previous.CameraWaypoint(last - 1)));
+            if (bodyStep > .05f)
+                entryAim = aim + (V(previous.AimWaypoint(last)) - V(previous.AimWaypoint(last - 1))) * (2 / bodyStep);
+        }
+        Vector3 destination = goal.HasValue ? V(goal.Value) : origin + V(ObjectiveHeading(previous)) * 100;
+        Vector3 carrier = planningCarrier.HasValue ? V(planningCarrier.Value) : origin;
+        try
+        {
+            navigation.Begin(journeyId, planningEpoch, nextId, first, incoming, entryAim, destination, carrier,
+                length, speed, previous.FieldOfView, aspect, nearClip);
+            navigationBound = true; return true;
+        }
+        catch (ArgumentException error)
+        { lastFailure = "Invalid connected navigation request: " + error.ParamName; Finish(lastFailure); return false; }
+    }
+
+    private bool BuildNavigationCandidate(JourneyNavigationPath path, out ScenicShotPlan? result)
+    {
+        result = null;
+        if (ScenicTrace.Enabled)
+        {
+            CameraTraceRecord trace = ScenicTrace.Row("journey-navigation-proposal").Field("plan", nextId)
+                .Field("length", path.Length).Field("goalProgress", path.GoalProgress).Field("evidenceAge", Time.unscaledTime - path.OldestEvidence)
+                .Field("onward", path.OnwardPose.HasValue).Field("atGoal", path.AtGoal).Field("plannedCruise", selectedSpeed);
+            if (path.OnwardPose.HasValue) ScenicTrace.Vector(trace, "onwardCamera", V(path.OnwardPose.Value.Position));
+            ScenicTrace.Record(trace);
+        }
+        var body = new AutonomyPosition[path.Poses.Count]; var aims = new AutonomyPosition[body.Length];
+        for (int i = 0; i < body.Length; i++) { body[i] = path.Poses[i].Position; aims[i] = path.Poses[i].Aim; }
+        ScenicFeature source = previous!.Feature!;
+        AutonomyPosition heading = goal.HasValue ? P((V(goal.Value) - V(body[0])).normalized) : ObjectiveHeading(previous);
+        var feature = new ScenicFeature(source.Id, ScenicFeatureKind.Landscape, aims[aims.Length / 2], heading,
+            source.Radius, source.Height, source.Confidence, waterDirection: source.WaterDirection);
+        try
+        {
+            ScenicShotSample seam = previous.Sample(1);
+            ScenicShotPlan proposed = ScenicShotPlan.Spatial(nextId, feature, ScenicShotRole.Traverse, body, aims,
+                previous.FieldOfView, departureCut ? 0 : seam.ScreenX, departureCut ? -.04f : seam.ScreenY, nativeSpline);
+            double seconds = proposed.TravelMetres / selectedSpeed / ScenicJourneyMotion.CruiseFraction(departureCut || !previous.IsJourney, exitRamp);
+            result = (departureCut ? proposed.AsJourneyDeparture(journeyId, seconds) : proposed.AsJourney(journeyId, previous.Id, seconds))
+                .WithJourneyRamps(departureCut || !previous.IsJourney, exitRamp).WithJourneyView();
+            return true;
+        }
+        catch (ArgumentException error)
+        { lastFailure = Reason = "Connected polyline cannot form a bounded native viewing path: " + error.ParamName; return false; }
+    }
+
+    private void RejectNavigationCandidate()
+    {
+        candidate = null; evaluator.Reset(); ClearFinalization(); WaitingForLoading = false;
+        if (navigationBound) navigation.RejectCandidate(); else alternative++;
+        Reason = "Native curve rejected; exploring another connected route: " + lastFailure;
+    }
+
+    internal bool WithinLoadingHorizon(Vector3 carrier)
+    {
+        AutonomyPosition observer = P(carrier);
+        if (candidate != null && !JourneyLoadingContext.ContainsPlan(candidate, observer, JourneyViewPolicy.ObservationRange)) return false;
+        if (finalizing != null && !JourneyLoadingContext.ContainsPlan(finalizing, observer, JourneyViewPolicy.ObservationRange)) return false;
+        if (pendingOpening >= 0 && !JourneyLoadingContext.ContainsPoint(P(openingPosition), observer, JourneyViewPolicy.ObservationRange)) return false;
+        return !navigationBound || navigation.WithinLoadingHorizon(carrier);
     }
 
     private bool SelectOpening()
@@ -285,11 +338,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         try { focus = V(proposal.AimAt(P(position))); }
         catch (ArgumentException)
         { CompleteOpening(id, false, "Departure gaze lies outside supported world coordinates"); return; }
-        focus = visibility.LandscapeFocus(position, focus, nearClip);
         openingPosition = position; openingFocus = focus;
         Vector3 carrier = planningCarrier.HasValue ? V(planningCarrier.Value) : position;
         if (Vector3.Distance(position, V(seed.CameraPosition)) > JourneyDepartureSpace.MaximumOriginRelocation ||
-            Vector3.Distance(position, carrier) > 70 || Vector3.Distance(focus, carrier) > JourneyRunwayPolicy.LocalReachMetres)
+            !JourneyLoadingContext.ContainsPoint(P(position), P(carrier), JourneyViewPolicy.ObservationRange))
         { CompleteOpening(id, false, "Departure opening exceeds the observed local camera-and-gaze reach"); return; }
         if (departureSpace.WasMeasured(P(position), P(focus)))
         { CompleteOpening(id, false, "Equivalent measured departure opening already considered"); return; }
@@ -297,7 +349,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         var landscape = new ScenicFeature(source.Id, ScenicFeatureKind.Landscape, P(focus), proposal.Heading,
             source.Radius, source.Height, source.Confidence, waterDirection: source.WaterDirection);
         ScenicShotPlan probe = ScenicShotPlan.Picture(nextId, landscape, ScenicShotRole.Traverse, P(position), P(focus), previous.FieldOfView,
-            0, -.04f).WithStableWaterClearance(true);
+            0, -.04f).WithStableWaterClearance(true).WithJourneyView();
         var pose = new ScenicPose(position, focus, ScenicVisibility.Compose(position, focus, 0, -.04f, previous.FieldOfView, aspect), previous.FieldOfView, 0);
         bool readable = ScenicPoseValidation.Check(pose, probe, visibility, aspect, nearClip, false, moveCarrier,
             out float quality, out ScenicRejectionKind kind, out string reason);
@@ -366,7 +418,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 if (!measured.Prepare(fitted, 1))
                 { Finish("Validated journey native path could not be measured"); return; }
                 double distance = fitted.UseNativeSpline ? measured.Length : fitted.TravelMetres;
-                finalizingDuration = distance / speed /
+                finalizingDuration = distance / selectedSpeed /
                     ScenicJourneyMotion.CruiseFraction(fitted.JourneyEaseIn, fitted.JourneyEaseOut);
                 if (arrivalCenter.HasValue) finalizingDuration = Math.Max(1, finalizingDuration);
                 gaze.Begin(measured, finalizingDuration);
@@ -377,11 +429,19 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             { Reason = "Verifying native journey gaze: " + gaze.CheckedIntervals + "/256 intervals"; return; }
             if (!gaze.Accepted)
             {
-                lastFailure = "Native journey gaze exceeds the bounded angular rate at the selected cruise";
-                candidate = null; evaluator.Reset(); alternative++; activeOpening = null; ClearFinalization();
-                Reason = "Trying another corridor with a gentler viewing path"; return;
+                if (selectedSpeed > 2.001f)
+                {
+                    selectedSpeed = (float)JourneyNavigationGazePolicy.SlowerTier(selectedSpeed);
+                    finalizingDuration = (fitted.UseNativeSpline ? measured.Length : fitted.TravelMetres) / selectedSpeed /
+                        ScenicJourneyMotion.CruiseFraction(fitted.JourneyEaseIn, fitted.JourneyEaseOut);
+                    gaze.Begin(measured, finalizingDuration);
+                    Reason = "Verifying the actual native curve at a slower " + selectedSpeed.ToString("F1") + "m/s viewing pace";
+                    return;
+                }
+                lastFailure = "Native journey gaze exceeds the bounded angular rate even at the minimum cruise";
+                RejectNavigationCandidate(); return;
             }
-            Ready = fitted.WithDuration(finalizingDuration);
+            Ready = fitted.WithDuration(finalizingDuration).WithJourneyCruiseSpeed(selectedSpeed);
             Epoch = finalizingEpoch; ValidatedAt = finalizingGeometryAt;
             Complete = true; WaitingForLoading = false;
             Reason = "Validated " + fitted.TravelMetres.ToString("F0") + "m goal-directed corridor after " + AttemptCount + " proposals";
@@ -394,37 +454,13 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         measured.Reset(); gaze.Reset();
     }
 
-    private bool TryReadablePrefix()
-    {
-        if (prefixAttempted || candidate == null || !evaluator.ReadableWindow.HasWindow ||
-            evaluator.ReadableWindow.Start > .000001 || evaluator.ReadableWindow.TravelMetres < ScenicJourneyPolicy.MinimumWindowMetres)
-            return false;
-        prefixAttempted = true;
-        try
-        {
-            ScenicShotPlan slice = evaluator.ProposeReadableSection();
-            if (!JourneyReadablePrefix.TryRestore(candidate, slice, evaluator.ReadableWindow.Start,
-                evaluator.ReadableWindow.TravelMetres, out var proposed)) return false;
-            if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Row("journey-prefix-proposal")
-                .Field("plan", nextId).Field("sourceMetres", candidate.TravelMetres)
-                .Field("observedMetres", evaluator.ReadableWindow.TravelMetres).Field("proposalMetres", proposed!.TravelMetres)
-                .Field("rejection", evaluator.FailureKind.ToString()));
-            candidate = proposed;
-            TraceCandidate(candidate!, "measured-prefix");
-            evaluator.Begin(candidate!, visibility, aspect, nearClip, moveCarrier);
-            Reason = "Revalidating a useful measured Journey prefix before its rejected continuation";
-            return true;
-        }
-        catch (ArgumentException) { return false; }
-    }
-
     private void TraceCandidate(ScenicShotPlan plan, string source)
     {
         if (!ScenicTrace.Enabled) return;
         CameraTraceRecord row = ScenicTrace.Row("journey-candidate").Field("plan", plan.Id)
             .Field("source", source).Field("journey", plan.JourneyId).Field("predecessor", plan.ContinuationOf)
             .Field("option", candidateOption).Field("travel", plan.TravelMetres).Field("fov", plan.FieldOfView)
-            .Field("waypoints", plan.WaypointCount).Field("native", plan.UseNativeSpline);
+            .Field("waypoints", plan.WaypointCount).Field("native", plan.UseNativeSpline).Field("requestedCruise", speed).Field("plannedCruise", selectedSpeed);
         for (int i = 0; i < plan.WaypointCount; i++)
         {
             AutonomyPosition body = plan.CameraWaypoint(i), aim = plan.AimWaypoint(i);
@@ -434,28 +470,20 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         ScenicTrace.Record(row);
     }
 
-    private bool TryCandidate(int option, out ScenicShotPlan? result, float? canopyAltitude = null)
+    private bool TryArrivalCandidate(int option, out ScenicShotPlan? result)
     {
         result = null; WaitingForLoading = false;
         ScenicShotPlan preceding = previous!;
         ScenicShotSample end = preceding.Sample(1);
-        Vector3 start = departureCut ? activeOpening!.Position : V(end.CameraPosition);
-        if (departureCut && canopyAltitude.HasValue)
-        {
-            float availableClimb = Vector3.ProjectOnPlane(observedObstaclePosition - start, Vector3.up).magnitude * JourneyTerrainProfile.MaximumGrade;
-            start.y = Mathf.Max(start.y, canopyAltitude.Value - availableClimb + .25f);
-            if (Vector3.Distance(start, V(end.CameraPosition)) > JourneyDepartureSpace.MaximumOriginRelocation)
-            { lastFailure = Reason = "Observed canopy escape exceeds the bounded departure space"; return false; }
-        }
-        Vector3 incoming = departureCut ? activeOpening!.Heading : TerminalDirection(preceding);
+        Vector3 start = V(end.CameraPosition);
+        Vector3 incoming = TerminalDirection(preceding);
         if (incoming.sqrMagnitude < .001f || Mathf.Abs(incoming.y) > .85f)
         { lastFailure = Reason = "Incoming camera path has no usable travelling tangent"; return false; }
         Vector3 forward = Vector3.ProjectOnPlane(incoming, Vector3.up).normalized;
         Vector3 desired = goal.HasValue ? Vector3.ProjectOnPlane(V(goal.Value) - start, Vector3.up).normalized : V(ObjectiveHeading(preceding));
         if (desired.sqrMagnitude < .5f) desired = forward;
-        float turn = departureCut ? option == 1 ? 24 : option == 2 ? -24 : 0 : turns[option % turns.Length];
-        Vector3 targetHeading = Quaternion.AngleAxis(turn, Vector3.up) * desired;
-        float loft = departureCut ? option * 6f : option / turns.Length * 8f;
+        float turn = option == 1 ? 24 : option == 2 ? -24 : 0;
+        float loft = 0;
         float routeLength = length;
         if (planningCarrier.HasValue)
             routeLength = Mathf.Min(routeLength, (float)JourneyRunwayPolicy.WindowMetres(speed,
@@ -465,19 +493,8 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         var positions = new List<Vector3>(16) { start };
         var floors = new List<float>(16);
         if (!MeasureFloor(start, out float firstFloor)) return false;
-        // An independent departure is not yet an owned seam. Establish its
-        // route above the future wave envelope before screening any movement.
-        // Later sections must retain the exact existing seam and tangent.
-        if (departureCut)
-        {
-            start.y = Mathf.Max(start.y, firstFloor + .5f);
-            positions[0] = start;
-        }
         floors.Add(firstFloor);
         float clearance = Mathf.Clamp(start.y - firstFloor, .25f, 18f);
-        float travelled = 0;
-        float stepLength = Mathf.Max(4, (routeLength - Math.Min(2, routeLength)) / 13f);
-        Vector3 position = start;
         if (arrivalCenter.HasValue && arrivalFocus.HasValue)
         {
             if (!JourneyArrivalGeometry.TryBuild(end.CameraPosition, P(incoming), arrivalCenter.Value, arrivalRadius,
@@ -490,48 +507,25 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 positions.Add(point); floors.Add(floor);
             }
         }
-        else while (travelled < routeLength - .01f && positions.Count < 16)
-        {
-            float step = Mathf.Min(routeLength - travelled, positions.Count == 1 ? 2f : stepLength);
-            // Consume a numerical/short tail with the preceding segment. A
-            // leftover centimetre is not a useful control point and violates
-            // Spatial's minimum separation even in completely open water.
-            if (routeLength - travelled - step < .1f) step = routeLength - travelled;
-            if (positions.Count == 1) position += incoming * step;
-            else
-            {
-                // Heading changes are distributed through measured space; the
-                // first short section preserves the preceding native tangent.
-                forward = Vector3.RotateTowards(forward, targetHeading, step * 3f * Mathf.Deg2Rad, 0).normalized;
-                position += forward * step;
-            }
-            travelled += step;
-            if (!WorldPoint(position)) { lastFailure = Reason = "Journey objective reaches world coordinate limits"; return false; }
-            if (!MeasureFloor(position, out float floor)) return false;
-            positions.Add(position); floors.Add(floor);
-        }
         if (positions.Count < 3) { lastFailure = Reason = "Insufficient continuous route distance"; return false; }
         // Future surface heights inform the complete profile before any pose
         // is admitted. Native interpolation/collision validation still follows.
         if (!JourneyTerrainProfile.TryFit(positions, floors, clearance, loft, out Vector3[] fitted, out string fitReason,
-            preserveIncomingTangent: !departureCut, cruiseAltitude: arrivalCenter.HasValue ? (float?)null : Mathf.Max(start.y, canopyAltitude ?? start.y)))
+            preserveIncomingTangent: true, cruiseAltitude: null))
         { lastFailure = Reason = fitReason; return false; }
         var body = new AutonomyPosition[fitted.Length];
-        body[0] = departureCut ? P(start) : end.CameraPosition;
+        body[0] = end.CameraPosition;
         for (int i = 1; i < fitted.Length; i++)
         {
             if (!WorldPoint(fitted[i])) { lastFailure = Reason = "Journey composition exceeds world bounds"; return false; }
             body[i] = P(fitted[i]);
         }
-        AutonomyPosition startingAim = departureCut ? P(activeOpening!.Aim + Vector3.up * (start.y - activeOpening.Position.y)) : end.AimPosition;
+        AutonomyPosition startingAim = end.AimPosition;
         if (!JourneyGazePolicy.TryBuild(body, startingAim, speed, preceding.Feature?.WaterDirection,
             arrivalFocus, out AutonomyPosition[] aims, out string gazeReason,
             contextYawDegrees: option % 3 == 1 ? 12 : option % 3 == 2 ? -12 : 0,
             contextElevation: option / 3 % 2 == 1 ? 3 : 0))
         { lastFailure = Reason = gazeReason; return false; }
-        if (!arrivalFocus.HasValue)
-            for (int i = departureCut ? 0 : 1; i < aims.Length; i++)
-                aims[i] = P(visibility.LandscapeFocus(V(body[i]), V(aims[i]), nearClip));
         // Lateral detours may be useful, but cannot consume the programme by
         // circling or travelling backwards relative to its explicit objective.
         Vector3 displacement = V(body[body.Length - 1]) - start;
@@ -543,11 +537,11 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         try
         {
             ScenicShotPlan proposed = ScenicShotPlan.Spatial(nextId, feature, ScenicShotRole.Traverse, body, aims,
-                preceding.FieldOfView, departureCut ? 0 : end.ScreenX, departureCut ? -.04f : end.ScreenY, nativeSpline);
-            double seconds = proposed.TravelMetres / speed / ScenicJourneyMotion.CruiseFraction(departureCut || !preceding.IsJourney, exitRamp);
+                preceding.FieldOfView, end.ScreenX, end.ScreenY, nativeSpline);
+            double seconds = proposed.TravelMetres / speed / ScenicJourneyMotion.CruiseFraction(!preceding.IsJourney, exitRamp);
             if (arrivalCenter.HasValue) seconds = Math.Max(1, seconds);
-            result = (departureCut ? proposed.AsJourneyDeparture(journeyId, seconds) : proposed.AsJourney(journeyId, preceding.Id, seconds))
-                .WithJourneyRamps(departureCut || !preceding.IsJourney, exitRamp);
+            result = proposed.AsJourney(journeyId, preceding.Id, seconds)
+                .WithJourneyRamps(!preceding.IsJourney, exitRamp).WithJourneyView(false);
             return true;
         }
         catch (ArgumentException error)
@@ -585,11 +579,11 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         pendingOpening = -1; openingScreensSinceRoute = 0; openingWaitStarted = 0; planningEpoch = 0;
         pendingRaisedOpening = null;
         openingPosition = openingFocus = default;
-        prefixAttempted = obstacleAttempted = false; observedObstacleAltitude = null;
+        navigationBound = false;
         ClearFinalization();
         Complete = WaitingForLoading = departureCut = false; alternative = AttemptCount = 0; Epoch = 0; ValidatedAt = retryAt = 0; lastFailure = "none";
     }
-    internal void ForgetSearchEpisode() { departureSpace.Reset(); openings.Clear(); searchWindowLength = 0; }
+    internal void ForgetSearchEpisode() { departureSpace.Reset(); openings.Clear(); searchWindowLength = 0; navigation.Reset(); navigationBound = false; }
     public void Dispose() { Reset(); ForgetSearchEpisode(); evaluator.Dispose(); measured.Dispose(); }
     private static bool WorldPoint(Vector3 point) => TargetRoster.Finite(point) &&
         Mathf.Abs(point.x) <= 20000 && Mathf.Abs(point.y) <= 20000 && Mathf.Abs(point.z) <= 20000;

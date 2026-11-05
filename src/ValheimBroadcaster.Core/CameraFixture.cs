@@ -6,7 +6,7 @@ namespace ValheimBroadcaster.Core;
 /// plan, not a promise that the world, actors or geometry will still match it.</summary>
 public sealed class CameraFixture
 {
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
     public long WorldId { get; }
     public string Name { get; }
     public string SourceVersion { get; }

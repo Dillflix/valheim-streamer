@@ -27,6 +27,17 @@ internal sealed class ScenicJourneyEndingPlanner : IDisposable
     internal bool ArrivalFramed { get; private set; }
     internal string Reason { get; private set; } = "No journey ending requested";
 
+    internal bool WithinLoadingHorizon(Vector3 carrier)
+    {
+        if (!TargetRoster.Finite(carrier)) return false;
+        var observer = new AutonomyPosition(carrier.x, carrier.y, carrier.z);
+        if (candidate != null) return JourneyLoadingContext.ContainsPlan(candidate, observer, JourneyViewPolicy.ObservationRange);
+        if (section == null) return true;
+        ScenicShotSample endpoint = section.Sample(1);
+        return JourneyLoadingContext.ContainsPoint(endpoint.CameraPosition, observer, JourneyViewPolicy.ObservationRange) &&
+            (!arrivalFocus.HasValue || JourneyLoadingContext.ContainsPoint(arrivalFocus.Value, observer));
+    }
+
     internal void Begin(ScenicShotPlan source, long endingId, float cameraAspect, float cameraNearClip,
         bool moveObserver, Vector3? locallyObservedArrivalFocus = null, ScenicFeature? locallyObservedArrivalSubject = null)
     {

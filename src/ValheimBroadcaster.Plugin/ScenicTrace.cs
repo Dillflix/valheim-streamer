@@ -51,7 +51,8 @@ internal static class ScenicTrace
             .Field("explicitDuration", plan.HasExplicitDuration).Field("paced", plan.PacingProfile != null)
             .Field("pacingPoints", plan.PacingProfile?.Count ?? 0)
             .Field("fov", plan.FieldOfView).Field("spatial", plan.IsSpatial).Field("pan", plan.IsPan)
-            .Field("picture", plan.IsPictureOnly).Field("journey", plan.JourneyId)
+            .Field("picture", plan.IsPictureOnly).Field("journey", plan.JourneyId).Field("journeyView", plan.UsesJourneyView)
+            .Field("journeyCruise", plan.JourneyCruiseSpeed)
             .Field("rejectedContinuation", plan.HasRejectedContinuation).Field("continuationReason", plan.ContinuationRejection);
         if (plan.IsSpatial)
         {

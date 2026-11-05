@@ -196,8 +196,12 @@ internal sealed class ScenicSplinePath : IDisposable
             plan.FieldOfView, first.ScreenX, first.ScreenY, ToCore(control), plan.UseNativeSpline), endProgress);
     }
 
-    private ScenicShotPlan RetainEndEvidence(ScenicShotPlan section, float endProgress) =>
-        plan!.HasRejectedContinuation && endProgress >= 1 - .000001f ? section.WithRejectedContinuation(plan.ContinuationRejection) : section;
+    private ScenicShotPlan RetainEndEvidence(ScenicShotPlan section, float endProgress)
+    {
+        section = section.WithStableWaterClearance(plan!.StableWaterClearance).WithJourneyView(plan.UsesJourneyView);
+        if (plan.JourneyCruiseSpeed > 0) section = section.WithJourneyCruiseSpeed(plan.JourneyCruiseSpeed);
+        return plan.HasRejectedContinuation && endProgress >= 1 - .000001f ? section.WithRejectedContinuation(plan.ContinuationRejection) : section;
+    }
 
     // Short smooth ramps and a steady cruise apply to distance, not knot parameter. Unequal
     // knot spacing therefore cannot produce accidental acceleration or stalls.

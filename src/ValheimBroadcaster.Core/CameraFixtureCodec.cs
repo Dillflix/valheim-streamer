@@ -51,6 +51,9 @@ public static class CameraFixtureCodec
                 w.Write(pace.DurationSeconds); w.Write((ushort)pace.Count);
                 for (int i = 0; i < pace.Count; i++) { w.Write(pace.TimeFraction(i)); w.Write(pace.DistanceFraction(i)); }
             }
+            // These are validation contracts, independent of whether a saved
+            // Journey window still belongs to an active runtime mission.
+            w.Write(p.StableWaterClearance); w.Write(p.UsesJourneyView); w.Write(p.JourneyCruiseSpeed);
         }
         if (payload.Length > MaximumBytes - DigestBytes) throw new ArgumentException("Camera fixture is too large.", nameof(fixture));
         byte[] body = payload.ToArray();
@@ -122,6 +125,15 @@ public static class CameraFixtureCodec
                 var times = new double[count]; var distances = new double[count];
                 for (int i = 0; i < count; i++) { times[i] = r.ReadDouble(); distances[i] = r.ReadDouble(); }
                 plan = plan.WithPacingProfile(ScenicPacingProfile.Restore(pacingSeconds, times, distances));
+            }
+            // Older fixtures never recorded either contract. Keep their
+            // original subject/terrain interpretation; source Journey metadata
+            // alone is not evidence to opt them into the angular-view check.
+            if (schema >= 4)
+            {
+                plan = plan.WithStableWaterClearance(Flag(r)).WithJourneyView(Flag(r));
+                double cruise = r.ReadDouble();
+                if (cruise != 0) plan = plan.WithJourneyCruiseSpeed(cruise);
             }
             if (stream.Position != stream.Length) throw new InvalidDataException("Camera fixture contains unexpected trailing data.");
             return new CameraFixture(world, name, version, settings, created, motion, dynamic, plan, journeyId, predecessor);

@@ -129,7 +129,8 @@ internal sealed class ScenicJourneyEndingLease : IDisposable
             original.ContinuationOf != evaluated.ContinuationOf || original.UseNativeSpline != evaluated.UseNativeSpline ||
             original.Feature != evaluated.Feature ||
             original.FieldOfView != evaluated.FieldOfView || original.DurationSeconds != evaluated.DurationSeconds ||
-            original.StableWaterClearance != evaluated.StableWaterClearance) return false;
+            original.StableWaterClearance != evaluated.StableWaterClearance || original.UsesJourneyView != evaluated.UsesJourneyView ||
+            original.JourneyCruiseSpeed != evaluated.JourneyCruiseSpeed) return false;
         // A fitted endpoint alone is not sufficient: preserve every sampled
         // point of the ending that the programme has already committed to use.
         for (int i = 0; i <= 64; i++)

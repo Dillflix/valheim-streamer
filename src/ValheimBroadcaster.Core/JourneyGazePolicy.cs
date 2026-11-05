@@ -4,8 +4,10 @@ using System.Collections.Generic;
 namespace ValheimBroadcaster.Core;
 
 /// <summary>Directs the view independently of the travelling body. The body
-/// remains a measured local proposal; these aims still require the same native
-/// surface, visibility and foliage preflight as every other scenic route.</summary>
+/// remains a measured local proposal. Cruise aims describe viewing directions;
+/// Journey angular-depth observations screen their actual pictures while native
+/// surface/corridor validation screens motion. Named arrivals retain explicit
+/// subject visibility. Neither authored aim geometry nor its rate is clearance.</summary>
 public static class JourneyGazePolicy
 {
     public const double MaximumDepartureAngle = 70;

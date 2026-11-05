@@ -14,6 +14,7 @@ internal static class ScenicJourneyEndingTests
         yield return ("Journey refuge retains native water clearance and the endpoint's existing scale role", RefugeContract);
         yield return ("An already framed local arrival uses the exact stationary picture without a forced pan", StationaryArrival);
         yield return ("Stationary arrival refuses distant or reversing metadata and retains useful arrival pans", RefugeLimits);
+        yield return ("Cruise view semantics survive slicing and refuges without weakening real arrival subjects", ViewContract);
     }
     private static AutonomyPosition P(float x, float y = 20, float z = 0) => new AutonomyPosition(x, y, z);
     private static ScenicShotPlan Section()
@@ -24,6 +25,26 @@ internal static class ScenicJourneyEndingTests
             .AsJourney(19, 11, 8);
     }
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
+    private static void ViewContract()
+    {
+        ScenicShotPlan source = Section();
+        Check(source.UsesJourneyView && source.Slice(0, .75).UsesJourneyView &&
+            source.RaiseCamera(1).UsesJourneyView && source.AsStandalone().UsesJourneyView &&
+            source.WithDuration(10).WithIdentity(200).UsesJourneyView,
+            "A geometry or timing transformation restored the arbitrary cruise-focus visibility requirement.");
+        Check(ScenicJourneyEnding.Refuge(source, 21)!.UsesJourneyView &&
+            ScenicJourneyEnding.Propose(source, 21, 1)!.UsesJourneyView,
+            "A generic stopping refuge silently switched to subject framing.");
+        ScenicShotPlan arrivalRoute = source.WithJourneyView(false);
+        Check(!arrivalRoute.RaiseCamera(1).UsesJourneyView && !arrivalRoute.Slice(0, .75).UsesJourneyView &&
+            !ScenicJourneyEnding.Refuge(arrivalRoute, 21)!.UsesJourneyView,
+            "A real arrival route lost its explicit subject contract.");
+        var focus = source.Sample(1).AimPosition;
+        var subject = new ScenicFeature("arrival", ScenicFeatureKind.Landscape, focus, P(1, 0), 16, 6, .9f);
+        Check(!ScenicJourneyEnding.Refuge(source, 21, focus, subject)!.UsesJourneyView &&
+            !ScenicJourneyEnding.Refuge(source, 21, focus)!.UsesJourneyView,
+            "Observed arrival focus was treated as an arbitrary cruise direction.");
+    }
     private static void Seam()
     {
         ScenicShotPlan section = Section(); ScenicShotSample seam = section.Sample(1);

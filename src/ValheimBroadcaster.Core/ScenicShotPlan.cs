@@ -50,6 +50,15 @@ namespace ValheimBroadcaster.Core
         public long JourneyId { get; private set; }
         public long ContinuationOf { get; private set; }
         public bool IsJourney => JourneyId > 0;
+        /// <summary>Travel looks into observed local space rather than requiring
+        /// an arbitrary aim coordinate to be a visible subject. This contract
+        /// also belongs to generic cruise refuges, independently of mission ID.
+        /// Named arrival shots retain ordinary subject-framing requirements.</summary>
+        public bool UsesJourneyView { get; private set; }
+        /// <summary>The cruise used to author and verify this section's clock
+        /// and angular motion. Zero denotes legacy plans whose mission request
+        /// supplies the authored cruise. This is a ceiling, not live speed.</summary>
+        public double JourneyCruiseSpeed { get; private set; }
         /// <summary>Journey routes and their prepared endings are certified
         /// against a future wave envelope, not one instantaneous water height.</summary>
         public bool StableWaterClearance { get; private set; }
@@ -240,6 +249,20 @@ namespace ValheimBroadcaster.Core
         public ScenicShotPlan WithStableWaterClearance(bool enabled = true)
         { var copy = (ScenicShotPlan)MemberwiseClone(); copy.StableWaterClearance = enabled; return copy; }
 
+        public ScenicShotPlan WithJourneyView(bool enabled = true)
+        {
+            if (enabled && !IsDirected) throw new InvalidOperationException("Journey view requires an authored camera pose.");
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.UsesJourneyView = enabled; return copy;
+        }
+
+        public ScenicShotPlan WithJourneyCruiseSpeed(double metresPerSecond)
+        {
+            if (!IsDirected || double.IsNaN(metresPerSecond) || double.IsInfinity(metresPerSecond) ||
+                metresPerSecond < 2 || metresPerSecond > 12)
+                throw new ArgumentOutOfRangeException(nameof(metresPerSecond));
+            var copy = (ScenicShotPlan)MemberwiseClone(); copy.JourneyCruiseSpeed = metresPerSecond; return copy;
+        }
+
         /// <summary>Attach measured pre-admission timing without changing a
         /// camera point, aim or lens. An authored duration always remains the
         /// owner's choice; a restored fixture retains its recorded profile.</summary>
@@ -274,6 +297,7 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(journeyId));
             var copy = (ScenicShotPlan)MemberwiseClone();
             copy.JourneyId = journeyId; copy.ContinuationOf = predecessor; copy.ConstantSpeed = copy.StableWaterClearance = true;
+            copy.UsesJourneyView = true;
             return copy.WithDuration(seconds);
         }
 
@@ -286,6 +310,7 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(journeyId));
             var copy = (ScenicShotPlan)MemberwiseClone();
             copy.JourneyId = journeyId; copy.ContinuationOf = 0; copy.ConstantSpeed = copy.StableWaterClearance = true;
+            copy.UsesJourneyView = true;
             return copy.WithDuration(seconds);
         }
 
@@ -423,7 +448,8 @@ namespace ValheimBroadcaster.Core
 
         private ScenicShotPlan RetainEndEvidence(ScenicShotPlan replacement, double endFraction)
         {
-            replacement = replacement.WithStableWaterClearance(StableWaterClearance);
+            replacement = replacement.WithStableWaterClearance(StableWaterClearance).WithJourneyView(UsesJourneyView);
+            if (JourneyCruiseSpeed > 0) replacement = replacement.WithJourneyCruiseSpeed(JourneyCruiseSpeed);
             return HasRejectedContinuation && endFraction >= 1 - .000001
                 ? replacement.WithRejectedContinuation(ContinuationRejection) : replacement;
         }
