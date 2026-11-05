@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.45 Scenic evaluation and editorial correction
+
+The supplied 0.8.43 capture confirms establishing-shot dominance (13/14 admissions), early-prefetch role starvation, duplicate ruin identities and repeated full-catalogue local foliage projection. It does not demonstrate sub-second moving-shot lifetimes in the retained window. [Evidence and repair scope](SCENIC-0.8.45-EDITORIAL.md).
+
+Real-reference client/server/replay compilation with warnings as errors passed. **1,160/1,160 Core cases** and **94/94 native camera-math cases** passed. Tests cover the production search prefix/finish contract, actual-versus-anticipated context, measured structure identity, the captured wide-cut geometry and conservative indexed foliage membership. The supplied 43,174-record capture replays **27,339 recorded decisions, zero divergences or invalid records**. Replay does not execute the corrected Unity planner or establish runtime performance/visual quality. In-game confirmation remains pending. No protocol change or server update is required.
+
 ## 0.8.44 operator coverage modes
 
 `broadcast mode auto|scenic|player|creature|status` separates operator coverage intent from actual output and transport automation. Scenic ignores connected-player acquisition while retaining automatic destination travel; Player disables wildlife cutaways; Creature prefers eligible local actors and falls back to scenery. Native travel completes before the new intent controls the arrived scene. No server update is required; observer protocol stays 3.

@@ -15,6 +15,7 @@ internal sealed class ScenicFoliageScene
     private const float Radius = FoliageCoverageMap.Radius;
     private List<Observation> renderers = new List<Observation>(Capacity);
     private List<Observation> collecting = new List<Observation>(Capacity);
+    private FoliageSpatialIndex spatial = new FoliageSpatialIndex(), collectingSpatial = new FoliageSpatialIndex();
     private readonly HashSet<int> groups = new HashSet<int>();
     private readonly HashSet<int> seen = new HashSet<int>();
     private readonly ScenicFoliageGeometry geometry = new ScenicFoliageGeometry();
@@ -46,6 +47,7 @@ internal sealed class ScenicFoliageScene
     internal long Revision { get; private set; }
     internal long Generation { get; private set; }
     internal IReadOnlyList<Observation> Renderers => renderers;
+    internal void Query(Vector3 point, float radius, List<int> result) => spatial.Query(point.x, point.z, radius, result);
     internal float CoverageAt(Vector3 point, float maximum = ScenicObservationPolicy.DetailRadius) =>
         published ? coverage.CoverageAt(point, maximum) : 0;
     internal long Epoch => epoch;
@@ -109,7 +111,7 @@ internal sealed class ScenicFoliageScene
         if (action == FoliageCatalogueAnchorAction.RestartScan)
         {
             scanning = supplemental = false;
-            collecting.Clear(); collectingCoverage.Reset(origin); groups.Clear(); seen.Clear();
+            collecting.Clear(); collectingSpatial.Reset(); collectingCoverage.Reset(origin); groups.Clear(); seen.Clear();
             roots.Clear(); traversal.Clear(); sceneHandles.Clear(); nodeRenderers.Clear();
             pendingAdditions.Reset(published ? publishedOrigin : origin);
             sceneIndex = rootIndex = totalSteps = 0;
@@ -125,7 +127,7 @@ internal sealed class ScenicFoliageScene
     }
     internal void Reset()
     {
-        renderers.Clear(); collecting.Clear(); groups.Clear(); seen.Clear(); geometry.Reset(); coverage.Reset(origin);
+        renderers.Clear(); collecting.Clear(); spatial.Reset(); collectingSpatial.Reset(); groups.Clear(); seen.Clear(); geometry.Reset(); coverage.Reset(origin);
         collectingCoverage.Reset(origin); roots.Clear(); nodeRenderers.Clear(); traversal.Clear(); sceneHandles.Clear();
         publishedIds.Clear(); additions.Reset(origin); newAdditions.Reset(origin); pendingAdditions.Reset(origin); scanning = supplemental = published = false;
         refreshedAt = float.NegativeInfinity; anchored = false; epoch = -1;
@@ -166,7 +168,7 @@ internal sealed class ScenicFoliageScene
 
     private void Begin(float now)
     {
-        collecting.Clear(); collectingCoverage.Reset(origin); groups.Clear(); seen.Clear();
+        collecting.Clear(); collectingSpatial.Reset(); collectingCoverage.Reset(origin); groups.Clear(); seen.Clear();
         pendingAdditions.Reset(published ? publishedOrigin : origin);
         roots.Clear(); traversal.Clear(); sceneHandles.Clear(); nodeRenderers.Clear();
         sceneIndex = rootIndex = totalSteps = 0; scanning = true; supplemental = false; scanStartedAt = now;
@@ -272,6 +274,7 @@ internal sealed class ScenicFoliageScene
         // conservatively requires new projection evidence each completed sweep.
         changed |= collectingCoverage.UnknownCells > 0;
         List<Observation> previous = renderers; renderers = collecting; collecting = previous;
+        FoliageSpatialIndex previousSpatial = spatial; spatial = collectingSpatial; collectingSpatial = previousSpatial;
         FoliageCoverageMap previousCoverage = coverage; coverage = collectingCoverage; collectingCoverage = previousCoverage;
         publishedIds.Clear(); foreach (Observation observation in renderers) if (observation.Renderer) publishedIds.Add(observation.Renderer.GetInstanceID());
         if (changed)
@@ -284,6 +287,7 @@ internal sealed class ScenicFoliageScene
                 .Field("repaired", repaired).Field("unresolved", unresolved).Field("unknownCells", coverage.UnknownCells)
                 .Field("unbounded", coverage.Unbounded).Field("metadataOverflow", metadataOverflow)
                 .Field("radius", Radius).Field("originCoverage", CoverageAt(origin))
+                .Field("indexed", spatial.Count - spatial.GlobalCount).Field("global", spatial.GlobalCount)
                 .Field("elapsed", now - scanStartedAt).Field("incremental", true), "origin", origin));
     }
 
@@ -335,6 +339,14 @@ internal sealed class ScenicFoliageScene
         { repaired++; TraceSample(renderer, source, world, local, bounds); }
         if (collecting.Count >= Capacity) { collectingCoverage.AddUnknown(bounds); omitted++; return false; }
         if (!publishedIds.Contains(id)) PendingUnknown(bounds);
+        // Static tree geometry is anchored to its TreeBase. Falling logs and
+        // all unproven/moving renderer kinds remain in the global query set.
+        // Bounds are already expanded for the same conservative retention margin.
+        bool stationary = renderer is MeshRenderer && !renderer.GetComponentInParent<TreeLog>() &&
+            !renderer.GetComponentInParent<Rigidbody>() && !renderer.GetComponentInParent<Animator>() &&
+            !renderer.GetComponentInParent<Animation>() &&
+            (renderer.gameObject.isStatic || renderer.GetComponentInParent<TreeBase>());
+        collectingSpatial.Add(collecting.Count, bounds.min.x, bounds.min.z, bounds.max.x, bounds.max.z, stationary);
         collecting.Add(new Observation(renderer, local)); return true;
     }
 

@@ -198,6 +198,31 @@ namespace ValheimBroadcaster.Core
                 ? ScenicShotRole.Detail : ScenicShotRole.Reveal;
         }
 
+        /// <summary>Prepare the next beat while the current establishing shot
+        /// is still on air. This predicts editorial intent, not earned context.
+        /// A healthy current shot must finish earning context before this
+        /// successor can activate.</summary>
+        public ScenicShotRole PreferredNextRole(ScenicFeature feature)
+        {
+            if (feature == null) throw new ArgumentNullException(nameof(feature));
+            if (Current?.FeatureId != feature.Id || Current.Role != ScenicShotRole.Establish ||
+                ElapsedSeconds < 2 || !HasPresented || BlocksMovement || siteSequence.ContextShown(feature))
+                return PreferredRole(feature);
+            if (feature.ScopeLabel == "Building") return ScenicShotRole.Detail;
+            return feature.Kind == ScenicFeatureKind.Ridge || feature.Kind == ScenicFeatureKind.Clearing
+                ? ScenicShotRole.Reveal : ScenicShotRole.Traverse;
+        }
+
+        public bool SuccessorContextReady(ScenicShotPlan plan)
+        {
+            CheckPlan(plan);
+            // Recovery may use any already validated picture. Only the
+            // anticipated development of a healthy establishing shot waits.
+            return Current == null || BlocksMovement || !HasPresented ||
+                Current.FeatureId != plan.FeatureId || Current.Role != ScenicShotRole.Establish ||
+                plan.Role == ScenicShotRole.Establish || siteSequence.ContextShown(plan.Feature!);
+        }
+
         /// <summary>Novelty is admission, not just a score bonus. A completed
         /// three-shot subject episode and equivalent recently shown views must
         /// yield to a genuinely different composition or another place.</summary>
@@ -249,7 +274,18 @@ namespace ValheimBroadcaster.Core
                 else if (!Related(shown.Plan.Feature!, plan.Feature) && shown.Plan.Feature!.Center.Distance(plan.Feature.Center) < Math.Max(8, Math.Min(shown.Plan.Feature.Radius, plan.Feature.Radius)))
                     score -= .12;
             }
-            if (plan.Role == PreferredRole(plan.Feature)) score += .12;
+            if (plan.Role == PreferredNextRole(plan.Feature)) score += .12;
+            // Subject IDs alone do not describe programme variety. A run of
+            // new rocks/terrain cells must not make identical wide shots novel.
+            int repeatedRole = 0;
+            for (int i = history.Count - 1; i >= 0 && repeatedRole < 3; i--)
+            {
+                if (now < history[i].At || now - history[i].At > 300 || history[i].Plan.Role != plan.Role) break;
+                repeatedRole++;
+            }
+            score -= repeatedRole * .16;
+            if (HasPresented && ElapsedSeconds >= 2)
+                score += ScenicEditContinuity.Score(Current, NeedsReplacement ? Progress : 1, plan);
             if (Current?.FeatureId == plan.FeatureId && sameFeature > 0 && sameFeature < 3) score += .1;
             if (Current != null && ElapsedSeconds >= 2 && sameFeature == 0)
             {

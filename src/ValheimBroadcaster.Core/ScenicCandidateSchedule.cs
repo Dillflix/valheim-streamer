@@ -18,6 +18,15 @@ namespace ValheimBroadcaster.Core
             { FeatureIndex = feature; RoleIndex = role; Viewpoint = viewpoint; }
         }
 
+        /// <summary>Editorial scores are relative and may be negative. Once
+        /// geometry/readability has admitted a candidate, bounded comparison
+        /// must not become an exhaustive search because continuity penalized it.</summary>
+        public static bool ComparisonComplete(int attempts, bool hasValidatedCandidate)
+        {
+            if (attempts < 0) throw new ArgumentOutOfRangeException(nameof(attempts));
+            return hasValidatedCandidate && attempts >= 4;
+        }
+
         public static int AttemptLimit(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound)
         {
             Validate(features, currentIndex, searchRound);
@@ -51,16 +60,37 @@ namespace ValheimBroadcaster.Core
         /// spending the spatial survey budget on another role of one subject.
         /// A failing aggregate must not consume recovery with four consecutive
         /// searches while a nearby building or coastline remains unexamined.</summary>
-        public static Candidate SelectSpatial(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound, int attempt)
+        public static Candidate SelectSpatial(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound, int attempt, bool developing = false)
         {
             int limit = SpatialAttemptLimit(features, currentIndex, searchRound);
             if (attempt < 0 || attempt >= limit) throw new ArgumentOutOfRangeException(nameof(attempt));
             int count = Math.Min(MaximumFeaturesPerSearch, features.Count), offset = attempt;
+            // Healthy prefetch must see alternate scale/movement before its
+            // early acceptance threshold (four attempts). Urgent acquisition
+            // keeps the broad subject-first schedule below.
+            int leadFeature = FeatureIndex(features.Count, currentIndex, searchRound, 0);
+            bool interleave = developing && RoleCount(features[leadFeature]) > 1;
+            if (interleave)
+            {
+                if (attempt == 0) return new Candidate(leadFeature, 0, 0);
+                if (count > 1 && attempt == 1) return new Candidate(FeatureIndex(features.Count, currentIndex, searchRound, 1), 0, 0);
+                int secondRoleAt = count > 1 ? 2 : 1;
+                if (attempt == secondRoleAt) return new Candidate(leadFeature, 1, 0);
+                // The other subject also gets a different role before the
+                // bounded search can accept four same-scale candidates.
+                if (count > 1 && RoleCount(features[FeatureIndex(features.Count, currentIndex, searchRound, 1)]) > 1)
+                {
+                    if (attempt == 3) return new Candidate(FeatureIndex(features.Count, currentIndex, searchRound, 1), 1, 0);
+                    offset = attempt - 4;
+                }
+                else offset = attempt - secondRoleAt - 1;
+            }
             for (int role = 0; role < 4; role++)
             for (int slot = 0; slot < count; slot++)
             {
                 int feature = FeatureIndex(features.Count, currentIndex, searchRound, slot);
                 if (role >= RoleCount(features[feature])) continue;
+                if (interleave && (slot == 0 || slot == 1) && role < 2) continue;
                 if (offset-- == 0) return new Candidate(feature, role, 0);
             }
             throw new InvalidOperationException("Spatial candidate schedule is inconsistent.");
