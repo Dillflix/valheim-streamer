@@ -90,7 +90,11 @@ internal static class NativeRankingTests
         var health = new[] { false, true };
         Check(p.Select(.1, scores, eligible, health, rank) == 0, "One fresh sample caused a cut.");
         Check(p.Select(.4, scores, eligible, health, rank) == 0, "Recovery persistence was bypassed.");
-        Check(p.Select(.46, scores, eligible, health, rank) == 1, "Readable recovery waited for healthy-shot dwell.");
+        // The repair window protects the eligible live camera before a
+        // streak-qualified readable challenger may take over.
+        Check(p.Select(.46, scores, eligible, health, rank) == 0, "Recovery ignored the in-place repair window.");
+        Check(p.Select(1.4, scores, eligible, health, rank) == 0, "Recovery ignored the in-place repair window.");
+        Check(p.Select(1.61, scores, eligible, health, rank) == 1, "Readable recovery waited for healthy-shot dwell.");
     }
     private static void HealthyDwell()
     {
@@ -98,8 +102,8 @@ internal static class NativeRankingTests
         var eligible = new[] { true, true }; var readable = new[] { true, true };
         p.Select(0, new[] { .8f, .5f }, eligible, readable, rank);
         var improved = new[] { .7f, 1f };
-        for (int i = 1; i < 20; i++) Check(p.Select(i * .1, improved, eligible, readable, rank) == 0, "Healthy dwell lost.");
-        Check(p.Select(2, improved, eligible, readable, rank) == 1, "Confirmed better shot never activated.");
+        for (int i = 1; i < 50; i++) Check(p.Select(i * .1, improved, eligible, readable, rank) == 0, "Healthy dwell lost.");
+        Check(p.Select(5, improved, eligible, readable, rank) == 1, "Confirmed better shot never activated.");
     }
     private static void Incumbent()
     {
@@ -114,10 +118,10 @@ internal static class NativeRankingTests
         var rank = new Ranker(); var p = new ProceduralShotPolicy(); var eligible = new[] { true, true };
         var readable = new[] { true, true };
         p.Select(0, new[] { .8f, .5f }, eligible, readable, rank);
-        for (int i = 1; i <= 20; i++) p.Select(i * .1, new[] { .7f, 1f }, eligible, readable, rank);
+        for (int i = 1; i <= 50; i++) p.Select(i * .1, new[] { .7f, 1f }, eligible, readable, rank);
         Check(p.SelectedIndex == 1 && p.RejectSelection(0) && p.SelectedIndex == 0, "Denied transition retained the proposed camera.");
-        p.Select(2.1, new[] { .7f, 1f }, eligible, readable, rank);
-        Check(p.Select(2.61, new[] { .7f, 1f }, eligible, readable, rank) == 1,
+        p.Select(5.1, new[] { .7f, 1f }, eligible, readable, rank);
+        Check(p.Select(5.61, new[] { .7f, 1f }, eligible, readable, rank) == 1,
             "Rejecting an unshown proposal invented a fresh healthy dwell for the old shot.");
     }
     private static void PlannedRanking()
@@ -150,8 +154,8 @@ internal static class NativeRankingTests
         var rank = new Ranker(); var p = new ProceduralShotPolicy(); var eligible = new[] { true, true };
         p.Select(0, new[] { .8f, .5f }, eligible, ranker: rank);
         p.Select(.1, new[] { .6f, .9f }, eligible, ranker: rank);
-        Check(p.Select(3, new[] { .6f, .9f }, eligible, ranker: rank) == 0, "Stale pending evidence survived a gap.");
-        Check(p.Select(3.51, new[] { .6f, .9f }, eligible, ranker: rank) == 1, "Fresh native evidence did not resume selection.");
+        Check(p.Select(5, new[] { .6f, .9f }, eligible, ranker: rank) == 0, "Stale pending evidence survived a gap.");
+        Check(p.Select(5.51, new[] { .6f, .9f }, eligible, ranker: rank) == 1, "Fresh native evidence did not resume selection.");
     }
     private static void Empty()
     {

@@ -58,6 +58,10 @@ namespace ValheimBroadcaster.Core
         }
 
         public int SelectedIndex => selection.SelectedIndex;
+        /// <summary>Challenger currently auditioning to replace the live shot;
+        /// the adapter promotes it to per-frame evaluation while standby
+        /// candidates stay on their slower cadence.</summary>
+        public int PendingIndex => selection.PendingIndex;
         public double ShotAge { get; private set; }
         public double DesiredSeconds { get; private set; } = 18;
         public int RecentCorrections => corrections.Count;

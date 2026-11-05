@@ -48,8 +48,10 @@ internal static class ShotLongevityTests
             "An imminent blocked corridor beat a continuously readable alternate.");
         var selection = new ProceduralShotPolicy();
         selection.Select(0, new[] { .95f, .82f }, new[] { true, true }, new[] { true, true });
-        selection.Select(2.1, new[] { current, alternative }, new[] { true, true }, new[] { true, true });
-        Check(selection.Select(2.7, new[] { current, alternative }, new[] { true, true }, new[] { true, true }) == 1,
+        for (double now = 1; now < 4.4; now += .9)
+            selection.Select(now, new[] { .95f, .82f }, new[] { true, true }, new[] { true, true });
+        selection.Select(4.5, new[] { current, alternative }, new[] { true, true }, new[] { true, true });
+        Check(selection.Select(5.1, new[] { current, alternative }, new[] { true, true }, new[] { true, true }) == 1,
             "Longevity scores failed to drive a sustained pre-obstruction replacement.");
     }
     private static void ObstructionTiming()

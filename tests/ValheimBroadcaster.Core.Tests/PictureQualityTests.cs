@@ -70,7 +70,10 @@ internal static class PictureQualityTests
         Equal(0, policy.Select(0, new[] { .8f, .6f }, Both, Both));
         Equal(0, policy.Select(.1, new[] { .57f, .66f }, Both, new[] { false, true }));
         Equal(0, policy.Select(.3, new[] { .57f, .66f }, Both, new[] { false, true }));
-        Equal(1, policy.Select(.46, new[] { .57f, .66f }, Both, new[] { false, true }));
+        // The live camera keeps its in-place repair window before recovery.
+        Equal(0, policy.Select(.46, new[] { .57f, .66f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(1.4, new[] { .57f, .66f }, Both, new[] { false, true }));
+        Equal(1, policy.Select(1.61, new[] { .57f, .66f }, Both, new[] { false, true }));
     }
     private static void ReadabilityFirst()
     {
@@ -79,7 +82,9 @@ internal static class PictureQualityTests
         for (int i = 1; i <= 100; i++)
             Equal(1, policy.Select(i * .2, new[] { .99f, .6f }, Both, new[] { false, true }));
         Equal(1, policy.Select(20.1, new[] { .55f, .8f }, Both, new[] { true, false }));
-        Equal(0, policy.Select(20.46, new[] { .55f, .8f }, Both, new[] { true, false }));
+        Equal(1, policy.Select(20.46, new[] { .55f, .8f }, Both, new[] { true, false }));
+        Equal(1, policy.Select(21.4, new[] { .55f, .8f }, Both, new[] { true, false }));
+        Equal(0, policy.Select(21.61, new[] { .55f, .8f }, Both, new[] { true, false }));
     }
     private static void BriefOcclusion()
     {
@@ -101,7 +106,9 @@ internal static class PictureQualityTests
         Equal(0, policy.Select(.9, new[] { .4f, .5f }, Both, new[] { false, true }));
         // A long stall invalidates the comparison timer as well.
         Equal(0, policy.Select(4, new[] { .4f, .5f }, Both, new[] { false, true }));
-        Equal(1, policy.Select(4.36, new[] { .4f, .5f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(4.36, new[] { .4f, .5f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(5.3, new[] { .4f, .5f }, Both, new[] { false, true }));
+        Equal(1, policy.Select(5.51, new[] { .4f, .5f }, Both, new[] { false, true }));
     }
     private static void AllBadProgress()
     {
@@ -110,9 +117,12 @@ internal static class PictureQualityTests
         Equal(0, policy.Select(0, new[] { .45f, .4f }, Both, bad));
         Equal(0, policy.Select(.1, new[] { .4f, .48f }, Both, bad));
         Equal(0, policy.Select(.6, new[] { .4f, .48f }, Both, bad));
-        Equal(1, policy.Select(.86, new[] { .4f, .48f }, Both, bad));
+        // Even an all-bad search honors the live camera's repair window.
+        Equal(0, policy.Select(.86, new[] { .4f, .48f }, Both, bad));
+        Equal(0, policy.Select(1.5, new[] { .4f, .48f }, Both, bad));
+        Equal(1, policy.Select(1.61, new[] { .4f, .48f }, Both, bad));
         for (int i = 1; i <= 100; i++)
-            Equal(1, policy.Select(1 + i * .2, new[] { .5f, .48f }, Both, bad));
+            Equal(1, policy.Select(2 + i * .2, new[] { .5f, .48f }, Both, bad));
     }
     private static void PhysicalSeparation()
     {
@@ -140,21 +150,25 @@ internal static class PictureQualityTests
         Equal(-1, policy.PendingIndex);
         Equal(0, policy.Select(.4, new[] { .4f, .7f }, Both, new[] { false, true }));
         Equal(0, policy.Select(.6, new[] { .4f, .7f }, Both, new[] { false, true }));
-        Equal(1, policy.Select(.76, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(.76, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(1.5, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(1, policy.Select(1.61, new[] { .4f, .7f }, Both, new[] { false, true }));
     }
     private static void RejectedProposal()
     {
         var policy = new ProceduralShotPolicy();
         Equal(0, policy.Select(0, new[] { .8f, .6f }, Both, Both));
-        Equal(0, policy.Select(1.5, new[] { .5f, .9f }, Both, Both));
-        Equal(1, policy.Select(2.1, new[] { .5f, .9f }, Both, Both));
+        for (double now = 1; now < 4.4; now += .9)
+            Equal(0, policy.Select(now, new[] { .8f, .6f }, Both, Both));
+        Equal(0, policy.Select(4.5, new[] { .5f, .9f }, Both, Both));
+        Equal(1, policy.Select(5.1, new[] { .5f, .9f }, Both, Both));
         Check(policy.RejectSelection(0));
         Equal(0, policy.SelectedIndex);
         Equal(-1, policy.PendingIndex);
         // A genuinely clear replacement still needs new confirmation, but
         // retaining the already-viewed source does not restart its dwell.
-        Equal(0, policy.Select(2.2, new[] { .5f, .9f }, Both, Both));
-        Equal(1, policy.Select(2.8, new[] { .5f, .9f }, Both, Both));
+        Equal(0, policy.Select(5.2, new[] { .5f, .9f }, Both, Both));
+        Equal(1, policy.Select(5.8, new[] { .5f, .9f }, Both, Both));
     }
     private static void BoundedRollback()
     {
@@ -162,13 +176,17 @@ internal static class PictureQualityTests
         Equal(0, policy.Select(0, new[] { .8f, .6f }, Both, Both));
         Check(!policy.RejectSelection(1));
         Equal(0, policy.Select(.1, new[] { .4f, .7f }, Both, new[] { false, true }));
-        Equal(1, policy.Select(.46, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(1.0, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(1, policy.Select(1.61, new[] { .4f, .7f }, Both, new[] { false, true }));
         Check(!policy.RejectSelection(1));
         Check(policy.RejectSelection(0));
         Check(!policy.RejectSelection(0));
-        Equal(0, policy.Select(.5, new[] { .4f, .7f }, Both, new[] { false, true }));
-        Equal(1, policy.Select(.86, new[] { .4f, .7f }, Both, new[] { false, true }));
-        Equal(1, policy.Select(.9, new[] { .4f, .7f }, Both, new[] { false, true }));
+        // The rollback restarts the retained camera's repair window.
+        Equal(0, policy.Select(1.7, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(2.6, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(0, policy.Select(3.1, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(1, policy.Select(3.21, new[] { .4f, .7f }, Both, new[] { false, true }));
+        Equal(1, policy.Select(3.3, new[] { .4f, .7f }, Both, new[] { false, true }));
         Check(!policy.RejectSelection(0));
     }
     private static void SameTickRollback()
@@ -195,6 +213,8 @@ internal static class PictureQualityTests
         Equal(0, policy.Select(1.1, new[] { .6f, .9f }, Both, Both));
         Equal(0, policy.Select(1.7, new[] { .6f, .9f }, Both, Both));
         Equal(0, policy.Select(2.3, new[] { .6f, .9f }, Both, Both));
-        Equal(1, policy.Select(3.01, new[] { .6f, .9f }, Both, Both));
+        for (double now = 3; now < 6; now += .9)
+            Equal(0, policy.Select(now, new[] { .6f, .9f }, Both, Both));
+        Equal(1, policy.Select(6.01, new[] { .6f, .9f }, Both, Both));
     }
 }

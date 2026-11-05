@@ -29,22 +29,25 @@ internal static class ActorIntegrationTests
     {
         var p = new ProceduralShotPolicy(); int[] priority = { 2, 2 };
         p.Select(0, new[] { .55f, .3f }, All, All, priorities: priority);
-        for (int i = 1; i < 20; i++) p.Select(i * .1, new[] { .55f, .90f }, All, All, priorities: priority);
-        Check(p.Select(2.1, new[] { .55f, .90f }, All, All, priorities: priority) == 1,
+        for (int i = 1; i < 50; i++) p.Select(i * .1, new[] { .55f, .90f }, All, All, priorities: priority);
+        Check(p.Select(5.01, new[] { .55f, .90f }, All, All, priorities: priority) == 1,
             "Purpose scaling compressed a .35 quality improvement below the .15 margin.");
     }
     private static void PromotionDwell()
     {
         var p = new ProceduralShotPolicy(); p.Select(0, new[] { .95f, .4f }, All, All);
-        for (int i = 1; i < 20; i++) Check(p.Select(i * .1, new[] { .95f, .4f }, All, All, priorities: new[] { 0, 2 }) == 0, "Promotion skipped dwell.");
-        Check(p.Select(2.1, new[] { .95f, .4f }, All, All, priorities: new[] { 0, 2 }) == 1, "Raw-score loss vetoed established purpose promotion.");
+        for (int i = 1; i < 50; i++) Check(p.Select(i * .1, new[] { .95f, .4f }, All, All, priorities: new[] { 0, 2 }) == 0, "Promotion skipped dwell.");
+        Check(p.Select(5.01, new[] { .95f, .4f }, All, All, priorities: new[] { 0, 2 }) == 1, "Raw-score loss vetoed established purpose promotion.");
     }
     private static void ReadableBeforePurpose()
     {
         var p = new ProceduralShotPolicy(); int[] priority = { 2, 0 };
         p.Select(0, new[] { .95f, .4f }, All, All, priorities: priority);
         p.Select(.1, new[] { .95f, .4f }, All, new[] { false, true }, priorities: priority);
-        Check(p.Select(.46, new[] { .95f, .4f }, All, new[] { false, true }, priorities: priority) == 1, "Unreadable encounter blocked readable recovery.");
+        // Readable recovery still grants the live camera its repair window.
+        Check(p.Select(.46, new[] { .95f, .4f }, All, new[] { false, true }, priorities: priority) == 0, "Recovery ignored the in-place repair window.");
+        Check(p.Select(1.4, new[] { .95f, .4f }, All, new[] { false, true }, priorities: priority) == 0, "Recovery ignored the in-place repair window.");
+        Check(p.Select(1.61, new[] { .95f, .4f }, All, new[] { false, true }, priorities: priority) == 1, "Unreadable encounter blocked readable recovery.");
     }
     private static void OrdinalParity()
     {
@@ -139,7 +142,7 @@ internal static class ActorIntegrationTests
         var selection = new ProceduralShotPolicy(); selection.Select(0, new[] { .8f, .8f }, All, All);
         for (int i = 1; i <= 20; i++) selection.Select(i * .1, new[] { .8f, .8f }, All, All);
         float[] scores = { .8f - feedback.Penalty, .8f };
-        for (int i = 21; i <= 27; i++) selection.Select(i * .1, scores, All, All, reconsiderPicture: true);
+        for (int i = 21; i <= 51; i++) selection.Select(i * .1, scores, All, All, reconsiderPicture: true);
         Check(selection.SelectedIndex == 1, "Pixel concern remained below the normal improvement threshold forever.");
         Check(pixels.MarkReconsidered(key, 2.7) && !pixels.MarkReconsidered(key, 2.8), "One concern authorized multiple corrections.");
         var next = new RenderedPictureKey(1, 3, 1); var dark = RenderedPictureQuality.Measure(Pixels(1),64,64,default,false);
