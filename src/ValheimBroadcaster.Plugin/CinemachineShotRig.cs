@@ -383,6 +383,15 @@ internal sealed class CinemachineShotRig : IDisposable
             if (now >= forecastAt) ForecastCandidates(context, focus, settings, now, continuous, moveCarrier);
         }
         else longevity.Reset();
+        // Audition the pending challenger densely: replacing a displayed shot
+        // now requires a continuously clear streak, and 5 Hz standby samples
+        // would stretch that proof with stale gaps. Only the single challenger
+        // is promoted; the rest of the pool keeps its budgeted survey cadence.
+        int pending = DirectedActorSelection(settings) ? director.PendingIndex : stableSelection.PendingIndex;
+        if (pending >= 0 && pending != selected && pending < Count &&
+            candidates[pending].EvaluatedFrame != Time.frameCount &&
+            CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Candidate, out var auditionWork))
+            using (auditionWork) Evaluate(pending, NeutralMotion(), context, focus, settings, dt, continuous, moveCarrier);
         bool refreshed = false;
         for (int scanned = 0; scanned < Count; scanned++)
         {
@@ -408,6 +417,24 @@ internal sealed class CinemachineShotRig : IDisposable
         }
         if (refreshed && fresh > 0) space = Mathf.Lerp(space, clear / fresh, confined ? .7f : .35f);
         PrepareSelection(focus, context, priorUsable, modeChanged, settings, now);
+        // When a replacement is plausible, prefer challengers that change shot
+        // grammar: a different lens band, scale or viewpoint angle keeps the
+        // eventual cut from landing on a near-identical picture. Scores stay
+        // normalized; the policy validates the zero-to-one contract.
+        if (hasPose && previousChoice >= 0 &&
+            (!readable[previousChoice] || requestedRole != null && requestedRole != lastRole))
+        {
+            Vector3 lastViewOffset = lastPosition - lastPoseFocus;
+            for (int i = 0; i < Count; i++)
+            {
+                if (i == previousChoice || !eligible[i] || !readable[i]) continue;
+                CameraState optionState = candidates[i].Camera.State;
+                if (Mathf.Abs(optionState.Lens.FieldOfView - lastFov) >= ShotTransitionPolicy.DistinctFovDegrees ||
+                    candidates[i].Scale != lastScale ||
+                    ViewpointAngle(lastViewOffset, optionState.GetFinalPosition() - focus) >= ShotTransitionPolicy.DistinctAngleDegrees)
+                    editorialScores[i] = Mathf.Clamp01(editorialScores[i] + 0.08f);
+            }
+        }
         var selectionEligibility = modeChanged && previousChoice >= 0 && eligible[previousChoice] && readable[previousChoice]
             ? seededEligibility : eligible;
         ShotSituation situation = Situation(context);
@@ -447,7 +474,14 @@ internal sealed class CinemachineShotRig : IDisposable
         // Recover only as far toward the primary as its full body requires.
         bool bodyClipped = !IsScenic && endpoint.PrimaryReadability >= 0.5f &&
             (endpoint.PrimarySafeFrame < 0.85f || endpoint.PrimaryHeadroom < 0.025f);
-        if (!IsScenic && !candidate.Observational && (!endpoint.PrimaryInFrame || bodyClipped) && now >= candidate.NextRecoveryAt)
+        // Both repairs share one recovery clock: the azimuth arc moves the
+        // body around an occluder while rotation/FOV recovery fixes framing.
+        bool recoveryDue = now >= candidate.NextRecoveryAt;
+        if (!IsScenic && !candidate.Observational && !candidate.PassBy && candidate.Orbit.enabled &&
+            choice == previousChoice && hasPose && eligible[choice] &&
+            (!readable[choice] || !PictureUsable(endpoint)) && recoveryDue)
+            TryArcRepair(candidate, focus, evaluatedSubjects, desiredFov, now, continuous, moveCarrier);
+        if (!IsScenic && !candidate.Observational && (!endpoint.PrimaryInFrame || bodyClipped) && recoveryDue)
             RecoverFraming(candidate, chosen, focus, desired, evaluatedSubjects, now,
                 ref desiredRotation, ref desiredFov, ref endpoint);
         if (!endpoint.CameraClear || !PositionSupported(desired, focus, continuous, moveCarrier))
@@ -585,9 +619,60 @@ internal sealed class CinemachineShotRig : IDisposable
             }
             else
             {
-                transitionElapsed = 2;
-                transition = "cut around unreadable or blocked transition";
-                pictureCut = true; NoteCorrection(now);
+                // Mid-move validation failed. Prefer gliding back to the
+                // validated source over cutting forward: the compensated
+                // source endpoint is re-evaluated now, not trusted from the
+                // frame that authorized the move.
+                Vector3 sourcePosition = from.GetFinalPosition();
+                Quaternion sourceRotation = Upright(from.GetFinalOrientation());
+                var returnSubjects = previousChoice >= 0 ? candidates[previousChoice].Subjects : evaluatedSubjects;
+                var returnView = EvaluateView(sourcePosition, sourceRotation, returnSubjects, from.Lens.FieldOfView, focus);
+                bool blendedPresentable = blendView.CameraClear &&
+                    PositionSupported(blendedPosition, focus, continuous, moveCarrier);
+                var decision = ShotTransitionPolicy.DecideObstructedBlend(
+                    sourceReadable: PictureUsable(returnView) &&
+                        PositionSupported(sourcePosition, focus, continuous, moveCarrier),
+                    blendedSupported: blendedPresentable);
+                if (decision.Mode == ShotTransitionMode.Return)
+                {
+                    RetainSelection(ref choice, ref candidate, ref evaluatedSubjects, sourcePosition, sourceRotation,
+                        settings, now, "returning to the validated source after an obstructed move");
+                    transition = decision.Reason;
+                    if (decision.Seconds > 0)
+                    {
+                        // Glide home from where the camera actually is. This
+                        // frame still presents the moving blended pose; the
+                        // return blend is itself live-validated on subsequent
+                        // frames and falls through to a cut if it fails with
+                        // an unreadable source.
+                        CameraState returning = blended;
+                        returning.RawPosition = blendedPosition; returning.PositionCorrection = Vector3.zero;
+                        returning.RawOrientation = blendedRotation; returning.OrientationCorrection = Quaternion.identity;
+                        transitionFrom = returning;
+                        transitionFromObservational = candidate.Observational;
+                        transitionFocus = focus; transitionElapsed = 0;
+                        transitionSeconds = (float)decision.Seconds;
+                        nativeBlend.Start(transitionFrom, transitionSeconds);
+                        transitionVelocity = Vector3.zero;
+                        position = blendedPosition; rotation = blendedRotation; fov = blended.Lens.FieldOfView;
+                        actualView = blendView;
+                    }
+                    else
+                    {
+                        // A physically unsupported blended pose may not linger
+                        // through a glide; adopt the validated source directly.
+                        transitionElapsed = 2; transitionSeconds = 0;
+                        position = sourcePosition; rotation = sourceRotation; fov = from.Lens.FieldOfView;
+                        actualView = returnView; pictureCut = true;
+                    }
+                    NoteCorrection(now);
+                }
+                else
+                {
+                    transitionElapsed = 2;
+                    transition = decision.Reason;
+                    pictureCut = true; NoteCorrection(now);
+                }
             }
         }
         // A tracking solver can also sweep into a wall between clear endpoints.
@@ -610,10 +695,30 @@ internal sealed class CinemachineShotRig : IDisposable
             !GroupViewRoute(candidate, lastPosition, lastRotation, lastFov, position, rotation, fov))
         {
             // Aim recovery and angular limiting can change the presented route
-            // after the body proposal. Readable endpoints remain valid cuts;
-            // an interpolated move through blocked foliage does not.
-            pictureCut = true; transitionElapsed = 2; NoteCorrection(now);
-            transition = "cut around obstructed group movement";
+            // after the body proposal. Prefer staying at the already displayed
+            // source over cutting forward; the camera has not moved yet, so
+            // retaining the revalidated pose is a return, not a teleport.
+            Quaternion returnRotation = PredictRotation(lastPosition, lastRotation, lastPoseFocus, lastPosition, focus);
+            var returnSubjects = previousChoice >= 0 ? candidates[previousChoice].Subjects : evaluatedSubjects;
+            var returnView = EvaluateView(lastPosition, returnRotation, returnSubjects, lastFov, focus);
+            var groupDecision = ShotTransitionPolicy.DecideObstructedBlend(
+                sourceReadable: PictureUsable(returnView) &&
+                    PositionSupported(lastPosition, focus, continuous, moveCarrier),
+                blendedSupported: true);
+            if (groupDecision.Mode == ShotTransitionMode.Return)
+            {
+                RetainSelection(ref choice, ref candidate, ref evaluatedSubjects, lastPosition, returnRotation,
+                    settings, now, "returning to the validated source after an obstructed group move");
+                position = lastPosition; rotation = returnRotation; fov = lastFov;
+                actualView = returnView; retainedReadablePose = true;
+                transitionElapsed = 2; transitionSeconds = 0;
+                transition = groupDecision.Reason; NoteCorrection(now);
+            }
+            else
+            {
+                pictureCut = true; transitionElapsed = 2; NoteCorrection(now);
+                transition = "cut around obstructed group movement";
+            }
         }
         Vector3 direction = rotation * Vector3.forward;
         if (!Finite(rotation) || Vector3.ProjectOnPlane(direction, Vector3.up).sqrMagnitude < 0.0001f)
@@ -1129,9 +1234,14 @@ internal sealed class CinemachineShotRig : IDisposable
         // Upstream group framing sizes the lens before RotationComposer aims.
         // The group extension must not run a second, centered aim after it.
         candidate.Framing.FrameGroup = candidate.GroupShot;
+        // Scale profiles own the lens when deliberate framing is enabled; the
+        // configured baseline is otherwise banded by the candidate's assigned
+        // scale so motivated cuts still change lens grammar. GroupFraming's
+        // FovRange, recovery widening and the fixed scenic/observational/
+        // pass-by lenses below keep their priority over the band.
         float preferredFov = IsScenic ? Mathf.Clamp(settings.FieldOfView.Value, 30f, 110f) : settings.ShotScales.Value
             ? ShotScalePolicy.Profile(candidate.Scale).VerticalFov
-            : Mathf.Clamp(settings.FieldOfView.Value + intent.FovOffset, 35f, 100f);
+            : Mathf.Clamp(ShotRepairMath.ScaleBandFov(candidate.Scale, settings.FieldOfView.Value) + intent.FovOffset, 35f, 100f);
         if (candidate.Observational) preferredFov = candidate.ObservationFov;
         if (candidate.PassBy) preferredFov = 55f;
         if (candidate.RecoveryFovUntil > Time.unscaledTime) preferredFov = Mathf.Max(preferredFov, candidate.RecoveryFov);
@@ -1412,6 +1522,90 @@ internal sealed class CinemachineShotRig : IDisposable
         NoteCorrection(now);
     }
 
+    /// <summary>Roll the selection back to the retained displayed shot after an
+    /// aborted transition, restore its anchor bookkeeping and seed its camera
+    /// at the validated pose the return targets. Same-tick proposals use the
+    /// policy rollback checkpoint; a later-tick abort adopts the retained
+    /// index exactly as the Hold path does after a policy reset.</summary>
+    private void RetainSelection(ref int choice, ref Candidate candidate,
+        ref IReadOnlyList<PlayerShotVisibility.Subject> evaluatedSubjects,
+        Vector3 position, Quaternion rotation, BroadcastSettings settings, float now, string reason)
+    {
+        if (previousChoice < 0) return;
+        if (DirectedActorSelection(settings))
+        {
+            if (!director.RejectSelection(previousChoice)) director.AdoptValidatedSelection(now, previousChoice);
+        }
+        else if (!stableSelection.RejectSelection(previousChoice))
+            stableSelection.AdoptValidatedSelection(now, previousChoice);
+        if (choice != previousChoice)
+        {
+            // A rejected challenger must rebuild its sustained-clear streak
+            // before it can win again; a stale readable flag from before the
+            // aborted move cannot immediately restart the same transition.
+            InvalidateCandidateEvidence(choice);
+            choice = previousChoice; candidate = candidates[choice]; evaluatedSubjects = candidate.Subjects;
+        }
+        candidate.TrackingPoint.position = lastPresentedAnchor;
+        candidate.AnchorVelocity = Vector3.zero;
+        if (!IsScenic && !candidate.Observational && !candidate.PassBy)
+            SynchronizeActorTrajectory(candidate, lastPresentedAnchor, candidate.PresentedSpatialOffset);
+        candidate.Camera.ForceCameraPosition(position, rotation);
+        candidate.TrajectoryReason = reason;
+    }
+
+    // Azimuth offsets probed around the current bearing when arcing the live
+    // camera around an obstruction; nearest arcs first, both directions.
+    private static readonly float[] arcProbeOffsets = { 15f, -15f, 30f, -30f, 45f, -45f };
+
+    /// <summary>In-place body repair for the displayed orbital candidate:
+    /// probe alternative azimuths around the current camera bearing and steer
+    /// the shared orbital heading toward the best readable arc. This only
+    /// redirects the existing heading plumbing at a bounded, damped rate;
+    /// every presented pose still passes the normal readability, support and
+    /// swept-path validation before it reaches the game camera.</summary>
+    private bool TryArcRepair(Candidate candidate, Vector3 focus,
+        IReadOnlyList<PlayerShotVisibility.Subject> framed, float fov, float now, bool continuous, bool moveCarrier)
+    {
+        candidate.NextRecoveryAt = now + 0.6f;
+        Vector3 current = lastPosition;
+        Vector3 radial = current - focus;
+        if (!TargetRoster.Finite(radial) || Vector3.ProjectOnPlane(radial, Vector3.up).sqrMagnitude < 0.25f)
+            return false;
+        // Aim probes at the same subject envelope center RecoverFraming uses.
+        Vector3 envelopeCenter = focus;
+        if (framed.Count > 0)
+        {
+            PlayerShotVisibility.Subject primary = framed[0];
+            envelopeCenter = primary.Focus + Vector3.up *
+                (primary.Height * ShotScalePolicy.Profile(primary.Scale).AimHeightFraction - primary.BottomOffset);
+        }
+        float bestScore = -1, bestOffset = 0;
+        for (int i = 0; i < arcProbeOffsets.Length; i++)
+        {
+            float offset = arcProbeOffsets[i];
+            Vector3 probe = ShotRepairMath.ArcProbePosition(focus, current, offset);
+            if (!PositionSupported(probe, focus, continuous, moveCarrier)) continue;
+            // Approximate the arc with two chords so the camera cannot sweep
+            // through geometry between the validated endpoints.
+            Vector3 mid = ShotRepairMath.ArcProbePosition(focus, current, offset * 0.5f);
+            if (!SegmentClear(current, mid) || !SegmentClear(mid, probe)) continue;
+            Vector3 look = envelopeCenter - probe;
+            if (Vector3.ProjectOnPlane(look, Vector3.up).sqrMagnitude < 0.0001f) continue;
+            Quaternion aim = Upright(Quaternion.LookRotation(look, Vector3.up));
+            var view = visibility.Evaluate(probe, aim, framed, fov, Aspect, NearClipPlane);
+            if (!PictureUsable(view) || view.Score <= bestScore) continue;
+            bestScore = view.Score; bestOffset = offset;
+        }
+        if (bestScore < 0) return false;
+        // Steer the shared orbital heading toward the clear arc. SmoothMotion
+        // damps heading toward approvedHeading at rate 5/s, so bounding one
+        // step keeps the presented arc at or below 60 degrees per second.
+        approvedHeading = Mathf.MoveTowardsAngle(heading, heading + bestOffset, ShotRepairMath.ArcSteerStepDegrees);
+        candidate.TrajectoryReason = candidate.RecoveryReason = "arcing around an obstruction";
+        return true;
+    }
+
     private void PrepareSelection(Vector3 focus, CameraSceneFrame context, bool usable, bool seed,
         BroadcastSettings settings, float now)
     {
@@ -1509,8 +1703,10 @@ internal sealed class CinemachineShotRig : IDisposable
             ? candidate.Camera.State.GetFinalPosition() : focus + offset;
         candidate.BodySeedOrientation = displayed ? lastRotation : candidate.Camera.PreviousStateIsValid
             ? Upright(candidate.Camera.State.GetFinalOrientation()) : Upright(Quaternion.LookRotation(focus - candidate.BodySeedPosition, Vector3.up));
+        // Observational lenses already follow the assigned scale; apply the
+        // same baseline band when the explicit scale profiles are disabled.
         candidate.ObservationFov = settings.ShotScales.Value ? ShotScalePolicy.Profile(candidate.Scale).VerticalFov :
-            Mathf.Clamp(settings.FieldOfView.Value + intent.FovOffset, 35f, 100f);
+            Mathf.Clamp(ShotRepairMath.ScaleBandFov(candidate.Scale, settings.FieldOfView.Value) + intent.FovOffset, 35f, 100f);
         candidate.ObservationScale = candidate.Scale; candidate.ObservationComposition = settings.DeliberateComposition.Value;
         candidate.ObservationSettingFov = settings.FieldOfView.Value;
         candidate.Observational = requested; candidate.ObservationToken++;
