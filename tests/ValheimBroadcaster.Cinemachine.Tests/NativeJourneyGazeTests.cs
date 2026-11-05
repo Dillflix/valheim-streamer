@@ -12,6 +12,9 @@ internal static class NativeJourneyGazeTests
         yield return ("Native journey arrival framing resolves a nearby observed subject", Arrival);
         yield return ("Native evolving journey windows retain exact gaze, position and composition at their seam", Seam);
         yield return ("Native terminal approach reaches a stand-off view without passing through its destination", StandOffApproach);
+        yield return ("Incremental native gaze verification preserves rejection and acceptance across work slices", IncrementalVerification);
+        yield return ("Incremental native gaze verification cannot reuse a replaced or reset path", InvalidatedVerification);
+        yield return ("Incremental native gaze verification rejects invalid timing without accepting an incomplete path", InvalidTiming);
     }
     private static AutonomyPosition P(double x, double y = 12, double z = 0) => new AutonomyPosition((float)x, (float)y, (float)z);
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
@@ -113,6 +116,69 @@ internal static class NativeJourneyGazeTests
             double distance = native.Sample(i / 256f).CameraPosition.HorizontalDistance(destination);
             Check(distance <= previous + .001 && distance >= 7.99, "Native approach passed its destination or retreated from it");
             previous = distance;
+        }
+    }
+
+    private static void IncrementalVerification()
+    {
+        var plan = Build(22, Curve(P(0)), P(24, 10), 6, true);
+        using var native = new ScenicSplinePath(); Check(native.Prepare(plan, 1), "Incremental test route failed");
+        foreach (double duration in new[] { native.Length / 6 / ScenicJourneyMotion.CruiseFraction(true, false), .1 })
+        {
+            bool expected = NativeJourneyGaze.WithinRate(native, duration);
+            foreach (int slice in new[] { 1, 7, 32, 64 })
+            {
+                var evaluation = new NativeJourneyGaze.Evaluation(); evaluation.Begin(native, duration);
+                Check(!evaluation.Complete && !evaluation.Accepted, "Beginning a check admitted an unchecked native path");
+                while (!evaluation.Complete)
+                {
+                    int previous = evaluation.CheckedIntervals;
+                    evaluation.Step(slice);
+                    Check(evaluation.CheckedIntervals > previous && evaluation.CheckedIntervals - previous <= slice,
+                        "A native gaze work slice did not respect its requested sample bound");
+                    Check(evaluation.Complete || !evaluation.Accepted, "Partially checked native gaze became usable");
+                }
+                Check(evaluation.Accepted == expected && evaluation.CheckedIntervals <= 256,
+                    "Yielding changed the angular-rate verdict");
+                if (expected) Check(evaluation.CheckedIntervals == 256, "Accepted gaze skipped part of its native path");
+                int checkedAtEnd = evaluation.CheckedIntervals;
+                evaluation.Step(slice);
+                Check(evaluation.CheckedIntervals == checkedAtEnd && evaluation.Accepted == expected,
+                    "Completed gaze verification consumed work or changed verdict on another update");
+            }
+        }
+    }
+
+    private static void InvalidatedVerification()
+    {
+        var first = Build(22, Curve(P(0)), P(24, 10), 6, true);
+        var replacement = Build(23, Curve(P(100)), P(124, 10), 6, true);
+        using var native = new ScenicSplinePath(); Check(native.Prepare(first, 1), "Invalidation test route failed");
+        var evaluation = new NativeJourneyGaze.Evaluation(); evaluation.Begin(native, 20); evaluation.Step(32);
+        Check(native.Prepare(replacement, 1), "Replacement native route failed");
+        evaluation.Step(32);
+        Check(evaluation.Complete && !evaluation.Accepted && evaluation.CheckedIntervals == 32,
+            "Verification silently continued across a changed native path");
+        evaluation.Begin(native, 20); evaluation.Step(32); native.Reset(); evaluation.Step(32);
+        Check(evaluation.Complete && !evaluation.Accepted, "Reset native path retained partial verification");
+        Check(native.Prepare(first, 1), "Restart native route failed");
+        evaluation.Begin(native, 20);
+        Check(evaluation.CheckedIntervals == 0 && !evaluation.Complete && !evaluation.Accepted, "New route retained old verdict or progress");
+        while (!evaluation.Complete) evaluation.Step(64);
+        Check(evaluation.Accepted, "Restarted valid native route could not finish verification");
+    }
+
+    private static void InvalidTiming()
+    {
+        using var native = new ScenicSplinePath();
+        var evaluation = new NativeJourneyGaze.Evaluation(); evaluation.Begin(native, 1);
+        Check(evaluation.Complete && !evaluation.Accepted, "An unprepared native path was accepted");
+        Check(native.Prepare(Build(22, Curve(P(0)), P(24, 10), 6, true), 1), "Timing test route failed");
+        foreach (double duration in new[] { 0d, -1d, double.NaN, double.PositiveInfinity })
+        {
+            evaluation.Begin(native, duration);
+            Check(evaluation.Complete && !evaluation.Accepted && evaluation.CheckedIntervals == 0,
+                "Invalid duration entered or passed native gaze verification");
         }
     }
 }

@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.47 Journey continuation
+
+The user reports that 0.8.46 now starts Journey but ends after a short trip. No new capture accompanies that report. Source inspection establishes a one-section startup reserve, fixed-window loading gates, incompatible preparation/playback timing, maintenance contention, latched preparation failures and missing queued-proof renewal. [Defects, correction and runtime acceptance](JOURNEY-0.8.47-CONTINUATION.md).
+
+The repair prepares multiple connected sections before departure, fits continuation windows to body/aim loading reach, prioritizes work by actual runway and proof urgency, renews immutable queued geometry and retires dependent work transactionally. Cruise adapts within a bounded range to measured production timing; genuine blockage retains finite validated endings. Native gaze verification is incremental and measured. Observer protocol remains 3; no server update is required. **In-game sustained Journey travel, loading, performance and visual continuity remain unverified here.**
+
+Local client/server/replay compilation passed against the matching real Valheim 1.0.21 / Unity 6000 / BepInEx 5 / Jötunn 2.30.2 references with warnings treated as errors. **1,193/1,193 Core cases** and **97/97 native camera-math cases** passed. Deterministic kilometre timelines exercise 30/60 fps with 3.5-second, seven-second and variable producer delays, plus finite producer failure, startup reserve, predecessor/proof identity and speed bounds. Seven seconds exceeds the old six-second successor deadline. The standalone editorial-capture fixture replays with zero divergences; it does not execute the Unity planner. Normal project builds, real assembly audits and Windows/Linux media suites run in CI before packaging.
+
 ## 0.8.46 Journey departure and Scenic comparison
 
 The supplied 0.8.45 screenshot records destination-selection failure; the retained 161.3-second trace contains fourteen ordinary Scenic admissions and no Journey events. Source inspection identifies a sparse destination feed incorrectly required to form a dense connected travel graph, plus departure prerequisites tied to unrelated ordinary-shot state. The capture does not retain the exact rejected catalogue. [Evidence, repair scope and runtime acceptance](SCENIC-0.8.46-PLANNING.md).

@@ -13,7 +13,13 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private static readonly float[] turns = { 0, 20, -20, 40, -40, 70, -70 };
     private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
     private readonly ScenicVisibility visibility = new ScenicVisibility("journey-ahead");
+    private readonly ScenicSplinePath measured = new ScenicSplinePath();
+    private readonly NativeJourneyGaze.Evaluation gaze = new NativeJourneyGaze.Evaluation();
     private ScenicShotPlan? previous, candidate;
+    private ScenicShotPlan? finalizing;
+    private double finalizingDuration;
+    private long finalizingEpoch;
+    private float finalizingGeometryAt;
     private long nextId, journeyId;
     private float length, speed, aspect, nearClip, started, retryAt;
     private bool moveCarrier, exitRamp, departureCut, nativeSpline;
@@ -83,6 +89,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         if (Complete || previous == null || Time.unscaledTime < retryAt) return;
         if (Time.unscaledTime - started > ScenicJourneyPolicy.PreparationSeconds)
         { Finish((WaitingForLoading ? "Journey loading horizon did not become ready" : "Journey corridor search expired") + "; last evidence: " + lastFailure); return; }
+        if (finalizing != null) { StepFinalization(); return; }
         if (candidate == null)
         {
             if (alternative >= turns.Length * 3)
@@ -116,26 +123,12 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             ScenicShotSample end = departureCut ? candidate!.Sample(0) : previous.Sample(1), start = fitted.Sample(0);
             if (end.CameraPosition.Distance(start.CameraPosition) < .005 && end.AimPosition.Distance(start.AimPosition) < .005)
             {
-                // Duration follows the distance that the native body actually
-                // travels, including its rounded turns, rather than the knot
-                // polygon. Retiming changes no normalized pose or certificate.
-                using var measured = new ScenicSplinePath();
-                if (!measured.Prepare(fitted, 1))
-                { Finish("Validated journey native path could not be measured"); return; }
-                double distance = fitted.UseNativeSpline ? measured.Length : fitted.TravelMetres;
-                double duration = distance / speed /
-                    ScenicJourneyMotion.CruiseFraction(fitted.JourneyEaseIn, fitted.JourneyEaseOut);
-                if (arrivalCenter.HasValue) duration = Math.Max(1, duration);
-                if (!NativeJourneyGaze.WithinRate(measured, duration))
-                {
-                    lastFailure = "Native journey gaze exceeds the bounded angular rate at the selected cruise";
-                    candidate = null; evaluator.Reset(); alternative++;
-                    Reason = "Trying another corridor with a gentler viewing path"; return;
-                }
-                Ready = fitted.WithDuration(duration);
-                Epoch = evaluator.SceneEpoch; ValidatedAt = Time.unscaledTime;
-                Complete = true; WaitingForLoading = false;
-                Reason = "Validated " + fitted.TravelMetres.ToString("F0") + "m goal-directed corridor after " + AttemptCount + " proposals"; return;
+                // Native gaze sampling is part of planning work too. Preserve
+                // this completed geometry proof while finishing it over frames;
+                // later mathematical verification cannot refresh its lifetime.
+                finalizing = fitted; finalizingEpoch = evaluator.SceneEpoch;
+                finalizingGeometryAt = Time.unscaledTime;
+                StepFinalization(); return;
             }
             lastFailure = "Terrain fitting moved the exact journey seam";
         }
@@ -153,6 +146,49 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             Reason = "Waiting for the journey loading/observation horizon: " + lastFailure;
         }
         else { alternative++; Reason = "Trying another goal-directed corridor: " + lastFailure; }
+    }
+
+    private void StepFinalization()
+    {
+        ScenicShotPlan fitted = finalizing!;
+        if (CameraSpatialScene.Shared.Epoch != finalizingEpoch)
+        { Finish("Journey scene changed while verifying its native gaze"); return; }
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return;
+        using (work)
+        {
+            if (!measured.Ready)
+            {
+                // Duration follows the distance that the native body actually
+                // travels. Retiming changes no normalized pose or certificate.
+                if (!measured.Prepare(fitted, 1))
+                { Finish("Validated journey native path could not be measured"); return; }
+                double distance = fitted.UseNativeSpline ? measured.Length : fitted.TravelMetres;
+                finalizingDuration = distance / speed /
+                    ScenicJourneyMotion.CruiseFraction(fitted.JourneyEaseIn, fitted.JourneyEaseOut);
+                if (arrivalCenter.HasValue) finalizingDuration = Math.Max(1, finalizingDuration);
+                gaze.Begin(measured, finalizingDuration);
+            }
+            for (int i = 0; i < 64 && !gaze.Complete && CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic); i++)
+                gaze.Step(1);
+            if (!gaze.Complete)
+            { Reason = "Verifying native journey gaze: " + gaze.CheckedIntervals + "/256 intervals"; return; }
+            if (!gaze.Accepted)
+            {
+                lastFailure = "Native journey gaze exceeds the bounded angular rate at the selected cruise";
+                candidate = null; evaluator.Reset(); alternative++; ClearFinalization();
+                Reason = "Trying another corridor with a gentler viewing path"; return;
+            }
+            Ready = fitted.WithDuration(finalizingDuration);
+            Epoch = finalizingEpoch; ValidatedAt = finalizingGeometryAt;
+            Complete = true; WaitingForLoading = false;
+            Reason = "Validated " + fitted.TravelMetres.ToString("F0") + "m goal-directed corridor after " + AttemptCount + " proposals";
+        }
+    }
+
+    private void ClearFinalization()
+    {
+        finalizing = null; finalizingDuration = 0; finalizingEpoch = 0; finalizingGeometryAt = 0;
+        measured.Reset(); gaze.Reset();
     }
 
     private bool TryCandidate(int option, out ScenicShotPlan? result)
@@ -267,9 +303,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     internal void Reset()
     {
         previous = candidate = Ready = null; goal = arrivalFocus = arrivalCenter = null; arrivalRadius = 0; evaluator.Reset(); visibility.Reset();
+        ClearFinalization();
         Complete = WaitingForLoading = departureCut = false; alternative = AttemptCount = 0; Epoch = 0; ValidatedAt = retryAt = 0; lastFailure = "none";
     }
-    public void Dispose() { Reset(); evaluator.Dispose(); }
+    public void Dispose() { Reset(); evaluator.Dispose(); measured.Dispose(); }
     private static bool WorldPoint(Vector3 point) => TargetRoster.Finite(point) &&
         Mathf.Abs(point.x) <= 20000 && Mathf.Abs(point.y) <= 20000 && Mathf.Abs(point.z) <= 20000;
     private static Vector3 V(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);

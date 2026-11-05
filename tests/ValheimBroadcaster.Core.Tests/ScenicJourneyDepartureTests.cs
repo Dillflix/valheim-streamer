@@ -16,6 +16,7 @@ internal static class ScenicJourneyDepartureTests
         yield return ("Ready Journey editorial waiting does not consume computation time or revive an expired departure", ReadyCutWait);
         yield return ("An unready independent Journey never parks an ordinary endpoint", IndependentEndpoint);
         yield return ("Journey departure snapshot uses the observed pose rather than prior route geometry or subject envelope", ObservedSnapshot);
+        yield return ("Two-section departure preparation uses its bounded aggregate budget without changing legacy deadlines", AggregatePreparation);
         yield return ("Journey destination eviction is not withdrawal while structural report age and retry evidence remain authoritative", DestinationAge);
     }
 
@@ -164,6 +165,35 @@ internal static class ScenicJourneyDepartureTests
         Check(!ScenicJourneyDeparture.DestinationCurrent(false, 400, 200, false), "Evicted structure report remained fresh beyond its actual lifetime");
         Check(!ScenicJourneyDeparture.DestinationCurrent(true, 0, 0, true), "Fresh explicit retry evidence did not revoke the destination");
         Check(!ScenicJourneyDeparture.DestinationCurrent(true, 0, -1, false), "Clock reversal retained an unverifiable destination");
+    }
+
+    private static void AggregatePreparation()
+    {
+        var startup = new ScenicJourneyDeparture();
+        startup.BeginIndependent(10, 4, 2 * (ScenicJourneyPolicy.PreparationSeconds + ScenicJourneyEnding.MaximumPreparationSeconds));
+        Check(startup.PreparationLimitSeconds == 40, "Two route/ending jobs did not share their explicit aggregate bound");
+        startup.Observe(11, 4, true, false, false, true, 20);
+        Check(startup.Pending && !startup.OwnsCoverage, "The former twelve-second single-job budget aborted reserve preparation");
+        startup.Observe(12, 4, true, false, true, true, 120);
+        Check(startup.ElapsedSeconds == 20, "Operator hold spent the aggregate budget");
+        startup.Observe(12, 4, true, true, false, true, .01);
+        Check(startup.OwnsCoverage, "A fully prepared reserve did not admit inside its aggregate bound");
+        var expired = new ScenicJourneyDeparture(); expired.BeginIndependent(10, 4, 40);
+        expired.Observe(11, 4, true, false, false, true, 40.01);
+        expired.Observe(11, 4, true, true, false, true, .01);
+        Check(expired.State == ScenicJourneyDepartureState.Abandoned && !expired.OwnsCoverage,
+            "A late reserve revived an expired startup");
+        var legacy = new ScenicJourneyDeparture(); legacy.BeginIndependent(10, 4);
+        legacy.Observe(11, 4, true, false, false, true, 12.01);
+        Check(legacy.State == ScenicJourneyDepartureState.Abandoned, "The default single-job deadline changed implicitly");
+        expired.Reset(); Check(expired.PreparationLimitSeconds == 12, "Reset retained a different owner's allowance");
+        foreach (double value in new[] { 0, -1, 90.01, double.NaN, double.PositiveInfinity })
+        {
+            bool failed = false;
+            try { new ScenicJourneyDeparture().BeginIndependent(10, 4, value); }
+            catch (ArgumentOutOfRangeException) { failed = true; }
+            Check(failed, "Unbounded startup preparation allowance accepted");
+        }
     }
 
     private static void FreshAttempt()

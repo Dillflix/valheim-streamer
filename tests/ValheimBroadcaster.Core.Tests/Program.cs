@@ -136,6 +136,7 @@ internal static class Program
             .Concat(JourneyGazeTests.Cases())
             .Concat(JourneyArrivalGeometryTests.Cases())
             .Concat(JourneyHandoffTests.Cases())
+            .Concat(JourneyRunwayTests.Cases())
             .Concat(ScenicJourneyArrivalTests.Cases())
             .Concat(LiveScenicTimelapseTests.Cases())
             .Concat(ScenicCandidateScheduleTests.Cases())
