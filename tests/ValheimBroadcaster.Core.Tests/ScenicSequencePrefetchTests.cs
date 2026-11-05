@@ -9,8 +9,7 @@ internal static class ScenicSequencePrefetchTests
     {
         yield return ("Scenic successor preparation predicts development without inventing shown context", PredictedContext);
         yield return ("Interrupted establishing coverage does not block recovery admission", RecoveryContext);
-        yield return ("Four-attempt scenic prefetch includes alternate roles while urgent search stays subject-fair", EarlyAcceptance);
-        yield return ("Editorially penalized valid scenic coverage still finishes bounded comparison", PenalizedValidCoverage);
+        yield return ("Early scenic prefetch includes alternate roles while urgent search stays subject-fair", EarlyAcceptance);
         yield return ("Interleaved scenic search visits each applicable role once for bounded mixed subjects", MixedCoverage);
         yield return ("Scenic programme repetition affects ranking across different feature identities", ProgrammeRoles);
         yield return ("Measured destination clusters reuse building identity without merging unrelated hierarchy", MeasuredIdentity);
@@ -53,36 +52,17 @@ internal static class ScenicSequencePrefetchTests
         var subjects = Enumerable.Range(0, 32).Select(i => Feature("feature" + i, x: i * 30)).ToArray();
         var prefix = Enumerable.Range(0, 4).Select(i => ScenicCandidateSchedule.SelectSpatial(subjects, 5, 0, i, true)).ToArray();
         Check(prefix.Select(c => c.RoleIndex).Distinct().Count() == 2 && prefix.Count(c => c.FeatureIndex == 5) == 2,
-            "A four-attempt early exit saw only one role per subject.");
+            "The first four scheduled candidates saw only one role per subject.");
         var d = new ScenicDirector(); d.Accept(Plan(1, subjects[5]), 0); Feed(d, 1, 0, 22);
         var actualPrefixRoles = prefix.Select(c => ScenicCandidateSchedule.Role(subjects[c.FeatureIndex], d.PreferredNextRole(subjects[c.FeatureIndex]), c.RoleIndex)).ToArray();
         Check(actualPrefixRoles.Contains(ScenicShotRole.Traverse) && actualPrefixRoles.Contains(ScenicShotRole.Reveal),
-            "Early prefetch did not contain development roles before its acceptance threshold.");
+            "Early prefetch did not contain development roles in its early scheduled candidates.");
         var absentCurrent = Enumerable.Range(0, 4).Select(i => ScenicCandidateSchedule.SelectSpatial(subjects, -1, 0, i, true)).ToArray();
         Check(absentCurrent.Select(c => c.RoleIndex).Distinct().Count() == 2,
             "A refreshed survey that omitted the current feature lost alternate-role prefetch.");
         var urgent = Enumerable.Range(0, 4).Select(i => ScenicCandidateSchedule.SelectSpatial(subjects, 5, 0, i)).ToArray();
         Check(urgent.All(c => c.RoleIndex == 0) && urgent.Select(c => c.FeatureIndex).Distinct().Count() == 4,
             "First-picture recovery lost its broad subject-first schedule.");
-    }
-    private static void PenalizedValidCoverage()
-    {
-        var d = new ScenicDirector();
-        for (int i = 0; i < 3; i++) { d.Accept(Plan(i + 1, Feature("old-wide" + i, x: i * 100)), i * 10); Feed(d, i + 1, i * 10, 22); }
-        var subjects = Enumerable.Range(0, 32).Select(i => Feature("alternative" + i, x: 1000 + i * 30)).ToArray();
-        double best = double.NegativeInfinity; int attempted = 0;
-        // Model candidates reaching the real production early-exit decision:
-        // only Establish is physically usable here; other roles fail validation.
-        for (; attempted < ScenicCandidateSchedule.SpatialAttemptLimit(subjects, 5, 0);)
-        {
-            var c = ScenicCandidateSchedule.SelectSpatial(subjects, 5, 0, attempted++, true);
-            var role = ScenicCandidateSchedule.Role(subjects[c.FeatureIndex], ScenicShotRole.Establish, c.RoleIndex);
-            if (role == ScenicShotRole.Establish)
-                best = Math.Max(best, d.Rank(Plan(20 + attempted, subjects[c.FeatureIndex], role), .7));
-            if (ScenicCandidateSchedule.ComparisonComplete(attempted, !double.IsNegativeInfinity(best))) break;
-        }
-        Check(best < .6 && attempted == 4, "Low editorial score turned validated fallback coverage into an exhaustive search.");
-        Check(!ScenicCandidateSchedule.ComparisonComplete(96, false), "A completed effort budget manufactured valid coverage.");
     }
     private static void MixedCoverage()
     {

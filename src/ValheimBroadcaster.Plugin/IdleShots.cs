@@ -16,6 +16,7 @@ internal sealed class IdleShots
     private float radius = 50;
     private Vector3 creatureOrigin;
     internal bool JourneyActive => scenic.JourneyActive;
+    internal bool ManualJourneyPending => scenic.ManualJourneyPending;
     internal Vector3? JourneyLoadingPoint => scenic.JourneyLoadingPoint;
     internal string JourneyStatus => scenic.JourneyStatus;
     internal long JourneyEndRevision => scenic.JourneyEndRevision;

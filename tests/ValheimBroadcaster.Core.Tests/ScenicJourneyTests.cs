@@ -26,6 +26,7 @@ internal static class ScenicJourneyTests
         yield return ("A salvaged scenic endpoint cannot become a journey into its known rejected tail", RejectedDeparture);
         yield return ("Continuous Scenic ownership postpones editorial travel but not player acquisition", PlayerPreemption);
         yield return ("Continuous Scenic ownership never suppresses missing-picture recovery", RecoveryPreemption);
+        yield return ("Manual Journey preparation postpones voluntary relocation but preserves players recovery and expiry", ManualDeparturePriority);
         yield return ("Bounded fixture preparation defers scenic recovery only until its owner expires", FixturePreparation);
         yield return ("Fixture ownership does not depend on destination-subject feedback", FixtureWithoutDestination);
     }
@@ -300,6 +301,29 @@ internal static class ScenicJourneyTests
         Check(d.PendingTravel == null, "Ordinary region dwell cut a continuous journey");
         d.Tick(20, 1, new[] { new AutonomyPlayer("p", "Player", P(0), 100, true) }, Regions(), P(0), "p", true, scenicJourneyActive: true);
         Check(d.TargetId == "p", "Journey suppressed a newly available player");
+    }
+    private static void ManualDeparturePriority()
+    {
+        var waiting = Automatic();
+        for (int i = 0; i < 20; i++)
+            waiting.Tick(i, 1, Array.Empty<AutonomyPlayer>(), Regions(), P(0), null, true,
+                scenicContentExhausted: true, scenicJourneyPending: true);
+        Check(waiting.PendingTravel == null && waiting.State == AutonomyState.Scenic && waiting.Reason.Contains("Preparing"),
+            "Ordinary dwell or novelty exhaustion cancelled the bounded requested departure");
+        waiting.Tick(20, 1, new[] { new AutonomyPlayer("p", "Player", P(0), 100, true) }, Regions(), P(0), "p", true,
+            scenicJourneyPending: true);
+        Check(waiting.TargetId == "p", "Pending manual Journey blocked available player coverage");
+
+        var recovery = Automatic();
+        recovery.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Regions(), P(0), null, true, scenicJourneyPending: true);
+        recovery.Tick(20, 1, Array.Empty<AutonomyPlayer>(), Regions(), P(0), null, false,
+            idleSearchExpired: true, scenicJourneyPending: true);
+        Check(recovery.PendingTravel != null, "Pending manual Journey suppressed actual missing-picture recovery");
+
+        var expired = Automatic();
+        expired.Tick(0, 0, Array.Empty<AutonomyPlayer>(), Regions(), P(0), null, true, scenicJourneyPending: true);
+        expired.Tick(20, 1, Array.Empty<AutonomyPlayer>(), Regions(), P(0), null, true, scenicJourneyPending: false);
+        Check(expired.PendingTravel != null, "An expired or stopped manual request kept owning voluntary travel");
     }
     private static void FixturePreparation()
     {

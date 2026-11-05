@@ -4,9 +4,28 @@ using System.Collections.ObjectModel;
 
 namespace ValheimBroadcaster.Core;
 
-/// <summary>A programme intention joining known generated regions to an actual
-/// named destination. These observations do not certify collision, visibility or
-/// loading: every local camera section still needs the live spatial evaluator.</summary>
+/// <summary>Bounded destination-selection evidence. Counts describe metadata
+/// eligibility and guiding topology, not camera clearance or world loading.</summary>
+public sealed class ScenicJourneySelectionEvidence
+{
+    public int CatalogueRegions { get; internal set; }
+    public int UsableObservations { get; internal set; }
+    public int NearDeparture { get; internal set; }
+    public int ConnectedObservations { get; internal set; }
+    public int ConnectedCandidates { get; internal set; }
+    public int BearingCandidates { get; internal set; }
+    public int CooldownExcluded { get; internal set; }
+    public int StaleExcluded { get; internal set; }
+    public int RadiusExcluded { get; internal set; }
+    public int RecentExcluded { get; internal set; }
+    public int HeadingExcluded { get; internal set; }
+    public int ScaleExcluded { get; internal set; }
+    public string Summary => $"catalogue {CatalogueRegions}; usable {UsableObservations}; near departure {NearDeparture}; connected {ConnectedObservations}; connected destinations {ConnectedCandidates}; bearing destinations {BearingCandidates}; excluded cooldown {CooldownExcluded}, stale {StaleExcluded}, radius {RadiusExcluded}, recent {RecentExcluded}, heading {HeadingExcluded}, scale {ScaleExcluded}";
+}
+
+/// <summary>A programme intention toward an actual named destination. Metadata
+/// does not certify collision, visibility or loading: every local camera section
+/// still needs the live spatial evaluator.</summary>
 public sealed class ScenicJourneyItinerary
 {
     public const int MaximumRegions = 1024, MaximumWaypoints = 128;
@@ -16,6 +35,9 @@ public sealed class ScenicJourneyItinerary
     public AutonomyPosition Origin => Waypoints[0];
     public IReadOnlyList<AutonomyPosition> Waypoints { get; }
     public IReadOnlyList<string> WaypointIds { get; }
+    /// <summary>True when the programme guide joins nearby metadata observations.
+    /// Neither value is a clearance or loaded-scene certificate.</summary>
+    public bool UsesConnectedObservations { get; }
     public double RouteMetres { get; }
     public double RequestedMetres { get; }
     public double ArrivalRadius { get; }
@@ -26,9 +48,9 @@ public sealed class ScenicJourneyItinerary
     private readonly double[] cumulative;
 
     private ScenicJourneyItinerary(ScenicRegion destination, WorldInterestSite? site,
-        double requested, IReadOnlyList<AutonomyPosition> points, IReadOnlyList<string> ids)
+        double requested, IReadOnlyList<AutonomyPosition> points, IReadOnlyList<string> ids, bool connected)
     {
-        Destination = destination; Site = site; RequestedMetres = requested;
+        Destination = destination; Site = site; RequestedMetres = requested; UsesConnectedObservations = connected;
         var copy = new AutonomyPosition[points.Count]; var names = new string[points.Count];
         cumulative = new double[points.Count];
         for (int i = 0; i < copy.Length; i++)
@@ -44,17 +66,28 @@ public sealed class ScenicJourneyItinerary
     }
 
     /// <summary>Select once per catalogue/request, not per rendered frame.
-    /// The bounded graph is deliberately conservative about missing metadata:
-    /// disconnected observations cannot invent an unobserved long-distance route.</summary>
+    /// Destination metadata is sparse, paged and selected for interest. A nearby
+    /// chain supplies a useful guide when present, but its absence does not prove
+    /// that travel is blocked. A bearing to a known destination is an intention;
+    /// the adapter still validates every local section and ending before use.</summary>
     public static bool TrySelect(AutonomyPosition origin, AutonomyPosition incomingHeading,
         IReadOnlyList<ScenicRegion> regions, IReadOnlyDictionary<string, WorldInterestSite>? sites,
         double requestedMetres, double now, IReadOnlyCollection<string>? recentDestinations,
-        out ScenicJourneyItinerary? itinerary, out string reason)
+        out ScenicJourneyItinerary? itinerary, out string reason) =>
+        TrySelect(origin, incomingHeading, regions, sites, requestedMetres, now, recentDestinations,
+            out itinerary, out reason, out _);
+
+    public static bool TrySelect(AutonomyPosition origin, AutonomyPosition incomingHeading,
+        IReadOnlyList<ScenicRegion> regions, IReadOnlyDictionary<string, WorldInterestSite>? sites,
+        double requestedMetres, double now, IReadOnlyCollection<string>? recentDestinations,
+        out ScenicJourneyItinerary? itinerary, out string reason, out ScenicJourneySelectionEvidence evidence,
+        bool allowReverseDeparture = false)
     {
-        itinerary = null;
+        itinerary = null; evidence = new ScenicJourneySelectionEvidence();
         if (regions == null || regions.Count > MaximumRegions) throw new ArgumentException("Journey catalogue exceeds its bounded region inventory.", nameof(regions));
         if (!Finite(requestedMetres) || requestedMetres < 256 || requestedMetres > 5000 || !Finite(now) || now < 0)
             throw new ArgumentOutOfRangeException(nameof(requestedMetres));
+        evidence.CatalogueRegions = regions.Count;
         double headingLength = Math.Sqrt((double)incomingHeading.X * incomingHeading.X + (double)incomingHeading.Z * incomingHeading.Z);
         if (headingLength < .001) { reason = "Journey departure has no measured horizontal heading"; return false; }
         var nodes = new List<ScenicRegion>(regions.Count);
@@ -63,19 +96,25 @@ public sealed class ScenicJourneyItinerary
         double maximumLength = requestedMetres * 1.35;
         foreach (ScenicRegion region in regions)
         {
-            if (region == null || !ids.Add(region.Id) || region.AvailableAfter > now ||
-                origin.HorizontalDistance(region.Position) > maximumLength ||
-                sites != null && sites.TryGetValue(region.Id, out WorldInterestSite? site) &&
-                (site.Age >= WorldInterestProtocol.SiteSeconds || site.RetryAfter > 0)) continue;
+            if (region == null || !ids.Add(region.Id)) continue;
+            WorldInterestSite? site = null;
+            if (sites != null) sites.TryGetValue(region.Id, out site);
+            if (site != null && site.Age >= WorldInterestProtocol.SiteSeconds)
+            { evidence.StaleExcluded++; continue; }
+            if (region.AvailableAfter > now || site != null && site.RetryAfter > 0)
+            { evidence.CooldownExcluded++; continue; }
+            if (origin.HorizontalDistance(region.Position) > maximumLength)
+            { evidence.RadiusExcluded++; continue; }
             nodes.Add(region);
         }
         nodes.Sort((a, b) => StringComparer.Ordinal.Compare(a.Id, b.Id));
-        int count = nodes.Count;
+        int count = nodes.Count; evidence.UsableObservations = count;
         var distance = new double[count]; var predecessor = new int[count]; var visited = new bool[count];
         for (int i = 0; i < count; i++)
         {
             double initial = origin.HorizontalDistance(nodes[i].Position);
             distance[i] = initial <= MaximumObservedGap ? initial : double.PositiveInfinity;
+            if (initial <= MaximumObservedGap) evidence.NearDeparture++;
             predecessor[i] = -1;
         }
         // Dijkstra is bounded to <=1024 observations. Edges are generated in
@@ -86,7 +125,7 @@ public sealed class ScenicJourneyItinerary
             for (int i = 0; i < count; i++)
                 if (!visited[i] && distance[i] < minimum) { minimum = distance[i]; node = i; }
             if (node < 0 || minimum > maximumLength) break;
-            visited[node] = true;
+            visited[node] = true; evidence.ConnectedObservations++;
             for (int i = 0; i < count; i++)
             {
                 if (visited[i]) continue;
@@ -97,36 +136,60 @@ public sealed class ScenicJourneyItinerary
                 { distance[i] = proposed; predecessor[i] = node; }
             }
         }
-        int best = -1; double bestScore = double.NegativeInfinity;
+        int best = -1, bearingBest = -1;
+        double bestScore = double.NegativeInfinity, bearingScore = double.NegativeInfinity;
         double minimumLength = Math.Max(256, requestedMetres * .75);
         for (int i = 0; i < count; i++)
         {
             ScenicRegion candidate = nodes[i];
             double displacement = origin.HorizontalDistance(candidate.Position);
-            if (!visited[i] || distance[i] < minimumLength || distance[i] > maximumLength ||
-                displacement < requestedMetres * .6 || recent.Contains(candidate.Id) || recent.Contains(candidate.FamilyId)) continue;
+            if (recent.Contains(candidate.Id) || recent.Contains(candidate.FamilyId))
+            { evidence.RecentExcluded++; continue; }
             double forward = ((candidate.Position.X - origin.X) * incomingHeading.X +
                 (candidate.Position.Z - origin.Z) * incomingHeading.Z) / Math.Max(.001, displacement * headingLength);
-            if (forward < -.25) continue;
+            // A separately framed departure cut may turn toward a known place
+            // behind the incidental current view. Continuous-seam callers keep
+            // the conservative heading gate; both retain a forward preference.
+            if (!allowReverseDeparture && forward < -.25) { evidence.HeadingExcluded++; continue; }
+            bool connected = visited[i] && distance[i] >= minimumLength && distance[i] <= maximumLength &&
+                displacement >= requestedMetres * .6;
+            bool bearing = displacement >= minimumLength && displacement <= maximumLength;
+            if (!connected && !bearing) { evidence.ScaleExcluded++; continue; }
             // Category multiplicity cannot overwhelm distance/continuity. A
             // coast gets a modest landscape preference; structures are useful
             // destinations but never receive an unconditional source priority.
             double category = candidate.Kind == ScenicDestinationKind.Landscape ? .25 : 0;
             if (candidate.Landscape == ScenicLandscape.Coast) category += .15;
-            double score = -Math.Abs(distance[i] - requestedMetres) / requestedMetres * 2 +
-                forward * .35 + category + Math.Min(candidate.Preference, 10) * .005;
-            if (score > bestScore) { best = i; bestScore = score; }
+            double preference = forward * .35 + category + Math.Min(candidate.Preference, 10) * .005;
+            if (connected)
+            {
+                evidence.ConnectedCandidates++;
+                double score = -Math.Abs(distance[i] - requestedMetres) / requestedMetres * 2 + preference;
+                if (score > bestScore) { best = i; bestScore = score; }
+            }
+            if (bearing)
+            {
+                evidence.BearingCandidates++;
+                double score = -Math.Abs(displacement - requestedMetres) / requestedMetres * 2 + preference;
+                if (score > bearingScore) { bearingBest = i; bearingScore = score; }
+            }
         }
+        bool connectedGuide = best >= 0;
+        if (!connectedGuide) best = bearingBest;
         if (best < 0)
-        { reason = "No fresh, connected known destination at the requested journey scale; ordinary scenery continues"; return false; }
+        { reason = "No eligible known destination at the requested journey scale; " + evidence.Summary; return false; }
         var route = new List<int>();
-        for (int current = best; current >= 0; current = predecessor[current])
+        if (connectedGuide)
         {
-            route.Add(current);
-            if (route.Count >= MaximumWaypoints)
-            { reason = "Known destination requires more itinerary observations than the bounded route supports"; return false; }
+            for (int current = best; current >= 0; current = predecessor[current])
+            {
+                route.Add(current);
+                if (route.Count >= MaximumWaypoints)
+                { reason = "Known destination requires more itinerary observations than the bounded route supports"; return false; }
+            }
+            route.Reverse();
         }
-        route.Reverse();
+        else route.Add(best);
         var points = new List<AutonomyPosition>(route.Count + 1) { origin };
         var labels = new List<string>(route.Count + 1) { "departure" };
         foreach (int index in route)
@@ -134,9 +197,11 @@ public sealed class ScenicJourneyItinerary
             { points.Add(nodes[index].Position); labels.Add(nodes[index].Id); }
         WorldInterestSite? targetSite = null;
         if (sites != null) sites.TryGetValue(nodes[best].Id, out targetSite);
-        itinerary = new ScenicJourneyItinerary(nodes[best], targetSite, requestedMetres, points, labels);
+        itinerary = new ScenicJourneyItinerary(nodes[best], targetSite, requestedMetres, points, labels, connectedGuide);
         reason = itinerary.Description + "; " + itinerary.RouteMetres.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) +
-            "m through " + (points.Count - 1) + " known observations; local corridors still require validation";
+            "m; " + (connectedGuide ? "guide through " + (points.Count - 1) + " connected observations" :
+            "bearing to a known destination; intermediate observations are sparse") +
+            "; every local corridor and ending still require validation; " + evidence.Summary;
         return true;
     }
 

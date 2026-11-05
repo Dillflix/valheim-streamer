@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.45";
+    public const string PluginVersion = "0.8.46";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -333,7 +333,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 coverage.Mode == CoverageMode.Scenic && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true),
                 cameraFixtures?.AwaitingStart == true || idle.FixturePreparing,
                 scenicEditBoundary: coverage.Mode != CoverageMode.Scenic || idle.RelocationBoundary,
-                preference: coverage.Preference);
+                preference: coverage.Preference,
+                scenicJourneyPending: coverage.Mode == CoverageMode.Scenic && idle.ManualJourneyPending);
             idle.SetDestinationSubject(observer.Phase == ObserverPhase.Travelling
                 ? automatic?.ActiveTravelInterest : automatic?.ScenicInterest);
             if (observer.Phase == ObserverPhase.Travelling)
@@ -393,7 +394,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     roster.ConnectedOthers, !selfTest && (coverage.Preference == CoveragePreference.Auto && coverage.IsWildlifeCutaway
                         ? readyPlayer : idle.SceneReady),
                     !CoveragePreferences.AllowsCreatures(coverage.Preference) ||
-                    !coverage.IsWildlifeCutaway && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true)
+                    !coverage.IsWildlifeCutaway && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true ||
+                        idle.ManualJourneyPending && idle.HasUsableScenicPicture && !idle.RecoveryExpired)
                         ? Array.Empty<string>() : ReadyCreatureShots(), director.IsHolding, usableIdlePicture,
                     coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id,
                     scenicSearchExhausted: idle.RecoveryExhausted);
@@ -418,7 +420,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             else if (coverage.Mode == CoverageMode.Player)
             {
                 if (cameraFixtures?.PendingPlayback == true) cameraFixtures.CancelPending("Player coverage preempted the fixture", idle);
-                if (idle.JourneyActive) idle.StopJourney();
+                if (idle.JourneyActive || idle.ManualJourneyPending) idle.StopJourney();
             }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,

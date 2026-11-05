@@ -18,15 +18,6 @@ namespace ValheimBroadcaster.Core
             { FeatureIndex = feature; RoleIndex = role; Viewpoint = viewpoint; }
         }
 
-        /// <summary>Editorial scores are relative and may be negative. Once
-        /// geometry/readability has admitted a candidate, bounded comparison
-        /// must not become an exhaustive search because continuity penalized it.</summary>
-        public static bool ComparisonComplete(int attempts, bool hasValidatedCandidate)
-        {
-            if (attempts < 0) throw new ArgumentOutOfRangeException(nameof(attempts));
-            return hasValidatedCandidate && attempts >= 4;
-        }
-
         public static int AttemptLimit(IReadOnlyList<ScenicFeature> features, int currentIndex, int searchRound)
         {
             Validate(features, currentIndex, searchRound);

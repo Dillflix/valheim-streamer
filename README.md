@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.46 corrects Journey destination/departure planning and Scenic comparison.** A sparse destination catalogue no longer has to form a dense travel graph. Independent departure preparation retains ordinary footage and reports waiting reasons. Scenic comparison counts completed preflights, retains distinct alternatives and preserves its completed diagnostics. **No server update required; protocol remains 3.** [Evidence, changes and runtime limits](docs/SCENIC-0.8.46-PLANNING.md). In-game confirmation remains pending.
+
 **0.8.45 corrects Scenic successor scheduling and repeated foliage inventory scans.** Normal prefetch considers developed views before settling for another establishing shot, reconciles duplicate building observations, and ranks local cuts for continuity. A scene-owned foliage index reduces repeated stationary-geometry enumeration without weakening visibility checks. **No server update required; protocol remains 3.** [Evidence, scope and runtime limits](docs/SCENIC-0.8.45-EDITORIAL.md). In-game visual confirmation remains pending.
 
 **0.8.44 adds explicit operator coverage modes.** Use `broadcast mode scenic` to keep Scenic coverage and its automatic travel running while other players are online; `broadcast mode auto` restores normal selection. Player and Creature preferences, fallback diagnostics and session cleanup are included. **No server update is required; protocol remains 3.** [Commands and behavior](docs/OPERATOR-MODES.md). In-game confirmation is pending.

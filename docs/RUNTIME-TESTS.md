@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.46 Journey departure and Scenic comparison
+
+The supplied 0.8.45 screenshot records destination-selection failure; the retained 161.3-second trace contains fourteen ordinary Scenic admissions and no Journey events. Source inspection identifies a sparse destination feed incorrectly required to form a dense connected travel graph, plus departure prerequisites tied to unrelated ordinary-shot state. The capture does not retain the exact rejected catalogue. [Evidence, repair scope and runtime acceptance](SCENIC-0.8.46-PLANNING.md).
+
+The correction keeps real destination identity, validates every local section and ending, prepares an independent departure, and records pending/selection stages. Normal Scenic comparison distinguishes skipped slots from completed preflights and retains composition alternatives under bounded scheduling; first-picture recovery remains fast. Protocol stays 3; no companion installation is required. Actual Valheim Journey execution, loading continuity and visual quality remain **not run here**.
+
+Local client/server/replay compilation passed against the matching real Valheim 1.0.21 / Unity 6000 / BepInEx 5 / Jötunn 2.30.2 references, with warnings treated as errors. **1,182/1,182 Core cases** and **94/94 native camera-math cases** passed. The supplied capture replays **27,382 recorded decisions with zero divergences or invalid records**; this reproduces recorded coverage/deadline decisions, not the corrected Unity planner. Normal builds, assembly audits and Windows/Linux media checks run in CI before packaging.
+
 ## 0.8.45 Scenic evaluation and editorial correction
 
 The supplied 0.8.43 capture confirms establishing-shot dominance (13/14 admissions), early-prefetch role starvation, duplicate ruin identities and repeated full-catalogue local foliage projection. It does not demonstrate sub-second moving-shot lifetimes in the retained window. [Evidence and repair scope](SCENIC-0.8.45-EDITORIAL.md).

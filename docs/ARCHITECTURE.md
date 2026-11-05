@@ -302,3 +302,10 @@ The renderer catalogue, local renderer set, detailed cells, mesh cache and per-f
 ## Destination variety and subject intent (0.8.33)
 
 `LandscapeSurvey` incrementally samples existing generated zones, finding dry coastal approaches and explicit biome/landscape metadata. Interest-v2 pages coexist with legacy v1 and unchanged admission protocol3. `WorldInterestDistribution` and `WorldDestinationPlanner` retain representative source/biome/landscape groups before ranking. `ScenicDestinationDiversity` separates completed actual-footage history from low-weight acquisition attempts, so a dense common landmark population cannot monopolize the programme. `DestinationSubjectCoverage` carries a nominated structure footprint into bounded loaded feature discovery, prioritization and actual-presentation credit. Existing Building/District/Settlement hierarchy and room/courtyard/opening context remain authoritative locally; partial area coverage is not whole-settlement coverage.
+
+
+## Scenic preparation and Journey catalogue contract (0.8.46)
+
+`ScenicSearchComparison` owns one bounded route-comparison episode, with separate work counters, distinct retained compositions, current-evidence pruning and explicit completion. Six-second comparison stops scheduling; only an unfinished first candidate may drain to the fixed ten-second hard limit. The plugin preserves proof timestamps and the last completed comparison across selected-route revalidation. Recovery can use its first valid route.
+
+Server discovery is a sparse dry-arrival/site catalogue, not a connected navigation graph. `ScenicJourneyItinerary` prefers a connected observation guide but can select a real destination by bearing when intermediate metadata is absent. Neither guide certifies clearance. A departure is an independent, fully validated camera section plus ending, prepared without seizing ordinary picture ownership. Current scene/loading evidence and useful outgoing-shot dwell control admission. Pending requests, selection exclusions and preparation outcomes are traced explicitly.
