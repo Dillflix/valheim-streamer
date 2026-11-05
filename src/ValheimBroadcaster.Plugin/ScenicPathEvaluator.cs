@@ -140,7 +140,7 @@ internal static class ScenicPoseValidation
                 return Reject(ScenicRejectionKind.SurveyIncomplete, observed.View.Reason, out kind, out reason);
             if (!continuous && !IdleShots.Ready(observed.ReadinessPoint))
                 return Reject(ScenicRejectionKind.Acquisition, "Journey viewing neighbourhood is not acquired", out kind, out reason);
-            if (!observed.View.Readable) return Reject(ScenicRejectionKind.Foliage, observed.View.Reason, out kind, out reason);
+            if (!observed.View.Usable) return Reject(ScenicRejectionKind.Foliage, observed.View.Reason, out kind, out reason);
             reason = observed.View.Reason; return true;
         }
         ScenicFeature? feature = plan.Feature;
@@ -320,13 +320,15 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 // A cache whose recenter is throttled is missing evidence, not
                 // evidence that this route is obscured. Retry this exact sample
                 // on a later frame; never skip it or advance validated progress.
-                // Total waiting per route remains bounded even if several
-                // positions need their own refreshed foreground survey.
+                // Ordinary editorial proposals have a short cumulative wait.
+                // Journey's persistent mission owns its deadline: fair work
+                // slicing must not discard native samples after two seconds
+                // and restart the same prefix indefinitely.
                 if (kind == ScenicRejectionKind.SurveyIncomplete)
                 {
                     float now = Time.unscaledTime;
                     if (!Finite(surveyWaitStarted) || now < surveyWaitStarted) surveyWaitStarted = now;
-                    if (surveyWaitSeconds + now - surveyWaitStarted < 2f)
+                    if (plan.IsJourney || plan.UsesJourneyView || surveyWaitSeconds + now - surveyWaitStarted < 2f)
                     {
                         samples--; passSamples--; pending.Push(fraction);
                         Reason = "Waiting for scenic foliage survey coverage at the same route sample";

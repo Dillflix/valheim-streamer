@@ -16,6 +16,7 @@ internal static class JourneyViewTests
         yield return ("Journey body and retained-vegetation failures remain hard regardless of image score", PhysicalPriority);
         yield return ("Journey ranks deeper open views above readable clutter without requiring every ray clear", Preference);
         yield return ("Recorded 0.8.50 hidden focus is not a near view obstruction and cannot substitute for missing grid evidence", RecordedFocus);
+        yield return ("Unsupported foliage precision is usable uncertainty without overriding known collisions or claiming clear leaves", UnsupportedFoliage);
     }
 
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
@@ -101,6 +102,28 @@ internal static class JourneyViewTests
         var open = Evaluate(Grid()); var cluttered = Evaluate(Grid(4));
         Check(open.Readable && cluttered.Readable && open.Score > cluttered.Score && open.MeanDepth == 12,
             "Depth observations neither distinguish useful alternatives nor preserve clear query range");
+    }
+
+    private static void UnsupportedFoliage()
+    {
+        var samples = Grid();
+        for (int i = 0; i < samples.Length; i++) samples[i] = new JourneyViewSample(12, 6, true, false, 0);
+        var uncertain = Evaluate(samples);
+        Check(uncertain.Status == JourneyViewStatus.Uncertain && uncertain.Usable && !uncertain.Readable &&
+            uncertain.FoliageUncertainty == 1 && uncertain.Score < Evaluate(Grid()).Score * .5,
+            "A containing coarse proxy became either a physical wall or falsely certain clear foliage");
+        for (int i = 0; i < samples.Length; i++) samples[i] = new JourneyViewSample(.8, 6, true, false, 0);
+        Check(Evaluate(samples).Status == JourneyViewStatus.Obscured, "Foliage uncertainty overrode measured near solid occlusion");
+        Check(JourneyViewPolicy.Evaluate(samples, false, true, false, .5).Status == JourneyViewStatus.CameraBlocked,
+            "Foliage uncertainty overrode body/near-plane physics");
+        samples[0] = new JourneyViewSample(12, 6, false, false, 0);
+        Check(Evaluate(samples).Status == JourneyViewStatus.Unknown, "Unavailable solid/loaded-scene evidence was downgraded to visual uncertainty");
+        for (int i = 0; i < samples.Length; i++) samples[i] = new JourneyViewSample(2, 6, true, false, 5);
+        Check(Evaluate(samples).Readable && Evaluate(samples).FoliageUncertainty == 0,
+            "Uncertain foliage behind an observed opaque surface still obscured that surface");
+        for (int i = 0; i < samples.Length; i++) samples[i] = new JourneyViewSample(12, 3, true, false, 1);
+        Check(Evaluate(samples).Status == JourneyViewStatus.Obscured && Evaluate(samples).FoliageCoverage == 1,
+            "Adding a nearer uncertain proxy erased a definite triangle foliage veil");
     }
 
     private static void RecordedFocus()

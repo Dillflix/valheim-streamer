@@ -36,8 +36,18 @@ public sealed class JourneyRoutePlayback
     public double Propose(double deltaSeconds, bool canMove = true)
     {
         Number(deltaSeconds, nameof(deltaSeconds));
-        if (Current == null || Current.IsPictureOnly || !HasPresented || !PictureAvailable || !canMove || PhysicalBlocked)
+        if (!canMove || PhysicalBlocked)
+        {
+            // An operator hold or physical pause withdraws this uncommitted
+            // step. Resume from the actual accepted pose, with a fresh clock.
+            proposedCeiling = Progress; return Progress;
+        }
+        if (Current == null || Current.IsPictureOnly || !HasPresented || !PictureAvailable)
             return Progress;
+        // Incremental geometry may need several frames. Keep exactly one
+        // bounded proposal while its observations mature; variable frame time
+        // must not replace the requested camera on every retry.
+        if (proposedCeiling > Progress) return proposedCeiling;
         double proposal = Math.Min(1, Progress + Math.Min(deltaSeconds, .1) / Current.DurationSeconds);
         proposedCeiling = Math.Max(proposedCeiling, proposal);
         return proposal;
@@ -55,6 +65,7 @@ public sealed class JourneyRoutePlayback
         double authored = Current != null && Current.JourneyCruiseSpeed > 0 ? Current.JourneyCruiseSpeed : requestedCruise;
         if (actualCruise > Math.Min(authored, requestedCruise) + .000001)
             throw new ArgumentOutOfRangeException(nameof(actualCruise), "Live cruise exceeds the certified section speed.");
+        if (actualCruise == 0) return Propose(0, false);
         double step = Math.Min(deltaSeconds, Math.Min(.1, ScenicJourneyPolicy.MaximumStepMetres / Math.Max(.01, actualCruise)));
         return Propose(step * actualCruise / authored, canMove);
     }
@@ -65,7 +76,7 @@ public sealed class JourneyRoutePlayback
     public void Pause()
     {
         if (!PhysicalBlocked) BlockedSeconds = 0;
-        PhysicalBlocked = true; precedingBlocked = false;
+        PhysicalBlocked = true; precedingBlocked = false; proposedCeiling = Progress;
     }
 
     public void Resume()
@@ -93,6 +104,7 @@ public sealed class JourneyRoutePlayback
         if (motionBlocked)
         {
             PhysicalBlocked = true;
+            proposedCeiling = Progress;
             if (!held && precedingBlocked) BlockedSeconds += blockedDelta;
             else if (gap > 2 || held) BlockedSeconds = 0;
         }
@@ -103,11 +115,15 @@ public sealed class JourneyRoutePlayback
             HasPresented = true;
             if (!held)
             {
+                double before = Progress;
                 Progress = Math.Max(Progress, Math.Min(proposedCeiling, displayedProgress));
-                proposedCeiling = Progress;
+                // Re-rendering the preceding accepted pose keeps pending work
+                // alive. Only a newly captured proposal consumes its clock.
+                if (Progress > before && proposedCeiling - Progress <= ProgressTolerance) proposedCeiling = Progress;
                 if (precedingLive) ElapsedSeconds += shownDelta;
             }
         }
+        if (held) proposedCeiling = Progress;
         // A gap/hold breaks credited presentation time but retains the exact
         // last accepted route pose. It neither ages out the route nor requests
         // a replacement; fresh output can resume this same immutable section.

@@ -126,6 +126,9 @@ A full pending set applies backpressure and fairly resumes exact queries instead
 discarding them. The adapter retains those eight partial observations plus one
 selected-route refresh. Serviced physical sweeps survive across frames, while
 idle work and observations older than five seconds are still refreshed.
+The reusable Core search permits up to 256 unresolved probes by default;
+the game adapter explicitly lowers that limit to eight to match its observation
+capacity.
 Its proposed local route is at most 64 m; successive admitted sections, not one
 unbounded spline, provide long travel. Up to eight search operations run per
 planner step, stopping when the shared Scenic work budget is consumed. Selected

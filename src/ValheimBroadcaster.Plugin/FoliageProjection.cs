@@ -9,7 +9,7 @@ namespace ValheimBroadcaster.Plugin;
 /// Collection is incremental; a completed view survives a budget-deferred
 /// refresh. Nearest retention precedes mesh refinement so peripheral/evicted
 /// objects cannot consume the camera's detailed-geometry allowance.</summary>
-internal sealed class FoliageProjection
+internal sealed partial class FoliageProjection
 {
     internal static readonly FoliageProjection Actors = new FoliageProjection(100, "actors");
     internal const int Capacity = 512, DetailBudget = 1024, BoundsCapacity = Capacity + DetailBudget;
@@ -20,6 +20,7 @@ internal sealed class FoliageProjection
     private List<Entry> retained = new List<Entry>(Capacity), staging = new List<Entry>(Capacity);
     private readonly List<float> distances = new List<float>(Capacity);
     private readonly Bounds[] active = new Bounds[BoundsCapacity];
+    private readonly ActiveSource[] activeSources = new ActiveSource[BoundsCapacity];
     private IReadOnlyList<ScenicFoliageScene.Observation>? source;
     private readonly List<int> sourceCandidates = new List<int>(Capacity);
     private Vector3 origin, pendingOrigin, priority;
@@ -41,17 +42,28 @@ internal sealed class FoliageProjection
     internal long Revision => revision;
     internal bool Updating => collecting || refining;
     internal Bounds[] ActiveBounds => active;
+    internal ActiveSource[] ActiveSources => activeSources;
     internal float CoveredRadius => Mathf.Min(coveredRadius, ScenicFoliageScene.Shared.CoverageFor(revision, origin, radius));
 
+    internal readonly struct ActiveSource
+    {
+        internal readonly Renderer Renderer;
+        internal readonly FoliageGeometryPrecision Precision;
+        internal readonly int Part;
+        internal ActiveSource(Renderer renderer, FoliageGeometryPrecision precision, int part)
+        { Renderer = renderer; Precision = precision; Part = part; }
+    }
     private readonly struct Entry
     {
         internal readonly ScenicFoliageScene.Observation Observation;
         internal readonly Bounds Coarse;
         internal readonly Bounds[]? Local;
         internal readonly Mesh? Mesh;
-        internal Entry(ScenicFoliageScene.Observation observation, Bounds coarse, Bounds[]? local = null)
+        internal readonly FoliageGeometryPrecision Precision;
+        internal Entry(ScenicFoliageScene.Observation observation, Bounds coarse, Bounds[]? local = null,
+            FoliageGeometryPrecision precision = FoliageGeometryPrecision.RendererBounds)
         {
-            Observation = observation; Coarse = coarse; Local = local;
+            Observation = observation; Coarse = coarse; Local = local; Precision = precision;
             MeshFilter? filter = local != null && observation.Renderer ? observation.Renderer.GetComponent<MeshFilter>() : null;
             Mesh = filter ? filter.sharedMesh : null;
         }
@@ -64,6 +76,7 @@ internal sealed class FoliageProjection
         coveredRadius = pendingCoverage = 0; refreshedAt = float.NegativeInfinity; epoch = revision = -1;
         activeFrame = refinementFrame = -1; ActiveCount = Omitted = Detailed = retainedRefineIndex = 0;
         refinementPending = pendingRefinement = false; nextProgressTrace = 0;
+        ResetJourneyObservation();
     }
 
     internal void RequestRefresh() { if (!Updating) refreshedAt = float.NegativeInfinity; }
@@ -126,7 +139,7 @@ internal sealed class FoliageProjection
                     Bounds[]? cells = scene.Geometry(item.Observation.Renderer, out bool deferred);
                     pendingRefinement |= deferred;
                     if (cells != null && cells.Length <= detailRemaining)
-                    { detailRemaining -= cells.Length; staging[refineIndex] = new Entry(item.Observation, item.Coarse, cells); }
+                    { detailRemaining -= cells.Length; staging[refineIndex] = new Entry(item.Observation, item.Coarse, cells, scene.Precision(item.Observation.Renderer)); }
                 }
                 refineIndex++;
             }
@@ -179,7 +192,7 @@ internal sealed class FoliageProjection
                     if (cells.Length <= detailRemaining + refunded)
                     {
                         detailRemaining += refunded - cells.Length;
-                        retained[at] = new Entry(entry.Observation, bounds, cells); activeFrame = -1;
+                        retained[at] = new Entry(entry.Observation, bounds, cells, scene.Precision(entry.Observation.Renderer)); activeFrame = -1;
                     }
                 }
                 // Retry this nearest entry next frame when a mesh read/metadata
@@ -226,17 +239,19 @@ internal sealed class FoliageProjection
             if (!entry.Observation.TryBounds(out Bounds observed))
             { coveredRadius = entry.Observation.LimitUnknownCoverage(origin, coveredRadius); continue; }
             MeshFilter? filter = entry.Local != null ? renderer.GetComponent<MeshFilter>() : null;
-            if (entry.Local == null || !filter || filter.sharedMesh != entry.Mesh) AddActive(observed);
+            if (entry.Local == null || !filter || filter.sharedMesh != entry.Mesh)
+                AddActive(observed, new ActiveSource(renderer, FoliageGeometryPrecision.RendererBounds, -1));
             else
             {
                 Matrix4x4 matrix = renderer.localToWorldMatrix;
-                foreach (Bounds local in entry.Local) AddActive(FoliageGeometryMath.Transform(local, matrix));
+                for (int i = 0; i < entry.Local.Length; i++) AddActive(FoliageGeometryMath.Transform(entry.Local[i], matrix),
+                    new ActiveSource(renderer, entry.Precision, i));
             }
         }
     }
-    private void AddActive(Bounds bounds)
+    private void AddActive(Bounds bounds, ActiveSource source)
     {
         if (!FoliageGeometryMath.Valid(bounds)) { coveredRadius = 0; return; }
-        bounds.Expand(.4f); active[ActiveCount++] = bounds;
+        bounds.Expand(.4f); active[ActiveCount] = bounds; activeSources[ActiveCount++] = source;
     }
 }

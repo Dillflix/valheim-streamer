@@ -23,6 +23,7 @@ internal static class JourneyNavigationSearchTests
         yield return ("Connected Journey search requires the next exact native seam rather than a clear sideways exit", ExactOnwardSeam);
         yield return ("Connected Journey search completes slow partial observations within the adapter capacity and lifetime", SlowObservationCapacity);
         yield return ("Connected Journey search waits at full unknown observation capacity without dropping or relabelling work", FullUnknownCapacity);
+        yield return ("Connected Journey search continues a narrow tortuous route at the native waypoint bound without lowering its nominal target", WaypointBoundContinuation);
     }
     private static AutonomyPosition P(double x, double z = 0, double y = 0) => new AutonomyPosition((float)x, (float)y, (float)z);
     private static JourneyNavigationPose Pose(double x) => new JourneyNavigationPose(P(x), P(x + 12));
@@ -62,12 +63,14 @@ internal static class JourneyNavigationSearchTests
         internal int Calls;
         internal double MaxZ = 24, MinimumX = -24, MaximumX = 80;
         internal Func<JourneyNavigationProbe, bool>? ExtraBlock;
+        internal Func<AutonomyPosition, AutonomyPosition, bool>? Corridor;
+        internal AutonomyPosition? FixedAimOffset;
         internal bool Clear(AutonomyPosition from, AutonomyPosition to)
         {
             if (to.X < MinimumX || to.X > MaximumX || Math.Abs(to.Z) > MaxZ ||
                 (!Vertical && Math.Abs(to.Y) > .001) || Vertical && (to.Y < -.001 || to.Y > 16)) return false;
             foreach (Box solid in Solids) if (solid.Hits(from, to)) return false;
-            return true;
+            return Corridor == null || Corridor(from, to);
         }
         internal JourneyNavigationObservation Observe(JourneyNavigationProbe probe)
         {
@@ -77,8 +80,10 @@ internal static class JourneyNavigationSearchTests
             bool clear = Clear(probe.From.Position, probe.Position) && !(ExtraBlock?.Invoke(probe) ?? false);
             double dx = probe.Position.X - probe.From.Position.X, dz = probe.Position.Z - probe.From.Position.Z;
             double n = Math.Sqrt(dx * dx + dz * dz);
-            var aim = probe.RequiredAim ?? new AutonomyPosition(probe.Position.X + (float)(dx / Math.Max(.001, n) * 12),
-                probe.Position.Y, probe.Position.Z + (float)(dz / Math.Max(.001, n) * 12));
+            var aim = probe.RequiredAim ?? (FixedAimOffset.HasValue ?
+                new AutonomyPosition(probe.Position.X + FixedAimOffset.Value.X, probe.Position.Y + FixedAimOffset.Value.Y, probe.Position.Z + FixedAimOffset.Value.Z) :
+                new AutonomyPosition(probe.Position.X + (float)(dx / Math.Max(.001, n) * 12),
+                    probe.Position.Y, probe.Position.Z + (float)(dz / Math.Max(.001, n) * 12)));
             return new JourneyNavigationObservation(clear ? JourneyNavigationEvidence.Clear : JourneyNavigationEvidence.Blocked,
                 new JourneyNavigationPose(probe.Position, aim), clear ? .9 : 0, Epoch, Stale ? 0 : Now);
         }
@@ -291,6 +296,14 @@ internal static class JourneyNavigationSearchTests
         Check(straight.Poses[straight.Poses.Count - 1].Position.Distance(P(18)) < .01 &&
             straight.OnwardPose.HasValue && straight.OnwardPose.Value.Position.Distance(P(20)) < .01,
             "The same endpoint with an actually clear next seam was not accepted");
+        var renewed = JourneyNavigationProbe.ExactContinuation(1_000_000_000,
+            straight.Poses[straight.Poses.Count - 1], straight.OnwardPose!.Value);
+        Check(renewed.IsOnward && !renewed.IsStart && !renewed.IsEntry && renewed.RequiredAim.HasValue &&
+            renewed.Position.Distance(straight.OnwardPose.Value.Position) < .0001 &&
+            renewed.RequiredAim.Value.Distance(straight.OnwardPose.Value.Aim) < .0001 &&
+            renewed.From.Position.Distance(straight.Poses[straight.Poses.Count - 1].Position) < .0001 &&
+            straight.OnwardObservedAt >= straight.OldestEvidence,
+            "External finalization renewal lost the exact known seam or its original timestamp");
     }
     private static AutonomyPosition Extend(AutonomyPosition prior, AutonomyPosition last, double scale) =>
         new AutonomyPosition((float)(last.X + (last.X - prior.X) * scale),
@@ -349,6 +362,55 @@ internal static class JourneyNavigationSearchTests
         scene.Unknown = false;
         for (int i = 0; i < 3000 && search.Result == null; i++) { scene.Now += .02; search.Step(4, scene.Now, 3, scene.Observe); }
         Ready(search, scene, request);
+    }
+    private static void WaypointBoundContinuation()
+    {
+        // Constructed narrow corridor: the0.8.51 capture does not contain graph
+        // parent/depth chains or complete scene geometry. This specifically
+        // proves the production eligibility defect, not a captured world route.
+        var centreline = new List<AutonomyPosition> { P(0), P(2) };
+        for (int i = 0; i < 36; i++)
+        {
+            double yaw = i % 2 == 0 ? Math.PI / 6 : -Math.PI / 6;
+            if (i == 14) yaw = -Math.PI / 6; // next exact2m continuation after the16-knot boundary
+            AutonomyPosition prior = centreline[centreline.Count - 1];
+            centreline.Add(P(prior.X + 2 * Math.Cos(yaw), prior.Z + 2 * Math.Sin(yaw)));
+        }
+        bool Corridor(AutonomyPosition from, AutonomyPosition to)
+        {
+            int samples = Math.Max(1, (int)Math.Ceiling(from.Distance(to) / .05));
+            for (int i = 0; i <= samples; i++)
+            {
+                double t = i / (double)samples;
+                var point = P(from.X + (to.X - from.X) * t, from.Z + (to.Z - from.Z) * t);
+                double nearest = double.PositiveInfinity;
+                for (int k = 1; k < centreline.Count; k++) nearest = Math.Min(nearest, SegmentDistance(point, centreline[k - 1], centreline[k]));
+                // The distance-to-polyline function is1-Lipschitz: <=.30m at
+                // <=.05m spacing certifies a continuous <=.325m centre envelope.
+                if (nearest > .30) return false;
+            }
+            return true;
+        }
+        var scene = new Scene { Corridor = Corridor, FixedAimOffset = P(12) };
+        var request = new JourneyNavigationRequest(7, 3, Pose(0), Pose(2), P(1000), P(0),
+            targetMetres: 56, maximumMetres: 64, maximumNodes: 512, maximumEdges: 8192);
+        var result = Ready(Run(scene, request), scene, request);
+        Check(result.Poses.Count == JourneyNavigationSearch.MaximumWaypoints && result.Length > 8 && result.Length < 56 &&
+            result.GoalProgress >= 8 && result.OnwardPose.HasValue && !result.AtGoal && request.TargetMetres == 56 && request.MaximumMetres == 64,
+            "The waypoint-bound continuation was discarded, became an arrival, or lowered the global window target");
+        for (int i = 1; i <= 12; i++)
+            Check(Math.Abs(result.Poses[i - 1].Position.Distance(result.Poses[i].Position) - 2) < .001,
+                "The alternating corridor admitted a shortcut before the deliberately straight continuation seam");
+        var blockedEnding = new Scene { Corridor = Corridor, FixedAimOffset = P(12), ExtraBlock = probe => probe.IsOnward };
+        var blocked = Run(blockedEnding, request);
+        Check(blocked.Result == null, "A short internal section was accepted without its exact fresh onward seam");
+    }
+    private static double SegmentDistance(AutonomyPosition point, AutonomyPosition from, AutonomyPosition to)
+    {
+        double dx = to.X - from.X, dz = to.Z - from.Z;
+        double t = Math.Max(0, Math.Min(1, ((point.X - from.X) * dx + (point.Z - from.Z) * dz) / (dx * dx + dz * dz)));
+        double x = point.X - from.X - t * dx, z = point.Z - from.Z - t * dz;
+        return Math.Sqrt(x * x + z * z);
     }
     private static string Signature(JourneyNavigationPath path) => string.Join(";", path.Poses.Select(p =>
         p.Position.X.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) + "," +

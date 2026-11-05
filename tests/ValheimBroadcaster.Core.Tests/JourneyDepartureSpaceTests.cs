@@ -16,6 +16,7 @@ internal static class JourneyDepartureSpaceTests
         yield return ("Journey landscape framing cannot turn an obstruction or unobserved hit into a subject", LandscapeRejects);
         yield return ("Repeated twelve-second Journey batches continue search instead of repeating the first fifteen openings", RecordedBatchProgress);
         yield return ("Departure search invalidates changed mission scene seed carrier goal or clock", EpisodeInvalidation);
+        yield return ("A retained loaded origin domain survives carrier movement without inheriting another scene", LoadedContextMovement);
     }
     private static void Check(bool ok, string reason) { if (!ok) throw new Exception(reason); }
     private static AutonomyPosition P(float x, float y = 20, float z = 0) => new AutonomyPosition(x, y, z);
@@ -174,6 +175,29 @@ internal static class JourneyDepartureSpaceTests
         }
         Check(search.Screened == 75 && seen.Count == 75, "Repair silently recycled the same small proposal subset");
         search.Reset(); Check(!search.Bind(13, 3, seed, goal, carrier, 200), "Explicit mission cleanup retained search history");
+    }
+
+    private static void LoadedContextMovement()
+    {
+        var search = new JourneyDepartureSpace(); var seed = P(0); var goal = P(1000);
+        search.Bind(13, 3, seed, goal, P(0, 18), 100);
+        Check(search.TryNext(100, out int first) && first == 0, "Missing initial departure origin");
+        search.Complete(first, true); search.RememberMeasured(seed, P(28, 18));
+        var movedCarrier = P(20, 18);
+        bool wholeDomainStillLoaded = JourneyLoadingContext.ContainsPoint(seed, movedCarrier,
+            JourneyDepartureSpace.MaximumOriginRelocation + JourneyViewPolicy.ObservationRange);
+        Check(wholeDomainStillLoaded && search.Bind(13, 3, seed, goal, movedCarrier, 113, wholeDomainStillLoaded),
+            "An ordinary camera movement discarded compatible observed origin history");
+        Check(search.Screened == 1 && search.WasMeasured(seed, P(28, 18)) && search.TryNext(113, out int next) && next == 1,
+            "Compatible carrier movement repeated the original opening");
+        Check(!search.Bind(13, 4, seed, goal, movedCarrier, 114, true) && search.Screened == 0,
+            "The loading-domain exception leaked history across a scene epoch");
+        search.Complete(0, true);
+        var farCarrier = P(100, 18);
+        bool distantDomain = JourneyLoadingContext.ContainsPoint(seed, farCarrier,
+            JourneyDepartureSpace.MaximumOriginRelocation + JourneyViewPolicy.ObservationRange);
+        Check(!distantDomain && !search.Bind(13, 4, seed, goal, farCarrier, 115, distantDomain),
+            "Lost loaded origin domain retained stale search ownership");
     }
 
     private static void EpisodeInvalidation()

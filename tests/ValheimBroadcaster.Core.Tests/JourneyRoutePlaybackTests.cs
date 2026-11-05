@@ -18,6 +18,8 @@ internal static class JourneyRoutePlaybackTests
         yield return ("Retimed Journey bends travel at their selected cruise without a second mission-speed slowdown", SelectedCruiseClock);
         yield return ("Journey cruise metadata survives route transformations and stationary endings", CruiseTransforms);
         yield return ("Journey endpoint completion cannot turn a sub-five-centimetre remainder into a large position jump", TinyEndpointCompletion);
+        yield return ("Journey pending geometry keeps one exact proposal across variable frame times and accepted fallback frames", PendingGeometryPose);
+        yield return ("Journey pending proposals are cancelled by holds physical pauses and replacement ownership", CancelPendingPose);
     }
 
     private static AutonomyPosition P(float x, float z = 0) => new AutonomyPosition(x, 30, z);
@@ -109,6 +111,58 @@ internal static class JourneyRoutePlaybackTests
             playback.Observe(plan.Id, at + 1d / 60, final, true, true, false);
             Near(playback.Progress, 1);
         }
+    }
+
+    private static void PendingGeometryPose()
+    {
+        ScenicShotPlan plan = Section(duration: 8).WithJourneyCruiseSpeed(6);
+        var playback = Start(plan);
+        double requested = playback.ProposeAtCruise(1d / 60, 6, 12), at = 0;
+        AutonomyPosition wanted = plan.Sample(requested).CameraPosition;
+        for (int frame = 1; frame <= 240; frame++)
+        {
+            double dt = frame % 3 == 0 ? .04 : frame % 3 == 1 ? .011 : .025;
+            at += dt;
+            // Exact geometry is still pending: the preceding accepted pose
+            // remains readable and may legitimately render for many frames.
+            playback.Observe(plan.Id, at, 0, true, true, false);
+            double retry = playback.ProposeAtCruise(dt, 6, 12);
+            Near(retry, requested);
+            Check(plan.Sample(retry).CameraPosition.Distance(wanted) == 0,
+                "Frame-time variation restarted the pending camera query");
+        }
+        Near(playback.Progress, 0);
+        playback.Observe(plan.Id, at + .02, requested, true, true, false);
+        Near(playback.Progress, requested);
+        double next = playback.ProposeAtCruise(.02, 6, 12);
+        Near(next - requested, .02 / plan.DurationSeconds);
+        Check(plan.Sample(next).CameraPosition.Distance(wanted) <= .12001,
+            "Completing pending work consumed the elapsed wait as catch-up travel");
+    }
+
+    private static void CancelPendingPose()
+    {
+        var playback = Start(); ScenicShotPlan first = playback.Current!;
+        double pending = playback.Propose(.1);
+        Check(pending > 0, "Fixture did not create a pending proposal");
+        Near(playback.Propose(.1, false), 0);
+        Near(playback.Propose(.01), .01 / first.DurationSeconds);
+        playback.Pause(); playback.Resume();
+        Near(playback.Propose(.02), .02 / first.DurationSeconds);
+        playback.Observe(first.Id, .1, 0, true, true, false, held: true);
+        Near(playback.Propose(.03), .03 / first.DurationSeconds);
+        var replacement = Section(21, 4);
+        playback.Accept(replacement, 1);
+        playback.Observe(first.Id, 1.01, pending, true, true, false);
+        Near(playback.Propose(.1), 0);
+        playback.Observe(replacement.Id, 1.02, 0, true, true, false);
+        Near(playback.Propose(.01), .01 / replacement.DurationSeconds);
+        // Zero cruise is an explicit stop; a zero-time observation retry at
+        // nonzero cruise is not. Only the former withdraws pending movement.
+        Near(playback.ProposeAtCruise(.1, 0, 6), 0);
+        double resumed = playback.ProposeAtCruise(.02, 6, 6);
+        Near(resumed, .02 / replacement.DurationSeconds);
+        Near(playback.ProposeAtCruise(0, 6, 6), resumed);
     }
 
     private static void FirstPresentation()
