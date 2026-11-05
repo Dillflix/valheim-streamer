@@ -15,12 +15,12 @@ internal static class FoliageGeometryMath
     // correction or proof of visibility. Use the whole nearby vertical column
     // so escaping one leaf cell does not merely enter another cell above it.
     internal static bool TryCanopyLift(Vector3 camera, Bounds[] occupied, int count,
-        bool surveyComplete, float foregroundRange, out float lift)
+        bool surveyComplete, float foregroundRange, out float lift, bool measuredForegroundObstruction = false)
     {
         lift = 0;
         if (!surveyComplete || !Finite(camera) || occupied == null || count <= 0 || count > occupied.Length ||
             !Finite(foregroundRange) || foregroundRange <= 0 || foregroundRange > 16f) return false;
-        bool inside = false;
+        bool inside = false, nearby = false;
         float top = camera.y, radiusSquared = foregroundRange * foregroundRange;
         for (int i = 0; i < count; i++)
         {
@@ -30,11 +30,15 @@ internal static class FoliageGeometryMath
             float dx = camera.x < min.x ? min.x - camera.x : camera.x > max.x ? camera.x - max.x : 0;
             float dz = camera.z < min.z ? min.z - camera.z : camera.z > max.z ? camera.z - max.z : 0;
             if (dx == 0 && dz == 0 && camera.y >= min.y && camera.y <= max.y) inside = true;
-            if (dx * dx + dz * dz <= radiusSquared) top = Math.Max(top, max.y);
+            if (dx * dx + dz * dz <= radiusSquared)
+            {
+                float dy = camera.y < min.y ? min.y - camera.y : camera.y > max.y ? camera.y - max.y : 0;
+                top = Math.Max(top, max.y); nearby |= dx * dx + dy * dy + dz * dz <= radiusSquared;
+            }
         }
         float required = top + 1f - camera.y;
         // Do not cap an excessive lift down to a height that remains in canopy.
-        if (!inside || !Finite(required) || required <= 0 || required > MaximumCanopyLift) return false;
+        if (!(inside || measuredForegroundObstruction && nearby) || !Finite(required) || required <= 0 || required > MaximumCanopyLift) return false;
         lift = required;
         return true;
     }

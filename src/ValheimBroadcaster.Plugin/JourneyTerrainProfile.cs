@@ -11,11 +11,13 @@ internal static class JourneyTerrainProfile
 {
     internal const float MaximumGrade = .4f;
     internal static bool TryFit(IReadOnlyList<Vector3> knots, IReadOnlyList<float> floors,
-        float clearance, float loft, out Vector3[] fitted, out string reason, bool preserveIncomingTangent = true)
+        float clearance, float loft, out Vector3[] fitted, out string reason, bool preserveIncomingTangent = true,
+        float? cruiseAltitude = null)
     {
         fitted = Array.Empty<Vector3>(); reason = "Invalid measured journey terrain profile";
         if (knots == null || floors == null || knots.Count < 3 || knots.Count > 16 || floors.Count != knots.Count ||
-            !Finite(clearance) || clearance < 0 || clearance > 18 || !Finite(loft) || loft < 0 || loft > 16) return false;
+            !Finite(clearance) || clearance < 0 || clearance > 18 || !Finite(loft) || loft < 0 || loft > 16 ||
+            cruiseAltitude.HasValue && (!Finite(cruiseAltitude.Value) || Mathf.Abs(cruiseAltitude.Value) > 20000)) return false;
         var required = new float[floors.Count];
         for (int i = 0; i < required.Length; i++)
         {
@@ -34,13 +36,20 @@ internal static class JourneyTerrainProfile
         for (int i = preserveIncomingTangent ? 2 : 1; i < fitted.Length; i++)
         {
             Vector3 point = knots[i]; float step = HorizontalStep(knots[i - 1], point); distance += step;
-            float target = Mathf.Max(required[i], floors[i] + clearance + loft * Mathf.Clamp01(distance / 32f));
+            // A camera deliberately admitted above a canopy is not required
+            // to descend to floor+18m. Keep that world-altitude intent separate
+            // from the measured surface and its local clearance. Optional
+            // loft still develops above the selected base, without moving an
+            // accepted seam or overriding grade/physical surface constraints.
+            float baseAltitude = Mathf.Max(floors[i] + clearance, cruiseAltitude ?? float.NegativeInfinity);
+            float target = Mathf.Max(required[i], baseAltitude + loft * Mathf.Clamp01(distance / 32f));
             point.y = Mathf.MoveTowards(fitted[i - 1].y, target, step * MaximumGrade);
             if (point.y < required[i] - .005f)
             { fitted = Array.Empty<Vector3>(); reason = "Terrain needs a steeper climb than this cinematic corridor permits"; return false; }
             fitted[i] = point;
         }
-        reason = preserveIncomingTangent ? "Measured terrain profile retains its seam and bounded climbs/descents" :
+        reason = cruiseAltitude.HasValue ? "Measured terrain profile preserves the selected cruise altitude with bounded grade and exact incoming geometry" :
+            preserveIncomingTangent ? "Measured terrain profile retains its seam and bounded climbs/descents" :
             "Independent departure develops a measured initial climb without inheriting a previous shot's tangent"; return true;
     }
     private static float HorizontalStep(Vector3 a, Vector3 b) => Vector3.ProjectOnPlane(b - a, Vector3.up).magnitude;

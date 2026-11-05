@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.49";
+    public const string PluginVersion = "0.8.50";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -965,8 +965,11 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         bool scenic = presentedMode == CoverageMode.Scenic;
         long shot = scenic ? presentedScenicPlan : rig.PresentedActorShotId;
         RenderedPictureContext? picture = rig.PictureContext;
+        string journeyPicture = scenic ? idle.JourneyPictureLabel : "";
+        string scenicMotion = journeyPicture.Length > 0 ? journeyPicture :
+            idle.Plan?.IsPictureOnly == true ? "settled picture" : "camera route";
         string intent = scenic ? idle.Plan?.Id == shot ?
-            idle.Plan.FeatureKind + " / " + idle.Plan.Role + (idle.Plan.IsPictureOnly ? " / settled picture" : " / moving route") :
+            idle.Plan.FeatureKind + " / " + idle.Plan.Role + " / " + scenicMotion :
             "Retained previous scenic view" : rig.CurrentPlayerScene?.ActionPhase.Phase.ToString() ?? "";
         CameraSceneFrame? encounterScene = scenic ? null : rig.CurrentPlayerScene;
         return new DiagnosticPictureContext(probe.Active ? "Probe" : presentedMode.ToString(),
@@ -1090,14 +1093,26 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             coverage.IsWildlifeCutaway ? "Wildlife cutaway; observing player activity" : coverage.AwaitingPlayers ?
                 "Waiting for a loaded player view" : "Automatic " + coverage.Mode + " coverage");
         if (liveTimelapse.Active) directing = LiveTimelapseStatus;
+        JourneyOperatorStatus journeyView = idle.JourneyOperator;
+        string journeyDetails = "";
+        if (journeyView.Visible)
+        {
+            // Mission work does not depend on ordinary Scenic.Searching. A
+            // valid stationary render must still report its stopped travel and
+            // pending navigation, instead of claiming a moving route.
+            directing = journeyView.Summary;
+            journeyDetails = "\nJOURNEY WORK: " + StatusText(journeyView.Work);
+            if (journeyView.LastRejection.Length > 0)
+                journeyDetails += "\nLAST JOURNEY REJECTION: " + StatusText(journeyView.LastRejection);
+        }
         string planning = observer.Phase == ObserverPhase.Travelling && automatic?.ActiveTravel?.Kind == AutonomyTravelKind.Scenic
             ? "\nPREPARING: " + StatusText(scenicArrivalStatus)
-            : coverage.Mode == CoverageMode.Scenic && (idle.Searching || !idle.HasScenicPath)
+            : !journeyView.Visible && coverage.Mode == CoverageMode.Scenic && (idle.Searching || !idle.HasScenicPath)
                 ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
         string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
         string discovery = observer.RemoteSession ? remote.DiscoveryStatus : roster.ConnectedOthers + " other connected; " + roster.Targets.Count + " known targets";
         return "ON AIR: " + state + " | " + onAir + "\nMODE: " + coverage.Preference + " | " +
-            CoveragePreferences.Describe(coverage.Preference, coverage.Mode) + "\nDIRECTOR: " + StatusText(directing) + planning +
+            CoveragePreferences.Describe(coverage.Preference, coverage.Mode) + "\nDIRECTOR: " + StatusText(directing) + journeyDetails + planning +
             "\nSESSION: " + session + " | " + StatusText(discovery) + "\nRTMP: " + StatusText(output?.Status ?? "Stopped");
     }
 

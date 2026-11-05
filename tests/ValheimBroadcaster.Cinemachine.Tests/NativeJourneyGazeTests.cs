@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using UnityEngine;
 using ValheimBroadcaster.Core;
 using ValheimBroadcaster.Plugin;
 
@@ -16,6 +19,8 @@ internal static class NativeJourneyGazeTests
         yield return ("Incremental native gaze verification cannot reuse a replaced or reset path", InvalidatedVerification);
         yield return ("Incremental native gaze verification rejects invalid timing without accepting an incomplete path", InvalidTiming);
         yield return ("Native journey gaze preserves a smooth outward view when observed terrain terminates its focus rays", ObservedTerrainFocus);
+        yield return ("Recorded elevated Journey opening retains its altitude through native travel instead of repeating the observed descent", RecordedElevatedOpening);
+        yield return ("Recorded authored Journey geometry can regenerate a measured prefix without losing its exact incoming seam", RecordedPrefixRegeneration);
     }
     private static AutonomyPosition P(double x, double y = 12, double z = 0) => new AutonomyPosition((float)x, (float)y, (float)z);
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
@@ -204,5 +209,116 @@ internal static class NativeJourneyGazeTests
             Check(Angle(frame, frame.WithAimPosition(P(frame.CameraPosition.X + 24, frame.CameraPosition.Y - 2))) < 2,
                 "Native focus-range variation changed the purposeful outward view");
         }
+    }
+
+    private static void RecordedElevatedOpening()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(RecordedFixture()));
+        Check(document.RootElement.GetProperty("sourceVersion").GetString() == "0.8.49", "Recorded geometry fixture changed identity");
+        JsonElement query = default;
+        foreach (JsonElement item in document.RootElement.GetProperty("candidateQueries").EnumerateArray())
+            if (item.GetProperty("query").GetInt32() == 27) query = item;
+        Check(query.ValueKind == JsonValueKind.Object, "Elevated candidate27 is missing from the recorded failure");
+        var samples = new List<JsonElement>(query.GetProperty("samples").EnumerateArray());
+        Vector3 first = Vector(samples[0].GetProperty("camera"));
+        Vector3 last = Vector(samples[samples.Count - 1].GetProperty("camera"));
+        Check(samples[0].GetProperty("readable").GetBoolean() && !samples[samples.Count - 1].GetProperty("readable").GetBoolean() &&
+            first.y - last.y > 9, "Fixture lost the readable opening followed by the measured downhill foliage rejection");
+
+        // These are measured preflight poses, not the original authored knots.
+        // Thin their observed horizontal footprint into a *new proposal* at
+        // the readable opening's altitude. The trace has no terrain heights:
+        // the constant lower floor below is a constructed math counterfactual,
+        // never a claim that the recorded Unity scene is clear or traversable.
+        var knots = new List<Vector3>(); var floors = new List<float>();
+        for (int i = 0; i < samples.Count; i += 4)
+        {
+            Vector3 point = Vector(samples[i].GetProperty("camera")); point.y = first.y;
+            knots.Add(point); floors.Add(first.y - 40);
+        }
+        if ((samples.Count - 1) % 4 != 0)
+        { last.y = first.y; knots.Add(last); floors.Add(first.y - 40); }
+        Check(JourneyTerrainProfile.TryFit(knots, floors, 18, 0, out var old, out string reason,
+            preserveIncomingTangent: false), reason);
+        Check(old[old.Length - 1].y < first.y - 9, "The constructed lower-surface fixture no longer reproduces floor-following descent");
+        Check(JourneyTerrainProfile.TryFit(knots, floors, 18, 0, out var fitted, out reason,
+            preserveIncomingTangent: false, cruiseAltitude: first.y), reason);
+        var body = new AutonomyPosition[fitted.Length];
+        for (int i = 0; i < body.Length; i++) body[i] = P(fitted[i].x, fitted[i].y, fitted[i].z);
+        Vector3 recordedAim = Vector(samples[0].GetProperty("aim"));
+        Check(JourneyGazePolicy.TryBuild(body, P(recordedAim.x, recordedAim.y, recordedAim.z), 12,
+            null, null, out var aims, out reason), reason);
+        var plan = ScenicShotPlan.Spatial(22, Feature(), ScenicShotRole.Traverse, body, aims,
+            query.GetProperty("fov").GetSingle()).AsJourneyDeparture(19, 3);
+        using var native = new ScenicSplinePath(); Check(native.Prepare(plan, 1), "Native elevated re-proposal failed");
+        Check(NativeJourneyGaze.WithinRate(native, native.Length / 12 / ScenicJourneyMotion.CruiseFraction(true, false)),
+            "Retaining the elevated datum introduced an excessive native gaze turn");
+        for (int i = 0; i <= 256; i++)
+            Check(Math.Abs(native.Sample(i / 256f).CameraPosition.Y - first.y) < .001,
+                "Native execution reintroduced the recorded unwanted downhill movement");
+    }
+
+    private static Vector3 Vector(JsonElement value) => new Vector3(value[0].GetSingle(), value[1].GetSingle(), value[2].GetSingle());
+    private static void RecordedPrefixRegeneration()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(RecordedFixture()));
+        JsonElement recorded = document.RootElement.GetProperty("admittedRoute");
+        JsonElement cameras = recorded.GetProperty("camera"), recordedAims = recorded.GetProperty("aim");
+        var body = new AutonomyPosition[cameras.GetArrayLength()]; var aims = new AutonomyPosition[body.Length];
+        for (int i = 0; i < body.Length; i++)
+        {
+            Vector3 camera = Vector(cameras[i]), aim = Vector(recordedAims[i]);
+            body[i] = P(camera.x, camera.y, camera.z); aims[i] = P(aim.x, aim.y, aim.z);
+        }
+        // Unlike query34's evaluated samples, these are captured authored
+        // body/aim knots. They can exercise the actual native slice machinery.
+        // Subject visibility and terrain of this recorded world remain unknown.
+        var original = ScenicShotPlan.Spatial(recorded.GetProperty("plan").GetInt64(), Feature(), ScenicShotRole.Traverse,
+            body, aims, recorded.GetProperty("fov").GetSingle()).AsJourneyDeparture(recorded.GetProperty("journey").GetInt64(),
+                recorded.GetProperty("duration").GetDouble());
+        using var source = new ScenicSplinePath(); Check(source.Prepare(original, 1), "Recorded native route could not prepare");
+        ScenicShotPlan disconnected = source.ProposeMeasuredSlice(.1f, .8f);
+        Check(!JourneyReadablePrefix.TryRestore(original, disconnected, 0, source.SpatialTravelBetween(.1f, .8f), out _),
+            "A disconnected native interval was admitted by relabeling its observed start as zero");
+        ScenicShotPlan tooSmall = source.ProposeMeasuredSlice(0, .15f);
+        double shortDistance = source.SpatialTravelBetween(0, .15f);
+        Check(shortDistance < ScenicJourneyPolicy.MinimumWindowMetres, "Undersized fixture is not below the useful window bound");
+        Check(shortDistance < ScenicJourneyPolicy.MinimumWindowMetres &&
+            !JourneyReadablePrefix.TryRestore(original, tooSmall, 0, shortDistance, out _),
+            "A native prefix shorter than the useful physical window was admitted");
+        const float end = .8f;
+        ScenicShotPlan slice = source.ProposeMeasuredSlice(0, end);
+        Check(!JourneyReadablePrefix.TryRestore(original, slice, .1, source.SpatialTravelBetween(0, end), out _),
+            "Nonzero observed start lost its disconnection evidence");
+        Check(JourneyReadablePrefix.TryRestore(original, slice, 0, source.SpatialTravelBetween(0, end), out var proposal) && proposal != null,
+            "Actual native prefix could not retain Journey ownership and its preserved incoming geometry");
+        Check(proposal!.JourneyId == original.JourneyId && proposal.ContinuationOf == original.ContinuationOf &&
+            proposal.CameraWaypoint(1).Distance(original.CameraWaypoint(1)) < .005 &&
+            proposal.AimWaypoint(1).Distance(original.AimWaypoint(1)) < .005,
+            "Prefix regeneration changed its exact incoming tangent or Journey identity");
+        using var rebuilt = new ScenicSplinePath(); Check(rebuilt.Prepare(proposal, 1), "New prefix native geometry could not prepare");
+        ScenicShotSample before = source.Sample(0), after = rebuilt.Sample(0), observedEnd = source.Sample(end), rebuiltEnd = rebuilt.Sample(1);
+        Check(before.CameraPosition.Distance(after.CameraPosition) < .005 && before.AimPosition.Distance(after.AimPosition) < .005 &&
+            before.ScreenX == after.ScreenX && before.ScreenY == after.ScreenY && proposal.FieldOfView == original.FieldOfView,
+            "Regenerated prefix changed its exact entry composition");
+        Check(observedEnd.CameraPosition.Distance(rebuiltEnd.CameraPosition) < .005 &&
+            observedEnd.AimPosition.Distance(rebuiltEnd.AimPosition) < .005 && rebuilt.Length < source.Length,
+            "Regeneration used an authored parameter in place of the measured native endpoint");
+        // Begin a fresh native angular verification; successful proposal
+        // construction alone is explicitly not a completed trajectory proof.
+        var verification = new NativeJourneyGaze.Evaluation(); verification.Begin(rebuilt, proposal.DurationSeconds);
+        Check(!verification.Complete && !verification.Accepted, "A regenerated prefix inherited an earlier native certificate");
+        while (!verification.Complete) verification.Step(32);
+        Check(verification.CheckedIntervals > 0, "The new trajectory bypassed native angular verification");
+    }
+    private static string RecordedFixture()
+    {
+        foreach (string start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+            for (DirectoryInfo? directory = new DirectoryInfo(start); directory != null; directory = directory.Parent)
+            {
+                string path = Path.Combine(directory.FullName, "tests", "fixtures", "journey-mission", "0.8.49-planning-stall.json");
+                if (File.Exists(path)) return path;
+            }
+        throw new FileNotFoundException("The sanitized0.8.49 Journey failure fixture was not found.");
     }
 }

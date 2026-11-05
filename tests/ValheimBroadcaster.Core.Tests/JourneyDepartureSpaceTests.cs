@@ -14,6 +14,8 @@ internal static class JourneyDepartureSpaceTests
         yield return ("Continuation gaze alternatives preserve the seam and native angular rate", GazeAlternatives);
         yield return ("Journey gaze can show an observed hillside without requiring empty air through it", LandscapeSurface);
         yield return ("Journey landscape framing cannot turn an obstruction or unobserved hit into a subject", LandscapeRejects);
+        yield return ("Repeated twelve-second Journey batches continue search instead of repeating the first fifteen openings", RecordedBatchProgress);
+        yield return ("Departure search invalidates changed mission scene seed carrier goal or clock", EpisodeInvalidation);
     }
     private static void Check(bool ok, string reason) { if (!ok) throw new Exception(reason); }
     private static AutonomyPosition P(float x, float y = 20, float z = 0) => new AutonomyPosition(x, y, z);
@@ -43,7 +45,7 @@ internal static class JourneyDepartureSpaceTests
     private static void Variety()
     {
         var seed = P(0); var goal = P(1000); var body = new HashSet<string>(); var gaze = new HashSet<string>();
-        bool raisedEarly = false;
+        bool raisedEarly = false; var earlyBearings = new HashSet<int>();
         for (int id = 0; id < JourneyDepartureSpace.CandidateCount; id++)
         {
             var p = JourneyDepartureSpace.Propose(id, seed, goal, 12);
@@ -54,8 +56,9 @@ internal static class JourneyDepartureSpaceTests
             string key = p.Position.X + "/" + p.Position.Y + "/" + p.Position.Z;
             body.Add(key); gaze.Add(key + "/" + p.Heading.X + "/" + p.Heading.Z);
             if (id < 4 && p.Position.Y >= seed.Y + 8) raisedEarly = true;
+            if (id < 3) earlyBearings.Add(Math.Sign(p.Heading.Z));
         }
-        Check(body.Count == 36 && gaze.Count == JourneyDepartureSpace.CandidateCount && raisedEarly,
+        Check(body.Count == 36 && gaze.Count == JourneyDepartureSpace.CandidateCount && raisedEarly && earlyBearings.Count == 3,
             "Opening portfolio omits early elevation or repeats its position/gaze candidates");
     }
 
@@ -151,5 +154,39 @@ internal static class JourneyDepartureSpaceTests
             Check(!JourneyLandscapeGaze.TryTerminate(camera, desired, true, 10, clip, out _),
                 "An invalid or enclosing near clip admitted a landscape subject");
         Check(!JourneyLandscapeGaze.TryTerminate(camera, camera, true, 10, .3, out _), "A degenerate view became landscape framing");
+    }
+
+    private static void RecordedBatchProgress()
+    {
+        // Captured0.8.49 searches27,32,33,34,35 each restarted the same fifteen
+        // or sixteen proposals. Batch expiration must not erase their history.
+        var search = new JourneyDepartureSpace(); var seed = P(0, 94.25464f); var goal = P(-2000); var carrier = P(0, 92.25464f);
+        var seen = new HashSet<int>();
+        for (int batch = 0; batch < 5; batch++)
+        {
+            double now = 135.164 + batch * 12.36;
+            Check(search.Bind(13, 3, seed, goal, carrier, now) == (batch != 0), "Unchanged batch lost its persistent search episode");
+            for (int sample = 0; sample < 15; sample++)
+            {
+                Check(search.TryNext(now + sample * .01, out int id) && seen.Add(id), "Twelve-second preparation retry repeated known openings");
+                search.Complete(id, sample % 2 == 0);
+            }
+        }
+        Check(search.Screened == 75 && seen.Count == 75, "Repair silently recycled the same small proposal subset");
+        search.Reset(); Check(!search.Bind(13, 3, seed, goal, carrier, 200), "Explicit mission cleanup retained search history");
+    }
+
+    private static void EpisodeInvalidation()
+    {
+        foreach (int change in new[] { 0, 1, 2, 3, 4, 5, 6 })
+        {
+            var search = new JourneyDepartureSpace(); var seed = P(0); var goal = P(1000); var carrier = P(0, 18);
+            search.Bind(13, 3, seed, goal, carrier, 100); search.TryNext(100, out int first); search.Complete(first, false);
+            Check(!search.Bind(change == 0 ? 14 : 13, change == 1 ? 4 : 3,
+                change == 2 ? P(2) : seed, change == 3 ? P(1020) : goal,
+                change == 4 ? P(9, 18) : carrier, change == 5 ? 99 : change == 6 ? 221 : 101),
+                "Materially changed scene/mission context reused an obsolete search episode");
+            Check(search.Screened == 0 && search.TryNext(222, out int id) && id == 0, "Invalidated context retained old negative results");
+        }
     }
 }

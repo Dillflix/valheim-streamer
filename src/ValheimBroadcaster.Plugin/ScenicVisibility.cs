@@ -177,11 +177,12 @@ internal sealed class ScenicVisibility
         origin = foliage.Origin; coveredRadius = foliage.CoveredRadius;
     }
 
-    // Only a measured camera-inside-canopy rejection may propose this alternate
-    // elevation. A missing/throttled survey cannot invent an escape. The caller
+    // A measured camera intersection or explicitly classified Journey foreground
+    // obstruction may propose elevation. Missing/throttled surveys cannot invent
+    // an escape. The caller
     // must validate the entire raised route, including surface, foreground,
     // focus, corridor and observer reach, before displaying any of it.
-    internal bool TryCanopyLift(Vector3 camera, out float lift)
+    internal bool TryCanopyLift(Vector3 camera, out float lift, bool measuredForegroundObstruction = false)
     {
         lift = 0;
         if (!TargetRoster.Finite(camera)) return false;
@@ -190,7 +191,7 @@ internal sealed class ScenicVisibility
         ScenicCoverageGap gap = ScenicObservationPolicy.Coverage(displacement, coveredRadius);
         bool complete = gap == ScenicCoverageGap.None;
         return FoliageGeometryMath.TryCanopyLift(camera, activeBounds, activeCount,
-            complete, ForegroundRange, out lift);
+            complete, ForegroundRange, out lift, measuredForegroundObstruction);
     }
 
     // Explicit legacy/fixed camera comparison still uses a centered view.

@@ -1,0 +1,7406 @@
+{
+  "schema": 1,
+  "sourceVersion": "0.8.49",
+  "evidence": "Translation-sanitized reduction of supplied diagnostic trace and synchronized video metadata. Source sequence numbers preserved; absolute world position, destination/structure identifiers, account data and original wall clock omitted. No geometry oracle or successful post-fix runtime is supplied.",
+  "coordinates": "All camera/aim positions translated by the admitted shot18 first camera; axes and distances unchanged. Ground heights and physics/foliage geometry were not captured.",
+  "timeBasis": "Seconds since recorded departure preparation began.",
+  "admittedRoute": {
+    "at": 16.53373718,
+    "sourceSequence": 8554,
+    "plan": 18,
+    "journey": 13,
+    "duration": 3.0479772223366632,
+    "travel": 35.048708057842504,
+    "fov": 75,
+    "camera": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        -1.99975586,
+        -0.80000305,
+        0.0320282
+      ],
+      [
+        -5.99926758,
+        -2.40000916,
+        0.09608459
+      ],
+      [
+        -9.9987793,
+        -4.00001526,
+        0.16014099
+      ],
+      [
+        -13.99829102,
+        -2.40000916,
+        0.22419739
+      ],
+      [
+        -17.99780273,
+        -2.21431732,
+        0.28825378
+      ],
+      [
+        -21.99731445,
+        -2.21431732,
+        0.35231018
+      ],
+      [
+        -25.99682617,
+        -2.04505157,
+        0.41636658
+      ],
+      [
+        -29.99633789,
+        -0.44503784,
+        0.48042297
+      ],
+      [
+        -33.44671631,
+        0.75655365,
+        0.53569031
+      ]
+    ],
+    "aim": [
+      [
+        -27.99639893,
+        -2.0,
+        0.44842529
+      ],
+      [
+        -29.97924805,
+        -2.99478912,
+        0.48014832
+      ],
+      [
+        -34.02624512,
+        -3.54082489,
+        0.54496765
+      ],
+      [
+        -38.02661133,
+        -4.08637238,
+        0.60903931
+      ],
+      [
+        -41.98883057,
+        -1.43340302,
+        0.67250061
+      ],
+      [
+        -45.92712402,
+        -0.27098846,
+        0.73558044
+      ],
+      [
+        -49.84136963,
+        0.70263672,
+        0.79827881
+      ],
+      [
+        -53.7220459,
+        1.84286499,
+        0.86044312
+      ],
+      [
+        -57.55584717,
+        4.48236847,
+        0.92184448
+      ],
+      [
+        -60.83514404,
+        6.56022644,
+        0.97438049
+      ]
+    ]
+  },
+  "candidateQueries": [
+    {
+      "query": 22,
+      "evidence": "Captured evaluated poses for one candidate, including native interpolation samples; not an authored route or terrain surface.",
+      "fov": 75,
+      "aspect": 1.7794253826141357,
+      "nearClip": 0.5,
+      "samples": [
+        {
+          "at": 16.71707153,
+          "sourceSequence": 8599,
+          "progress": 0.0,
+          "camera": [
+            -33.44671631,
+            0.75655365,
+            0.53569031
+          ],
+          "aim": [
+            -60.83514404,
+            6.56022644,
+            0.97438049
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.71707153,
+          "sourceSequence": 8600,
+          "progress": 0.031,
+          "camera": [
+            -34.09405518,
+            1.01553345,
+            0.54605103
+          ],
+          "aim": [
+            -61.51617432,
+            6.65278625,
+            0.98527527
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.71707153,
+          "sourceSequence": 8601,
+          "progress": 0.063,
+          "camera": [
+            -34.74102783,
+            1.27594757,
+            0.55641174
+          ],
+          "aim": [
+            -62.19683838,
+            6.74678802,
+            0.9961853
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.71707153,
+          "sourceSequence": 8602,
+          "progress": 0.09,
+          "camera": [
+            -35.33526611,
+            1.41423035,
+            0.56593323
+          ],
+          "aim": [
+            -62.82073975,
+            6.73896027,
+            1.00617981
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.73373413,
+          "sourceSequence": 8605,
+          "progress": 0.107,
+          "camera": [
+            -35.72009277,
+            1.35595703,
+            0.57208252
+          ],
+          "aim": [
+            -63.22198486,
+            6.58663177,
+            1.0125885
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.73373413,
+          "sourceSequence": 8606,
+          "progress": 0.125,
+          "camera": [
+            -36.09936523,
+            1.25800323,
+            0.57817078
+          ],
+          "aim": [
+            -63.61773682,
+            6.39463043,
+            1.01895142
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.73373413,
+          "sourceSequence": 8607,
+          "progress": 0.156,
+          "camera": [
+            -36.7689209,
+            1.06149292,
+            0.58889771
+          ],
+          "aim": [
+            -64.31671143,
+            6.0304718,
+            1.03013611
+          ],
+          "foreground": 0.1666666716337204,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 16.73373413,
+          "sourceSequence": 8608,
+          "progress": 0.188,
+          "camera": [
+            -37.43621826,
+            0.85765839,
+            0.59957886
+          ],
+          "aim": [
+            -65.0133667,
+            5.65898895,
+            1.04129028
+          ],
+          "foreground": 0.6666666865348816,
+          "focusVisible": false,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        }
+      ]
+    },
+    {
+      "query": 27,
+      "evidence": "Captured evaluated poses for one candidate, including native interpolation samples; not an authored route or terrain surface.",
+      "fov": 75,
+      "aspect": 1.7794253826141357,
+      "nearClip": 0.5,
+      "samples": [
+        {
+          "at": 35.57083893,
+          "sourceSequence": 11218,
+          "progress": 0.0,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.57083893,
+          "sourceSequence": 11219,
+          "progress": 0.031,
+          "camera": [
+            -33.22723389,
+            16.52488708,
+            -7.46948242
+          ],
+          "aim": [
+            -61.22027588,
+            14.4885025,
+            -7.0062561
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.57083893,
+          "sourceSequence": 11220,
+          "progress": 0.047,
+          "camera": [
+            -33.52093506,
+            16.40753174,
+            -7.46855164
+          ],
+          "aim": [
+            -61.50732422,
+            14.29963684,
+            -6.97633362
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.57083893,
+          "sourceSequence": 11221,
+          "progress": 0.063,
+          "camera": [
+            -33.98321533,
+            16.22294617,
+            -7.46965027
+          ],
+          "aim": [
+            -61.95910645,
+            14.0025177,
+            -6.93179321
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.58750153,
+          "sourceSequence": 11224,
+          "progress": 0.077,
+          "camera": [
+            -34.51660156,
+            16.00976562,
+            -7.46650696
+          ],
+          "aim": [
+            -62.48040771,
+            13.65945435,
+            -6.87597656
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.58750153,
+          "sourceSequence": 11225,
+          "progress": 0.091,
+          "camera": [
+            -35.07763672,
+            15.78460693,
+            -7.43922424
+          ],
+          "aim": [
+            -63.02874756,
+            13.29742432,
+            -6.79319763
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.58750153,
+          "sourceSequence": 11226,
+          "progress": 0.108,
+          "camera": [
+            -35.72393799,
+            15.52248383,
+            -7.33825684
+          ],
+          "aim": [
+            -63.65362549,
+            12.87657166,
+            -6.6277771
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.58750153,
+          "sourceSequence": 11227,
+          "progress": 0.125,
+          "camera": [
+            -36.36761475,
+            15.26073456,
+            -7.22111511
+          ],
+          "aim": [
+            -64.27593994,
+            12.45609283,
+            -6.44618225
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.60417938,
+          "sourceSequence": 11229,
+          "progress": 0.141,
+          "camera": [
+            -36.96600342,
+            15.01724243,
+            -7.10830688
+          ],
+          "aim": [
+            -64.85455322,
+            12.06507874,
+            -6.27348328
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.60417938,
+          "sourceSequence": 11230,
+          "progress": 0.156,
+          "camera": [
+            -37.56390381,
+            14.7739563,
+            -6.99401855
+          ],
+          "aim": [
+            -65.43255615,
+            11.674263,
+            -6.09928894
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.60417938,
+          "sourceSequence": 11232,
+          "progress": 0.172,
+          "camera": [
+            -38.16192627,
+            14.53055573,
+            -6.87921143
+          ],
+          "aim": [
+            -66.01068115,
+            11.28334045,
+            -5.92457581
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.62084198,
+          "sourceSequence": 11238,
+          "progress": 0.188,
+          "camera": [
+            -38.75976562,
+            14.28726959,
+            -6.76544189
+          ],
+          "aim": [
+            -66.58868408,
+            10.89252472,
+            -5.75090027
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.62084198,
+          "sourceSequence": 11239,
+          "progress": 0.194,
+          "camera": [
+            -39.012146,
+            14.18461609,
+            -6.71852112
+          ],
+          "aim": [
+            -66.83270264,
+            10.72743988,
+            -5.67863464
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.62084198,
+          "sourceSequence": 11240,
+          "progress": 0.208,
+          "camera": [
+            -39.54675293,
+            13.96722412,
+            -6.62060547
+          ],
+          "aim": [
+            -67.34332275,
+            10.37936401,
+            -5.52674866
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.63750458,
+          "sourceSequence": 11242,
+          "progress": 0.222,
+          "camera": [
+            -40.08203125,
+            13.74953461,
+            -6.52253723
+          ],
+          "aim": [
+            -67.85455322,
+            10.03099823,
+            -5.37471008
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.63750458,
+          "sourceSequence": 11243,
+          "progress": 0.236,
+          "camera": [
+            -40.61749268,
+            13.53178406,
+            -6.42446899
+          ],
+          "aim": [
+            -68.36590576,
+            9.68256378,
+            -5.22265625
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.63750458,
+          "sourceSequence": 11244,
+          "progress": 0.25,
+          "camera": [
+            -41.152771,
+            13.31413269,
+            -6.32641602
+          ],
+          "aim": [
+            -68.87713623,
+            9.33422852,
+            -5.07063293
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.65418243,
+          "sourceSequence": 11246,
+          "progress": 0.262,
+          "camera": [
+            -41.60137939,
+            13.13166809,
+            -6.24423218
+          ],
+          "aim": [
+            -69.30560303,
+            9.04224396,
+            -4.94322205
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.65418243,
+          "sourceSequence": 11248,
+          "progress": 0.273,
+          "camera": [
+            -42.05004883,
+            12.94924927,
+            -6.1620636
+          ],
+          "aim": [
+            -69.73419189,
+            8.75029755,
+            -4.81581116
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.65418243,
+          "sourceSequence": 11249,
+          "progress": 0.285,
+          "camera": [
+            -42.49835205,
+            12.76690674,
+            -6.07992554
+          ],
+          "aim": [
+            -70.16229248,
+            8.45843506,
+            -4.68844604
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.67084503,
+          "sourceSequence": 11251,
+          "progress": 0.297,
+          "camera": [
+            -42.94665527,
+            12.58462524,
+            -5.99781799
+          ],
+          "aim": [
+            -70.59051514,
+            8.16662598,
+            -4.56109619
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.67084503,
+          "sourceSequence": 11253,
+          "progress": 0.313,
+          "camera": [
+            -43.54620361,
+            12.34080505,
+            -5.88800049
+          ],
+          "aim": [
+            -71.15753174,
+            7.77824402,
+            -4.389328
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.67084503,
+          "sourceSequence": 11254,
+          "progress": 0.328,
+          "camera": [
+            -44.14459229,
+            12.09746552,
+            -5.77838135
+          ],
+          "aim": [
+            -71.72332764,
+            7.39066315,
+            -4.21791077
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.67084503,
+          "sourceSequence": 11255,
+          "progress": 0.344,
+          "camera": [
+            -44.7432251,
+            11.85401917,
+            -5.66871643
+          ],
+          "aim": [
+            -72.28948975,
+            7.00297546,
+            -4.0464325
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.68750763,
+          "sourceSequence": 11257,
+          "progress": 0.359,
+          "camera": [
+            -45.34197998,
+            11.61054993,
+            -5.55906677
+          ],
+          "aim": [
+            -72.85577393,
+            6.61527252,
+            -3.87496948
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.68750763,
+          "sourceSequence": 11258,
+          "progress": 0.375,
+          "camera": [
+            -45.94067383,
+            11.36709595,
+            -5.4493866
+          ],
+          "aim": [
+            -73.42193604,
+            6.22757721,
+            -3.70349121
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.68750763,
+          "sourceSequence": 11259,
+          "progress": 0.387,
+          "camera": [
+            -46.41094971,
+            11.17585754,
+            -5.36325073
+          ],
+          "aim": [
+            -73.86663818,
+            5.92295074,
+            -3.5687561
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.70418549,
+          "sourceSequence": 11262,
+          "progress": 0.4,
+          "camera": [
+            -46.88116455,
+            10.9846344,
+            -5.27711487
+          ],
+          "aim": [
+            -74.31134033,
+            5.61833954,
+            -3.43403625
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.70418549,
+          "sourceSequence": 11263,
+          "progress": 0.409,
+          "camera": [
+            -47.24395752,
+            10.83712006,
+            -5.21066284
+          ],
+          "aim": [
+            -74.65179443,
+            5.38448334,
+            -3.32894897
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.70418549,
+          "sourceSequence": 11265,
+          "progress": 0.419,
+          "camera": [
+            -47.60748291,
+            10.68926239,
+            -5.14407349
+          ],
+          "aim": [
+            -74.99298096,
+            5.15028381,
+            -3.22373962
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.72084808,
+          "sourceSequence": 11267,
+          "progress": 0.428,
+          "camera": [
+            -47.97052002,
+            10.54165649,
+            -5.07759094
+          ],
+          "aim": [
+            -75.33355713,
+            4.91632843,
+            -3.11862183
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.72084808,
+          "sourceSequence": 11268,
+          "progress": 0.438,
+          "camera": [
+            -48.33392334,
+            10.39385986,
+            -5.01100159
+          ],
+          "aim": [
+            -75.67462158,
+            4.68218994,
+            -3.01341248
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.72084808,
+          "sourceSequence": 11270,
+          "progress": 0.453,
+          "camera": [
+            -48.93255615,
+            10.15045929,
+            -4.90135193
+          ],
+          "aim": [
+            -76.23638916,
+            4.29653168,
+            -2.84011841
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.73751068,
+          "sourceSequence": 11275,
+          "progress": 0.469,
+          "camera": [
+            -49.53106689,
+            9.90707397,
+            -4.79174805
+          ],
+          "aim": [
+            -76.79803467,
+            3.91088104,
+            -2.66685486
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.73751068,
+          "sourceSequence": 11276,
+          "progress": 0.484,
+          "camera": [
+            -50.12982178,
+            9.66357422,
+            -4.68205261
+          ],
+          "aim": [
+            -77.36004639,
+            3.5251236,
+            -2.49351501
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.73751068,
+          "sourceSequence": 11277,
+          "progress": 0.5,
+          "camera": [
+            -50.72827148,
+            9.4201889,
+            -4.57241821
+          ],
+          "aim": [
+            -77.92156982,
+            3.13947296,
+            -2.32023621
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.75417328,
+          "sourceSequence": 11279,
+          "progress": 0.502,
+          "camera": [
+            -50.81561279,
+            9.38464355,
+            -4.55641174
+          ],
+          "aim": [
+            -78.00360107,
+            3.08304596,
+            -2.29489136
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.75417328,
+          "sourceSequence": 11280,
+          "progress": 0.517,
+          "camera": [
+            -51.39196777,
+            9.15028381,
+            -4.45085144
+          ],
+          "aim": [
+            -78.54034424,
+            2.71385193,
+            -2.12574768
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.75417328,
+          "sourceSequence": 11281,
+          "progress": 0.532,
+          "camera": [
+            -51.96850586,
+            8.91580963,
+            -4.3452301
+          ],
+          "aim": [
+            -79.07733154,
+            2.34454346,
+            -1.95655823
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.77085114,
+          "sourceSequence": 11283,
+          "progress": 0.547,
+          "camera": [
+            -52.54510498,
+            8.68136597,
+            -4.23962402
+          ],
+          "aim": [
+            -79.61431885,
+            1.9752655,
+            -1.78736877
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.77085114,
+          "sourceSequence": 11285,
+          "progress": 0.563,
+          "camera": [
+            -53.12176514,
+            8.44688416,
+            -4.13401794
+          ],
+          "aim": [
+            -80.15142822,
+            1.6059494,
+            -1.61819458
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.77085114,
+          "sourceSequence": 11286,
+          "progress": 0.573,
+          "camera": [
+            -53.5289917,
+            8.28123474,
+            -4.05938721
+          ],
+          "aim": [
+            -80.53082275,
+            1.34507751,
+            -1.49865723
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.78751373,
+          "sourceSequence": 11290,
+          "progress": 0.584,
+          "camera": [
+            -53.93634033,
+            8.11561584,
+            -3.98478699
+          ],
+          "aim": [
+            -80.91021729,
+            1.08423615,
+            -1.37915039
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.78751373,
+          "sourceSequence": 11291,
+          "progress": 0.594,
+          "camera": [
+            -54.34368896,
+            7.94995117,
+            -3.91017151
+          ],
+          "aim": [
+            -81.28961182,
+            0.82334137,
+            -1.25964355
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.78751373,
+          "sourceSequence": 11292,
+          "progress": 0.605,
+          "camera": [
+            -54.75018311,
+            7.78465271,
+            -3.83570862
+          ],
+          "aim": [
+            -81.66815186,
+            0.56282043,
+            -1.14027405
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.80417633,
+          "sourceSequence": 11294,
+          "progress": 0.615,
+          "camera": [
+            -55.13214111,
+            7.62931061,
+            -3.76574707
+          ],
+          "aim": [
+            -82.02020264,
+            0.32007599,
+            -1.02619934
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.80417633,
+          "sourceSequence": 11295,
+          "progress": 0.625,
+          "camera": [
+            -55.51501465,
+            7.47364807,
+            -3.69561768
+          ],
+          "aim": [
+            -82.37322998,
+            0.07700348,
+            -0.91195679
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.80417633,
+          "sourceSequence": 11296,
+          "progress": 0.641,
+          "camera": [
+            -56.11358643,
+            7.23021698,
+            -3.58596802
+          ],
+          "aim": [
+            -82.92510986,
+            -0.3031311,
+            -0.73330688
+          ],
+          "foreground": 0.1666666716337204,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 35.82083893,
+          "sourceSequence": 11298,
+          "progress": 0.656,
+          "camera": [
+            -56.71228027,
+            6.98672485,
+            -3.47628784
+          ],
+          "aim": [
+            -83.47711182,
+            -0.68333435,
+            -0.55462646
+          ],
+          "foreground": 0.5,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        },
+        {
+          "at": 35.82083893,
+          "sourceSequence": 11299,
+          "progress": 0.672,
+          "camera": [
+            -57.31103516,
+            6.74326324,
+            -3.36662292
+          ],
+          "aim": [
+            -84.02911377,
+            -1.06350708,
+            -0.3759613
+          ],
+          "foreground": 0.5833333134651184,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        }
+      ]
+    },
+    {
+      "query": 34,
+      "evidence": "Captured evaluated poses for one candidate, including native interpolation samples; not an authored route or terrain surface.",
+      "fov": 75,
+      "aspect": 1.7794253826141357,
+      "nearClip": 0.5,
+      "samples": [
+        {
+          "at": 72.5956192,
+          "sourceSequence": 17765,
+          "progress": 0.0,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.5956192,
+          "sourceSequence": 17766,
+          "progress": 0.063,
+          "camera": [
+            -33.69787598,
+            16.33689117,
+            -7.46888733
+          ],
+          "aim": [
+            -61.68023682,
+            14.18592834,
+            -6.959198
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.5956192,
+          "sourceSequence": 17767,
+          "progress": 0.089,
+          "camera": [
+            -34.378479,
+            16.0650177,
+            -7.46841431
+          ],
+          "aim": [
+            -62.34539795,
+            13.74836731,
+            -6.89154053
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.5956192,
+          "sourceSequence": 17768,
+          "progress": 0.102,
+          "camera": [
+            -34.72839355,
+            15.9249649,
+            -7.46095276
+          ],
+          "aim": [
+            -62.68743896,
+            13.5230484,
+            -6.84950256
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.6122818,
+          "sourceSequence": 17771,
+          "progress": 0.115,
+          "camera": [
+            -35.07763672,
+            15.78460693,
+            -7.43922424
+          ],
+          "aim": [
+            -63.02874756,
+            13.29742432,
+            -6.79319763
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.6122818,
+          "sourceSequence": 17772,
+          "progress": 0.125,
+          "camera": [
+            -35.33984375,
+            15.67843628,
+            -7.40299988
+          ],
+          "aim": [
+            -63.2822876,
+            13.12670135,
+            -6.73075867
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.6122818,
+          "sourceSequence": 17773,
+          "progress": 0.141,
+          "camera": [
+            -35.75152588,
+            15.51126099,
+            -7.33338928
+          ],
+          "aim": [
+            -63.68035889,
+            12.85848999,
+            -6.62013245
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.6122818,
+          "sourceSequence": 17774,
+          "progress": 0.156,
+          "camera": [
+            -36.1618042,
+            15.34445953,
+            -7.25923157
+          ],
+          "aim": [
+            -64.0770874,
+            12.59065247,
+            -6.50494385
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.62895966,
+          "sourceSequence": 17777,
+          "progress": 0.172,
+          "camera": [
+            -36.5713501,
+            15.17785645,
+            -7.1829834
+          ],
+          "aim": [
+            -64.47296143,
+            12.32301331,
+            -6.38766479
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.62895966,
+          "sourceSequence": 17778,
+          "progress": 0.188,
+          "camera": [
+            -36.98101807,
+            15.01114655,
+            -7.10546875
+          ],
+          "aim": [
+            -64.86907959,
+            12.05526733,
+            -6.26913452
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.62895966,
+          "sourceSequence": 17779,
+          "progress": 0.203,
+          "camera": [
+            -37.39056396,
+            14.84449768,
+            -7.0272522
+          ],
+          "aim": [
+            -65.26495361,
+            11.7875824,
+            -6.14988708
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.64562225,
+          "sourceSequence": 17781,
+          "progress": 0.219,
+          "camera": [
+            -37.79992676,
+            14.67788696,
+            -6.94868469
+          ],
+          "aim": [
+            -65.66070557,
+            11.51993561,
+            -6.03030396
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.64562225,
+          "sourceSequence": 17783,
+          "progress": 0.234,
+          "camera": [
+            -38.20941162,
+            14.51123047,
+            -6.87011719
+          ],
+          "aim": [
+            -66.05670166,
+            11.25224304,
+            -5.91070557
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.64562225,
+          "sourceSequence": 17784,
+          "progress": 0.25,
+          "camera": [
+            -38.61907959,
+            14.34449768,
+            -6.79197693
+          ],
+          "aim": [
+            -66.45269775,
+            10.98447418,
+            -5.79153442
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.64562225,
+          "sourceSequence": 17785,
+          "progress": 0.265,
+          "camera": [
+            -39.012146,
+            14.18461609,
+            -6.71852112
+          ],
+          "aim": [
+            -66.83270264,
+            10.72743988,
+            -5.67863464
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.66228485,
+          "sourceSequence": 17787,
+          "progress": 0.289,
+          "camera": [
+            -39.63439941,
+            13.93156433,
+            -6.60455322
+          ],
+          "aim": [
+            -67.42694092,
+            10.3219986,
+            -5.50268555
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.66228485,
+          "sourceSequence": 17788,
+          "progress": 0.313,
+          "camera": [
+            -40.25726318,
+            13.67828369,
+            -6.490448
+          ],
+          "aim": [
+            -68.02191162,
+            9.9163208,
+            -5.32661438
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.66228485,
+          "sourceSequence": 17789,
+          "progress": 0.328,
+          "camera": [
+            -40.66717529,
+            13.51157379,
+            -6.4153595
+          ],
+          "aim": [
+            -68.41339111,
+            9.64929962,
+            -5.21072388
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.67894745,
+          "sourceSequence": 17791,
+          "progress": 0.344,
+          "camera": [
+            -41.07720947,
+            13.34483337,
+            -6.34024048
+          ],
+          "aim": [
+            -68.80499268,
+            9.38225555,
+            -5.09481812
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.67894745,
+          "sourceSequence": 17792,
+          "progress": 0.359,
+          "camera": [
+            -41.48718262,
+            13.17812347,
+            -6.26515198
+          ],
+          "aim": [
+            -69.19659424,
+            9.11523438,
+            -4.97892761
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.67894745,
+          "sourceSequence": 17793,
+          "progress": 0.375,
+          "camera": [
+            -41.8972168,
+            13.01137543,
+            -6.19004822
+          ],
+          "aim": [
+            -69.5881958,
+            8.84817505,
+            -4.86303711
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7122879,
+          "sourceSequence": 17799,
+          "progress": 0.395,
+          "camera": [
+            -42.42242432,
+            12.79782104,
+            -6.09385681
+          ],
+          "aim": [
+            -70.08990479,
+            8.50616455,
+            -4.71459961
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7122879,
+          "sourceSequence": 17800,
+          "progress": 0.415,
+          "camera": [
+            -42.94665527,
+            12.58462524,
+            -5.99781799
+          ],
+          "aim": [
+            -70.59051514,
+            8.164505,
+            -4.5663147
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7122879,
+          "sourceSequence": 17802,
+          "progress": 0.438,
+          "camera": [
+            -43.53631592,
+            12.34485626,
+            -5.88981628
+          ],
+          "aim": [
+            -71.14813232,
+            7.78153229,
+            -4.3999939
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7122879,
+          "sourceSequence": 17803,
+          "progress": 0.453,
+          "camera": [
+            -43.94616699,
+            12.17818451,
+            -5.81474304
+          ],
+          "aim": [
+            -71.53570557,
+            7.51533508,
+            -4.28439331
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7289505,
+          "sourceSequence": 17805,
+          "progress": 0.469,
+          "camera": [
+            -44.355896,
+            12.01152039,
+            -5.7396698
+          ],
+          "aim": [
+            -71.92303467,
+            7.24913788,
+            -4.16879272
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7289505,
+          "sourceSequence": 17806,
+          "progress": 0.484,
+          "camera": [
+            -44.76580811,
+            11.84484863,
+            -5.6645813
+          ],
+          "aim": [
+            -72.31072998,
+            6.98293304,
+            -4.05317688
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7289505,
+          "sourceSequence": 17807,
+          "progress": 0.5,
+          "camera": [
+            -45.17590332,
+            11.67810822,
+            -5.5894928
+          ],
+          "aim": [
+            -72.69854736,
+            6.71665955,
+            -3.93756104
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7456131,
+          "sourceSequence": 17809,
+          "progress": 0.516,
+          "camera": [
+            -45.58569336,
+            11.51144409,
+            -5.51441956
+          ],
+          "aim": [
+            -73.08599854,
+            6.45046997,
+            -3.82196045
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7456131,
+          "sourceSequence": 17810,
+          "progress": 0.531,
+          "camera": [
+            -45.99578857,
+            11.34467316,
+            -5.43928528
+          ],
+          "aim": [
+            -73.47381592,
+            6.18416595,
+            -3.70629883
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.7456131,
+          "sourceSequence": 17811,
+          "progress": 0.547,
+          "camera": [
+            -46.40563965,
+            11.1780014,
+            -5.36421204
+          ],
+          "aim": [
+            -73.86138916,
+            5.91796112,
+            -3.59069824
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.76229095,
+          "sourceSequence": 17813,
+          "progress": 0.563,
+          "camera": [
+            -46.815979,
+            11.01113892,
+            -5.28904724
+          ],
+          "aim": [
+            -74.24932861,
+            5.65156555,
+            -3.47499084
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.76229095,
+          "sourceSequence": 17814,
+          "progress": 0.565,
+          "camera": [
+            -46.88116455,
+            10.9846344,
+            -5.27711487
+          ],
+          "aim": [
+            -74.31097412,
+            5.60904694,
+            -3.45654297
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.76229095,
+          "sourceSequence": 17816,
+          "progress": 0.58,
+          "camera": [
+            -47.27386475,
+            10.82493591,
+            -5.20518494
+          ],
+          "aim": [
+            -74.67938232,
+            5.35449219,
+            -3.34594727
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.77895355,
+          "sourceSequence": 17818,
+          "progress": 0.595,
+          "camera": [
+            -47.66741943,
+            10.66490936,
+            -5.13308716
+          ],
+          "aim": [
+            -75.04876709,
+            5.09960938,
+            -3.23518372
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.77895355,
+          "sourceSequence": 17819,
+          "progress": 0.61,
+          "camera": [
+            -48.06103516,
+            10.50483704,
+            -5.06098938
+          ],
+          "aim": [
+            -75.41802979,
+            4.84468842,
+            -3.12443542
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.77895355,
+          "sourceSequence": 17821,
+          "progress": 0.625,
+          "camera": [
+            -48.45452881,
+            10.34480286,
+            -4.98890686
+          ],
+          "aim": [
+            -75.78729248,
+            4.58979797,
+            -3.01368713
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.79561615,
+          "sourceSequence": 17824,
+          "progress": 0.641,
+          "camera": [
+            -48.86450195,
+            10.17809296,
+            -4.9138031
+          ],
+          "aim": [
+            -76.17205811,
+            4.3242569,
+            -2.89830017
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.79561615,
+          "sourceSequence": 17825,
+          "progress": 0.656,
+          "camera": [
+            -49.27453613,
+            10.01136017,
+            -4.8387146
+          ],
+          "aim": [
+            -76.55682373,
+            4.05869293,
+            -2.78292847
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.79561615,
+          "sourceSequence": 17826,
+          "progress": 0.672,
+          "camera": [
+            -49.68426514,
+            9.8447113,
+            -4.76364136
+          ],
+          "aim": [
+            -76.94122314,
+            3.79321289,
+            -2.66757202
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.81230927,
+          "sourceSequence": 17828,
+          "progress": 0.688,
+          "camera": [
+            -50.09405518,
+            9.67807007,
+            -4.68858337
+          ],
+          "aim": [
+            -77.32574463,
+            3.52774048,
+            -2.55223083
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.81230927,
+          "sourceSequence": 17829,
+          "progress": 0.701,
+          "camera": [
+            -50.4553833,
+            9.53118896,
+            -4.62242126
+          ],
+          "aim": [
+            -77.66485596,
+            3.29386139,
+            -2.4506073
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.81230927,
+          "sourceSequence": 17830,
+          "progress": 0.715,
+          "camera": [
+            -50.81567383,
+            9.38464355,
+            -4.55641174
+          ],
+          "aim": [
+            -78.00286865,
+            3.06031799,
+            -2.34913635
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8289566,
+          "sourceSequence": 17832,
+          "progress": 0.733,
+          "camera": [
+            -51.2744751,
+            9.19805145,
+            -4.47236633
+          ],
+          "aim": [
+            -78.43011475,
+            2.76387787,
+            -2.22027588
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8289566,
+          "sourceSequence": 17833,
+          "progress": 0.75,
+          "camera": [
+            -51.73321533,
+            9.01155853,
+            -4.38835144
+          ],
+          "aim": [
+            -78.85723877,
+            2.4675293,
+            -2.09143066
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8289566,
+          "sourceSequence": 17834,
+          "progress": 0.766,
+          "camera": [
+            -52.14331055,
+            8.84476471,
+            -4.31323242
+          ],
+          "aim": [
+            -79.23907471,
+            2.20262909,
+            -1.97628784
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8456192,
+          "sourceSequence": 17837,
+          "progress": 0.781,
+          "camera": [
+            -52.55316162,
+            8.6780777,
+            -4.23815918
+          ],
+          "aim": [
+            -79.6206665,
+            1.93783569,
+            -1.8611908
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8456192,
+          "sourceSequence": 17838,
+          "progress": 0.797,
+          "camera": [
+            -52.96325684,
+            8.51133728,
+            -4.16304016
+          ],
+          "aim": [
+            -80.00262451,
+            1.67298889,
+            -1.74603271
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8456192,
+          "sourceSequence": 17840,
+          "progress": 0.813,
+          "camera": [
+            -53.37316895,
+            8.34465027,
+            -4.08795166
+          ],
+          "aim": [
+            -80.38421631,
+            1.40820312,
+            -1.63092041
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8622818,
+          "sourceSequence": 17843,
+          "progress": 0.826,
+          "camera": [
+            -53.7177124,
+            8.20451355,
+            -4.02482605
+          ],
+          "aim": [
+            -80.70513916,
+            1.18564606,
+            -1.53416443
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8622818,
+          "sourceSequence": 17844,
+          "progress": 0.839,
+          "camera": [
+            -54.06170654,
+            8.06462097,
+            -3.96180725
+          ],
+          "aim": [
+            -81.02532959,
+            0.96334076,
+            -1.43751526
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.8622818,
+          "sourceSequence": 17845,
+          "progress": 0.852,
+          "camera": [
+            -54.40655518,
+            7.92440033,
+            -3.89865112
+          ],
+          "aim": [
+            -81.34649658,
+            0.74069977,
+            -1.34074402
+          ],
+          "foreground": 0,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.87895966,
+          "sourceSequence": 17848,
+          "progress": 0.865,
+          "camera": [
+            -54.75018311,
+            7.78465271,
+            -3.83570862
+          ],
+          "aim": [
+            -81.66644287,
+            0.51853943,
+            -1.24417114
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.87895966,
+          "sourceSequence": 17849,
+          "progress": 0.875,
+          "camera": [
+            -55.01202393,
+            7.67818451,
+            -3.78775024
+          ],
+          "aim": [
+            -81.90789795,
+            0.3499527,
+            -1.1708374
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.87895966,
+          "sourceSequence": 17850,
+          "progress": 0.891,
+          "camera": [
+            -55.421875,
+            7.51148224,
+            -3.71266174
+          ],
+          "aim": [
+            -82.28570557,
+            0.08615112,
+            -1.05607605
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.89562225,
+          "sourceSequence": 17852,
+          "progress": 0.906,
+          "camera": [
+            -55.83197021,
+            7.34472656,
+            -3.63754272
+          ],
+          "aim": [
+            -82.66387939,
+            -0.17770386,
+            -0.94128418
+          ],
+          "foreground": 0.1666666716337204,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.89562225,
+          "sourceSequence": 17853,
+          "progress": 0.922,
+          "camera": [
+            -56.24182129,
+            7.17803955,
+            -3.56245422
+          ],
+          "aim": [
+            -83.04180908,
+            -0.44149017,
+            -0.82652283
+          ],
+          "foreground": 0.0833333358168602,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.89562225,
+          "sourceSequence": 17854,
+          "progress": 0.938,
+          "camera": [
+            -56.6517334,
+            7.0113678,
+            -3.48739624
+          ],
+          "aim": [
+            -83.41973877,
+            -0.70526123,
+            -0.71179199
+          ],
+          "foreground": 0.1666666716337204,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": true,
+          "reason": "Readable scenic composition"
+        },
+        {
+          "at": 72.91230011,
+          "sourceSequence": 17857,
+          "progress": 0.953,
+          "camera": [
+            -57.06170654,
+            6.84468079,
+            -3.41230774
+          ],
+          "aim": [
+            -83.79779053,
+            -0.96904755,
+            -0.5970459
+          ],
+          "foreground": 0.5833333134651184,
+          "focusVisible": true,
+          "focusInFrame": true,
+          "insideVegetation": false,
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        }
+      ]
+    }
+  ],
+  "repairOpeningBatches": [
+    {
+      "query": 27,
+      "samples": [
+        {
+          "at": 34.68701935,
+          "sourceSequence": 11016,
+          "opening": 0,
+          "camera": [
+            -32.94976807,
+            0.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            -1.41539001,
+            0.97619629
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 34.7036972,
+          "sourceSequence": 11021,
+          "opening": 1,
+          "camera": [
+            -32.82165527,
+            8.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            6.58460999,
+            8.97517395
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 34.95404816,
+          "sourceSequence": 11059,
+          "opening": 2,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 35.08750153,
+          "sourceSequence": 11081,
+          "opening": 3,
+          "camera": [
+            -40.94873047,
+            0.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            -1.41539001,
+            1.10432434
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 35.97084808,
+          "sourceSequence": 11352,
+          "opening": 4,
+          "camera": [
+            -24.95080566,
+            8.58460999,
+            0.39959717
+          ],
+          "aim": [
+            -52.94720459,
+            6.58460999,
+            0.84806824
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 36.10419464,
+          "sourceSequence": 11402,
+          "opening": 5,
+          "camera": [
+            -32.69348145,
+            16.58460999,
+            16.52566528
+          ],
+          "aim": [
+            -60.68988037,
+            14.58460999,
+            16.97413635
+          ],
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        },
+        {
+          "at": 36.23752594,
+          "sourceSequence": 11453,
+          "opening": 6,
+          "camera": [
+            -33.20605469,
+            0.58460999,
+            -15.47021484
+          ],
+          "aim": [
+            -61.20245361,
+            -1.41539001,
+            -15.02174377
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 36.37085724,
+          "sourceSequence": 11503,
+          "opening": 7,
+          "camera": [
+            -44.75604248,
+            8.58460999,
+            12.71838379
+          ],
+          "aim": [
+            -72.75250244,
+            6.58460999,
+            13.16685486
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 37.10428619,
+          "sourceSequence": 11750,
+          "opening": 8,
+          "camera": [
+            -45.14044189,
+            16.58460999,
+            -11.27853394
+          ],
+          "aim": [
+            -73.13690186,
+            14.58460999,
+            -10.83006287
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 37.23761749,
+          "sourceSequence": 11797,
+          "opening": 9,
+          "camera": [
+            -24.75860596,
+            0.58460999,
+            12.39805603
+          ],
+          "aim": [
+            -52.75500488,
+            -1.41539001,
+            12.8465271
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 37.37094879,
+          "sourceSequence": 11838,
+          "opening": 10,
+          "camera": [
+            -25.14300537,
+            8.58460999,
+            -11.59886169
+          ],
+          "aim": [
+            -53.1394043,
+            6.58460999,
+            -11.15039062
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 37.50428009,
+          "sourceSequence": 11879,
+          "opening": 11,
+          "camera": [
+            -52.94720459,
+            16.58460999,
+            0.84805298
+          ],
+          "aim": [
+            -80.94366455,
+            14.58460999,
+            1.29652405
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 38.3048172,
+          "sourceSequence": 12103,
+          "opening": 12,
+          "camera": [
+            -32.94976807,
+            8.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            6.58460999,
+            0.97619629
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 38.4381485,
+          "sourceSequence": 12133,
+          "opening": 13,
+          "camera": [
+            -32.82165527,
+            16.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            14.58460999,
+            8.97517395
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 38.57152557,
+          "sourceSequence": 12176,
+          "opening": 14,
+          "camera": [
+            -33.07788086,
+            0.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            -1.41539001,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        }
+      ]
+    },
+    {
+      "query": 32,
+      "samples": [
+        {
+          "at": 47.03961945,
+          "sourceSequence": 13844,
+          "opening": 0,
+          "camera": [
+            -32.94976807,
+            0.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            -1.41539001,
+            0.97619629
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 47.0562973,
+          "sourceSequence": 13848,
+          "opening": 1,
+          "camera": [
+            -32.82165527,
+            8.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            6.58460999,
+            8.97517395
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 47.3062973,
+          "sourceSequence": 13887,
+          "opening": 2,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 47.4396286,
+          "sourceSequence": 13908,
+          "opening": 3,
+          "camera": [
+            -40.94873047,
+            0.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            -1.41539001,
+            1.10432434
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 48.33963776,
+          "sourceSequence": 14067,
+          "opening": 4,
+          "camera": [
+            -24.95080566,
+            8.58460999,
+            0.39959717
+          ],
+          "aim": [
+            -52.94720459,
+            6.58460999,
+            0.84806824
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 48.47299957,
+          "sourceSequence": 14088,
+          "opening": 5,
+          "camera": [
+            -32.69348145,
+            16.58460999,
+            16.52566528
+          ],
+          "aim": [
+            -60.68988037,
+            14.58460999,
+            16.97413635
+          ],
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        },
+        {
+          "at": 48.60633087,
+          "sourceSequence": 14110,
+          "opening": 6,
+          "camera": [
+            -33.20605469,
+            0.58460999,
+            -15.47021484
+          ],
+          "aim": [
+            -61.20245361,
+            -1.41539001,
+            -15.02174377
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 48.73966217,
+          "sourceSequence": 14131,
+          "opening": 7,
+          "camera": [
+            -44.75604248,
+            8.58460999,
+            12.71838379
+          ],
+          "aim": [
+            -72.75250244,
+            6.58460999,
+            13.16685486
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 49.53981781,
+          "sourceSequence": 14236,
+          "opening": 8,
+          "camera": [
+            -45.14044189,
+            16.58460999,
+            -11.27853394
+          ],
+          "aim": [
+            -73.13690186,
+            14.58460999,
+            -10.83006287
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 49.67314911,
+          "sourceSequence": 14257,
+          "opening": 9,
+          "camera": [
+            -24.75860596,
+            0.58460999,
+            12.39805603
+          ],
+          "aim": [
+            -52.75500488,
+            -1.41539001,
+            12.8465271
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 49.80649567,
+          "sourceSequence": 14278,
+          "opening": 10,
+          "camera": [
+            -25.14300537,
+            8.58460999,
+            -11.59886169
+          ],
+          "aim": [
+            -53.1394043,
+            6.58460999,
+            -11.15039062
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 49.93982697,
+          "sourceSequence": 14299,
+          "opening": 11,
+          "camera": [
+            -52.94720459,
+            16.58460999,
+            0.84805298
+          ],
+          "aim": [
+            -80.94366455,
+            14.58460999,
+            1.29652405
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 50.74036407,
+          "sourceSequence": 14428,
+          "opening": 12,
+          "camera": [
+            -32.94976807,
+            8.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            6.58460999,
+            0.97619629
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 50.87369537,
+          "sourceSequence": 14450,
+          "opening": 13,
+          "camera": [
+            -32.82165527,
+            16.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            14.58460999,
+            8.97517395
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 51.00702667,
+          "sourceSequence": 14470,
+          "opening": 14,
+          "camera": [
+            -33.07788086,
+            0.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            -1.41539001,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        }
+      ]
+    },
+    {
+      "query": 33,
+      "samples": [
+        {
+          "at": 59.40807343,
+          "sourceSequence": 15725,
+          "opening": 0,
+          "camera": [
+            -32.94976807,
+            0.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            -1.41539001,
+            0.97619629
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 59.42473602,
+          "sourceSequence": 15729,
+          "opening": 1,
+          "camera": [
+            -32.82165527,
+            8.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            6.58460999,
+            8.97517395
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 59.67502594,
+          "sourceSequence": 15767,
+          "opening": 2,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 59.8083725,
+          "sourceSequence": 15788,
+          "opening": 3,
+          "camera": [
+            -40.94873047,
+            0.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            -1.41539001,
+            1.10432434
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 60.59185028,
+          "sourceSequence": 15928,
+          "opening": 4,
+          "camera": [
+            -24.95080566,
+            8.58460999,
+            0.39959717
+          ],
+          "aim": [
+            -52.94720459,
+            6.58460999,
+            0.84806824
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 60.72518158,
+          "sourceSequence": 15950,
+          "opening": 5,
+          "camera": [
+            -32.69348145,
+            16.58460999,
+            16.52566528
+          ],
+          "aim": [
+            -60.68988037,
+            14.58460999,
+            16.97413635
+          ],
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        },
+        {
+          "at": 60.85851288,
+          "sourceSequence": 15971,
+          "opening": 6,
+          "camera": [
+            -33.20605469,
+            0.58460999,
+            -15.47021484
+          ],
+          "aim": [
+            -61.20245361,
+            -1.41539001,
+            -15.02174377
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 60.99185944,
+          "sourceSequence": 15992,
+          "opening": 7,
+          "camera": [
+            -44.75604248,
+            8.58460999,
+            12.71838379
+          ],
+          "aim": [
+            -72.75250244,
+            6.58460999,
+            13.16685486
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 61.60852814,
+          "sourceSequence": 16083,
+          "opening": 8,
+          "camera": [
+            -45.14044189,
+            16.58460999,
+            -11.27853394
+          ],
+          "aim": [
+            -73.13690186,
+            14.58460999,
+            -10.83006287
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 61.74185944,
+          "sourceSequence": 16104,
+          "opening": 9,
+          "camera": [
+            -24.75860596,
+            0.58460999,
+            12.39805603
+          ],
+          "aim": [
+            -52.75500488,
+            -1.41539001,
+            12.8465271
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 61.87519073,
+          "sourceSequence": 16126,
+          "opening": 10,
+          "camera": [
+            -25.14300537,
+            8.58460999,
+            -11.59886169
+          ],
+          "aim": [
+            -53.1394043,
+            6.58460999,
+            -11.15039062
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 62.02519989,
+          "sourceSequence": 16149,
+          "opening": 11,
+          "camera": [
+            -52.94720459,
+            16.58460999,
+            0.84805298
+          ],
+          "aim": [
+            -80.94366455,
+            14.58460999,
+            1.29652405
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 62.80930328,
+          "sourceSequence": 16281,
+          "opening": 12,
+          "camera": [
+            -32.94976807,
+            8.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            6.58460999,
+            0.97619629
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 62.94263458,
+          "sourceSequence": 16303,
+          "opening": 13,
+          "camera": [
+            -32.82165527,
+            16.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            14.58460999,
+            8.97517395
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 63.07596588,
+          "sourceSequence": 16324,
+          "opening": 14,
+          "camera": [
+            -33.07788086,
+            0.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            -1.41539001,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 70.91225433,
+          "sourceSequence": 17563,
+          "opening": 15,
+          "camera": [
+            -40.94873047,
+            8.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            6.58460999,
+            1.10432434
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        }
+      ]
+    },
+    {
+      "query": 34,
+      "samples": [
+        {
+          "at": 71.77893829,
+          "sourceSequence": 17658,
+          "opening": 0,
+          "camera": [
+            -32.94976807,
+            0.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            -1.41539001,
+            0.97619629
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 71.79560089,
+          "sourceSequence": 17663,
+          "opening": 1,
+          "camera": [
+            -32.82165527,
+            8.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            6.58460999,
+            8.97517395
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 72.04561615,
+          "sourceSequence": 17701,
+          "opening": 2,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 72.17894745,
+          "sourceSequence": 17723,
+          "opening": 3,
+          "camera": [
+            -40.94873047,
+            0.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            -1.41539001,
+            1.10432434
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 73.04563141,
+          "sourceSequence": 17880,
+          "opening": 4,
+          "camera": [
+            -24.95080566,
+            8.58460999,
+            0.39959717
+          ],
+          "aim": [
+            -52.94720459,
+            6.58460999,
+            0.84806824
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 73.17896271,
+          "sourceSequence": 17902,
+          "opening": 5,
+          "camera": [
+            -32.69348145,
+            16.58460999,
+            16.52566528
+          ],
+          "aim": [
+            -60.68988037,
+            14.58460999,
+            16.97413635
+          ],
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        },
+        {
+          "at": 73.31229401,
+          "sourceSequence": 17923,
+          "opening": 6,
+          "camera": [
+            -33.20605469,
+            0.58460999,
+            -15.47021484
+          ],
+          "aim": [
+            -61.20245361,
+            -1.41539001,
+            -15.02174377
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 73.44562531,
+          "sourceSequence": 17944,
+          "opening": 7,
+          "camera": [
+            -44.75604248,
+            8.58460999,
+            12.71838379
+          ],
+          "aim": [
+            -72.75250244,
+            6.58460999,
+            13.16685486
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 74.09583282,
+          "sourceSequence": 18042,
+          "opening": 8,
+          "camera": [
+            -45.14044189,
+            16.58460999,
+            -11.27853394
+          ],
+          "aim": [
+            -73.13690186,
+            14.58460999,
+            -10.83006287
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 74.26250458,
+          "sourceSequence": 18071,
+          "opening": 9,
+          "camera": [
+            -24.75860596,
+            0.58460999,
+            12.39805603
+          ],
+          "aim": [
+            -52.75500488,
+            -1.41539001,
+            12.8465271
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 74.39583588,
+          "sourceSequence": 18093,
+          "opening": 10,
+          "camera": [
+            -25.14300537,
+            8.58460999,
+            -11.59886169
+          ],
+          "aim": [
+            -53.1394043,
+            6.58460999,
+            -11.15039062
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 74.52916718,
+          "sourceSequence": 18113,
+          "opening": 11,
+          "camera": [
+            -52.94720459,
+            16.58460999,
+            0.84805298
+          ],
+          "aim": [
+            -80.94366455,
+            14.58460999,
+            1.29652405
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 75.29586029,
+          "sourceSequence": 18244,
+          "opening": 12,
+          "camera": [
+            -32.94976807,
+            8.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            6.58460999,
+            0.97619629
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 75.42920685,
+          "sourceSequence": 18265,
+          "opening": 13,
+          "camera": [
+            -32.82165527,
+            16.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            14.58460999,
+            8.97517395
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 75.58765411,
+          "sourceSequence": 18286,
+          "opening": 14,
+          "camera": [
+            -33.07788086,
+            0.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            -1.41539001,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 83.31200409,
+          "sourceSequence": 19515,
+          "opening": 15,
+          "camera": [
+            -40.94873047,
+            8.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            6.58460999,
+            1.10432434
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        }
+      ]
+    },
+    {
+      "query": 35,
+      "samples": [
+        {
+          "at": 84.14783478,
+          "sourceSequence": 19607,
+          "opening": 0,
+          "camera": [
+            -32.94976807,
+            0.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            -1.41539001,
+            0.97619629
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 84.16449738,
+          "sourceSequence": 19611,
+          "opening": 1,
+          "camera": [
+            -32.82165527,
+            8.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            6.58460999,
+            8.97517395
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 84.41451263,
+          "sourceSequence": 19649,
+          "opening": 2,
+          "camera": [
+            -33.07788086,
+            16.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            14.58460999,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 84.54784393,
+          "sourceSequence": 19670,
+          "opening": 3,
+          "camera": [
+            -40.94873047,
+            0.58460999,
+            0.65585327
+          ],
+          "aim": [
+            -68.94512939,
+            -1.41539001,
+            1.10432434
+          ],
+          "readable": false,
+          "reason": "Scenic feature is outside the frame or hidden"
+        },
+        {
+          "at": 85.39812469,
+          "sourceSequence": 19824,
+          "opening": 4,
+          "camera": [
+            -24.95080566,
+            8.58460999,
+            0.39959717
+          ],
+          "aim": [
+            -52.94720459,
+            6.58460999,
+            0.84806824
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 85.53145599,
+          "sourceSequence": 19845,
+          "opening": 5,
+          "camera": [
+            -32.69348145,
+            16.58460999,
+            16.52566528
+          ],
+          "aim": [
+            -60.68988037,
+            14.58460999,
+            16.97413635
+          ],
+          "readable": false,
+          "reason": "Foreground vegetation dominates the scenic frame"
+        },
+        {
+          "at": 85.66478729,
+          "sourceSequence": 19866,
+          "opening": 6,
+          "camera": [
+            -33.20605469,
+            0.58460999,
+            -15.47021484
+          ],
+          "aim": [
+            -61.20245361,
+            -1.41539001,
+            -15.02174377
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 85.79811859,
+          "sourceSequence": 19887,
+          "opening": 7,
+          "camera": [
+            -44.75604248,
+            8.58460999,
+            12.71838379
+          ],
+          "aim": [
+            -72.75250244,
+            6.58460999,
+            13.16685486
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 86.44817352,
+          "sourceSequence": 19987,
+          "opening": 8,
+          "camera": [
+            -45.14044189,
+            16.58460999,
+            -11.27853394
+          ],
+          "aim": [
+            -73.13690186,
+            14.58460999,
+            -10.83006287
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 86.58150482,
+          "sourceSequence": 20007,
+          "opening": 9,
+          "camera": [
+            -24.75860596,
+            0.58460999,
+            12.39805603
+          ],
+          "aim": [
+            -52.75500488,
+            -1.41539001,
+            12.8465271
+          ],
+          "readable": false,
+          "reason": "Scenic camera intersects retained vegetation bounds"
+        },
+        {
+          "at": 86.71483612,
+          "sourceSequence": 20029,
+          "opening": 10,
+          "camera": [
+            -25.14300537,
+            8.58460999,
+            -11.59886169
+          ],
+          "aim": [
+            -53.1394043,
+            6.58460999,
+            -11.15039062
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 86.84816742,
+          "sourceSequence": 20049,
+          "opening": 11,
+          "camera": [
+            -52.94720459,
+            16.58460999,
+            0.84805298
+          ],
+          "aim": [
+            -80.94366455,
+            14.58460999,
+            1.29652405
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 87.64824677,
+          "sourceSequence": 20185,
+          "opening": 12,
+          "camera": [
+            -32.94976807,
+            8.58460999,
+            0.52772522
+          ],
+          "aim": [
+            -60.94616699,
+            6.58460999,
+            0.97619629
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 87.78157806,
+          "sourceSequence": 20206,
+          "opening": 13,
+          "camera": [
+            -32.82165527,
+            16.58460999,
+            8.52670288
+          ],
+          "aim": [
+            -60.8180542,
+            14.58460999,
+            8.97517395
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        },
+        {
+          "at": 87.91492462,
+          "sourceSequence": 20227,
+          "opening": 14,
+          "camera": [
+            -33.07788086,
+            0.58460999,
+            -7.47125244
+          ],
+          "aim": [
+            -61.07427979,
+            -1.41539001,
+            -7.02278137
+          ],
+          "readable": true,
+          "reason": "Readable directed scenic view"
+        }
+      ]
+    }
+  ],
+  "lifecycle": [
+    {
+      "at": 0.0,
+      "sourceSequence": 4647,
+      "phase": "departure-start",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 0.0,
+      "sourceSequence": 4648,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 1.00302124,
+      "sourceSequence": 4965,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 2.00786591,
+      "sourceSequence": 5328,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 3.00967407,
+      "sourceSequence": 5620,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 4.01004028,
+      "sourceSequence": 5900,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 5.02290344,
+      "sourceSequence": 6208,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 6.02337646,
+      "sourceSequence": 6532,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 16,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 7.02370453,
+      "sourceSequence": 6694,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 16,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 8.02377319,
+      "sourceSequence": 6825,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 16,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 9.03001404,
+      "sourceSequence": 6985,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 10.03002167,
+      "sourceSequence": 7157,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 16,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 11.03012848,
+      "sourceSequence": 7291,
+      "phase": "departure-progress",
+      "plan": 11,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 16,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 12.01381683,
+      "sourceSequence": 7453,
+      "phase": "preparation-retry",
+      "plan": 16,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: Journey corridor search expired; last evidence: Scenic feature is outside the frame or hidden"
+    },
+    {
+      "at": 12.03048706,
+      "sourceSequence": 7455,
+      "phase": "departure-progress",
+      "plan": 16,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 13.03055573,
+      "sourceSequence": 7577,
+      "phase": "departure-progress",
+      "plan": 16,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 14.03073883,
+      "sourceSequence": 7807,
+      "phase": "departure-progress",
+      "plan": 16,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 15.03363037,
+      "sourceSequence": 8118,
+      "phase": "departure-progress",
+      "plan": 16,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 16.03372955,
+      "sourceSequence": 8422,
+      "phase": "departure-progress",
+      "plan": 16,
+      "owned": false,
+      "departureState": "Departure",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 16.41706848,
+      "sourceSequence": 8520,
+      "phase": "start",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 0,
+      "routeProgress": 0,
+      "effectiveCruise": 7.350518596950336,
+      "freshRunwayMetres": 35.048708057842504,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 17.03392029,
+      "sourceSequence": 8685,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 2.0077363673305415,
+      "routeProgress": 0,
+      "effectiveCruise": 7.782365244409647,
+      "freshRunwayMetres": 33.04486693277158,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 18.04100037,
+      "sourceSequence": 8938,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 9.845216825371422,
+      "routeProgress": 1.0727694327541253,
+      "effectiveCruise": 7.782365244409647,
+      "freshRunwayMetres": 25.22171723046643,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 19.04341888,
+      "sourceSequence": 9213,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 17.33435166034139,
+      "routeProgress": 8.197339968548025,
+      "effectiveCruise": 6.851377203808827,
+      "freshRunwayMetres": 17.745968672144805,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 20.05588531,
+      "sourceSequence": 9455,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 23.493113579824435,
+      "routeProgress": 14.355844700107408,
+      "effectiveCruise": 5.430688679084732,
+      "freshRunwayMetres": 11.598127699686971,
+      "preparationFailures": 0,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 20.68064117,
+      "sourceSequence": 9537,
+      "phase": "preparation-retry",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 26.64138835337724,
+      "routeProgress": 17.50151141650913,
+      "effectiveCruise": 4.572610544185309,
+      "freshRunwayMetres": 8.456322897680282,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: No validated route among the goal-directed lateral/elevation alternatives; last evidence: Foreground vegetation dominates the scenic frame"
+    },
+    {
+      "at": 21.0639801,
+      "sourceSequence": 9570,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 28.2801223342482,
+      "routeProgress": 19.07605402865121,
+      "effectiveCruise": 4.018174727108281,
+      "freshRunwayMetres": 6.819602969356548,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 22.06407166,
+      "sourceSequence": 9687,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 31.60826282103165,
+      "routeProgress": 22.140534359750127,
+      "effectiveCruise": 2.669085376762632,
+      "freshRunwayMetres": 3.4975400650078443,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 23.06437683,
+      "sourceSequence": 9787,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 33.62503841474499,
+      "routeProgress": 24.044220879517916,
+      "effectiveCruise": 1.4041970345798191,
+      "freshRunwayMetres": 1.4849454396373738,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 24.06468201,
+      "sourceSequence": 9891,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.474736934385625,
+      "routeProgress": 24.848034745916372,
+      "effectiveCruise": 0.3801634798976818,
+      "freshRunwayMetres": 0.6368913686984301,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0.01667022705078125,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 25.06477356,
+      "sourceSequence": 10004,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 1,
+      "noProgressSeconds": 0.516693115234375,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 26.06533813,
+      "sourceSequence": 10103,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 1,
+      "noProgressSeconds": 1.5172576904296875,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 27.06594849,
+      "sourceSequence": 10206,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 1,
+      "noProgressSeconds": 2.5178680419921875,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 28.06601715,
+      "sourceSequence": 10307,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 1,
+      "noProgressSeconds": 3.5179367065429688,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 29.06630707,
+      "sourceSequence": 10409,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 1,
+      "noProgressSeconds": 4.518226623535156,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 30.06630707,
+      "sourceSequence": 10515,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 1,
+      "noProgressSeconds": 5.518226623535156,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 30.74968719,
+      "sourceSequence": 10588,
+      "phase": "preparation-retry",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 2,
+      "noProgressSeconds": 6.201606750488281,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: No validated route among the goal-directed lateral/elevation alternatives; last evidence: Foreground vegetation dominates the scenic frame"
+    },
+    {
+      "at": 31.06635284,
+      "sourceSequence": 10614,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 2,
+      "noProgressSeconds": 6.518272399902344,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 32.07015228,
+      "sourceSequence": 10722,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 2,
+      "noProgressSeconds": 7.522071838378906,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 33.07019806,
+      "sourceSequence": 10834,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 2,
+      "noProgressSeconds": 8.522117614746094,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 34.07035065,
+      "sourceSequence": 10931,
+      "phase": "progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "None",
+      "usablePicture": true,
+      "ordinaryPrepared": 19,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0.5249757056071246,
+      "preparationFailures": 2,
+      "noProgressSeconds": 9.522270202636719,
+      "localRepair": false,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 34.55368805,
+      "sourceSequence": 10995,
+      "phase": "local-replan-start",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Travelling",
+      "missionCause": "NavigationStalled",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 10.005607604980469,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "No measured travel progress; searching a different local departure toward the same destination"
+    },
+    {
+      "at": 35.07083893,
+      "sourceSequence": 11076,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 10.522758483886719,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 36.07085419,
+      "sourceSequence": 11389,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 11.522773742675781,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 37.07094574,
+      "sourceSequence": 11737,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 12.522865295410156,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 38.07118988,
+      "sourceSequence": 12045,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 13.523109436035156,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 39.0717392,
+      "sourceSequence": 12317,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 14.523658752441406,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 40.07207489,
+      "sourceSequence": 12627,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 15.523994445800781,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 41.07209015,
+      "sourceSequence": 12925,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 16.524009704589844,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 42.07215118,
+      "sourceSequence": 13072,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 17.524070739746094,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 43.07241058,
+      "sourceSequence": 13199,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 18.524330139160156,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 44.07242584,
+      "sourceSequence": 13371,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 19.52434539794922,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 45.07256317,
+      "sourceSequence": 13516,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 20.52448272705078,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 46.07265472,
+      "sourceSequence": 13683,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 0,
+      "noProgressSeconds": 21.524574279785156,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 46.55625153,
+      "sourceSequence": 13796,
+      "phase": "preparation-retry",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 22.00817108154297,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: Journey corridor search expired; last evidence: Foreground vegetation dominates the scenic frame"
+    },
+    {
+      "at": 47.0729599,
+      "sourceSequence": 13851,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 22.524879455566406,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 48.07297516,
+      "sourceSequence": 14010,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 23.52489471435547,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 49.07300568,
+      "sourceSequence": 14157,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 24.524925231933594,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 50.07353973,
+      "sourceSequence": 14310,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 25.52545928955078,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 51.07369232,
+      "sourceSequence": 14476,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 26.525611877441406,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 52.07370758,
+      "sourceSequence": 14582,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 27.52562713623047,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 53.07415009,
+      "sourceSequence": 14775,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 28.52606964111328,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 54.07434845,
+      "sourceSequence": 14881,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 29.526268005371094,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 55.07439423,
+      "sourceSequence": 15027,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 30.52631378173828,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 56.07440948,
+      "sourceSequence": 15173,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 31.526329040527344,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 57.07442474,
+      "sourceSequence": 15341,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 32.526344299316406,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 58.07454681,
+      "sourceSequence": 15534,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 1,
+      "noProgressSeconds": 33.526466369628906,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 58.90808868,
+      "sourceSequence": 15674,
+      "phase": "preparation-retry",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 34.360008239746094,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: Journey corridor search expired; last evidence: Scenic feature is outside the frame or hidden"
+    },
+    {
+      "at": 59.07472992,
+      "sourceSequence": 15687,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 34.526649475097656,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 60.07509613,
+      "sourceSequence": 15810,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 35.527015686035156,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 61.07518768,
+      "sourceSequence": 15999,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 36.52710723876953,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 62.07520294,
+      "sourceSequence": 16154,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 37.527122497558594,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 63.07596588,
+      "sourceSequence": 16325,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 38.52788543701172,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 64.07727814,
+      "sourceSequence": 16464,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 39.529197692871094,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 65.07727814,
+      "sourceSequence": 16627,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 40.529197692871094,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 66.07762909,
+      "sourceSequence": 16768,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 41.52954864501953,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 67.07764435,
+      "sourceSequence": 16930,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 42.529563903808594,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 68.07865143,
+      "sourceSequence": 17080,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 43.53057098388672,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 69.07881927,
+      "sourceSequence": 17249,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 44.530738830566406,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 70.07891083,
+      "sourceSequence": 17446,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 45.53083038330078,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 71.07892609,
+      "sourceSequence": 17576,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 2,
+      "noProgressSeconds": 46.530845642089844,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 71.27893829,
+      "sourceSequence": 17604,
+      "phase": "preparation-retry",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 46.730857849121094,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: Journey corridor search expired; last evidence: Scenic feature is outside the frame or hidden"
+    },
+    {
+      "at": 72.07894135,
+      "sourceSequence": 17707,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 47.530860900878906,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 73.07897186,
+      "sourceSequence": 17886,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 48.53089141845703,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 74.07917023,
+      "sourceSequence": 18038,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 49.531089782714844,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 75.07920074,
+      "sourceSequence": 18202,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 50.53112030029297,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 76.08904266,
+      "sourceSequence": 18341,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 51.54096221923828,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 77.10497284,
+      "sourceSequence": 18487,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 52.55689239501953,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 78.11087799,
+      "sourceSequence": 18658,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 53.56279754638672,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 79.11138153,
+      "sourceSequence": 18819,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 54.56330108642578,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 80.11139679,
+      "sourceSequence": 18959,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 55.563316345214844,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 81.11141205,
+      "sourceSequence": 19156,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 56.563331604003906,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 82.11159515,
+      "sourceSequence": 19312,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 57.563514709472656,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 83.111763,
+      "sourceSequence": 19470,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 3,
+      "noProgressSeconds": 58.563682556152344,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 83.647789,
+      "sourceSequence": 19551,
+      "phase": "preparation-retry",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 59.099708557128906,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Retrying continuation with a shorter loaded window: Continuation unavailable: Journey corridor search expired; last evidence: Foreground vegetation dominates the scenic frame"
+    },
+    {
+      "at": 84.11450958,
+      "sourceSequence": 19600,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 59.566429138183594,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": true
+    },
+    {
+      "at": 85.11478424,
+      "sourceSequence": 19758,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 60.56670379638672,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 86.1147995,
+      "sourceSequence": 19916,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 61.56671905517578,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 87.11484528,
+      "sourceSequence": 20072,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 62.56676483154297,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 88.11492157,
+      "sourceSequence": 20244,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 63.56684112548828,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 89.11528778,
+      "sourceSequence": 20399,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 64.56720733642578,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 90.11533356,
+      "sourceSequence": 20561,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 65.56725311279297,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 91.12928009,
+      "sourceSequence": 20704,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 66.5811996459961,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 92.13080597,
+      "sourceSequence": 20867,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 67.58272552490234,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 93.13082123,
+      "sourceSequence": 21040,
+      "phase": "local-replan-progress",
+      "plan": 18,
+      "owned": true,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 29,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 68.5827407836914,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false
+    },
+    {
+      "at": 93.64749908,
+      "sourceSequence": 21122,
+      "phase": "finish",
+      "plan": 0,
+      "owned": false,
+      "departureState": "Replanning",
+      "missionCause": "RouteUnavailable",
+      "usablePicture": true,
+      "ordinaryPrepared": 0,
+      "measuredMetres": 34.586807262476135,
+      "routeProgress": 24.9540053133669,
+      "effectiveCruise": 0,
+      "freshRunwayMetres": 0,
+      "preparationFailures": 4,
+      "noProgressSeconds": 69.08275604248047,
+      "localRepair": true,
+      "replanRequested": false,
+      "loading": false,
+      "reason": "Journey stopped; resume ordinary local scenery"
+    }
+  ],
+  "pictureSamples": [
+    {
+      "at": 16.60040283,
+      "sourceSequence": 8567,
+      "shot": 18,
+      "camera": [
+        -0.00164795,
+        -0.00065613,
+        3.052e-05
+      ],
+      "pitch": 0.573184609413147,
+      "yaw": 270.91766357421875,
+      "roll": 4.269082012342551e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 17.6040802,
+      "sourceSequence": 8831,
+      "shot": 18,
+      "camera": [
+        -6.1027832,
+        -2.44284058,
+        0.0977478
+      ],
+      "pitch": 358.76214599609375,
+      "yaw": 270.9175720214844,
+      "roll": -1.0674659023379718e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 18.61008453,
+      "sourceSequence": 9101,
+      "shot": 18,
+      "camera": [
+        -13.2789917,
+        -2.66189575,
+        0.21266174
+      ],
+      "pitch": 354.8912048339844,
+      "yaw": 270.9176025390625,
+      "roll": 0,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 19.61032104,
+      "sourceSequence": 9388,
+      "shot": 18,
+      "camera": [
+        -19.94433594,
+        -2.21315765,
+        0.31944275
+      ],
+      "pitch": 351.5341491699219,
+      "yaw": 270.9176025390625,
+      "roll": 0,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 20.61303711,
+      "sourceSequence": 9525,
+      "shot": 18,
+      "camera": [
+        -25.26568604,
+        -2.14431763,
+        0.40466309
+      ],
+      "pitch": 348.8744201660156,
+      "yaw": 270.9176330566406,
+      "roll": -4.3506315705599263e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 21.61398315,
+      "sourceSequence": 9636,
+      "shot": 18,
+      "camera": [
+        -28.95941162,
+        -0.88349915,
+        0.46382141
+      ],
+      "pitch": 346.914306640625,
+      "yaw": 270.9176025390625,
+      "roll": 8.765349548411905e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 22.61437225,
+      "sourceSequence": 9742,
+      "shot": 18,
+      "camera": [
+        -31.36077881,
+        0.03931427,
+        0.50227356
+      ],
+      "pitch": 345.6275634765625,
+      "yaw": 270.9176330566406,
+      "roll": -4.4067888893550844e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 23.61458588,
+      "sourceSequence": 9842,
+      "shot": 18,
+      "camera": [
+        -32.61444092,
+        0.46942902,
+        0.52235413
+      ],
+      "pitch": 344.96484375,
+      "yaw": 270.91766357421875,
+      "roll": -8.840369787321833e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 24.53141022,
+      "sourceSequence": 9941,
+      "shot": 18,
+      "camera": [
+        -32.94561768,
+        0.5831604,
+        0.52766418
+      ],
+      "pitch": 344.7897644042969,
+      "yaw": 270.9176330566406,
+      "roll": 8.847674166645447e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 24.61474609,
+      "sourceSequence": 9958,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 25.615242,
+      "sourceSequence": 10059,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 26.61588287,
+      "sourceSequence": 10157,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 27.61591339,
+      "sourceSequence": 10262,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 28.6160202,
+      "sourceSequence": 10361,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 29.68297577,
+      "sourceSequence": 10474,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 30.68302155,
+      "sourceSequence": 10573,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 31.68677521,
+      "sourceSequence": 10682,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 32.68682098,
+      "sourceSequence": 10793,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 33.68701935,
+      "sourceSequence": 10893,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 34.68701935,
+      "sourceSequence": 11018,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 35.68750763,
+      "sourceSequence": 11261,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 36.68752289,
+      "sourceSequence": 11603,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 37.6876297,
+      "sourceSequence": 11931,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 38.68819427,
+      "sourceSequence": 12211,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 39.68869781,
+      "sourceSequence": 12515,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 40.68874359,
+      "sourceSequence": 12833,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 41.68875885,
+      "sourceSequence": 13004,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 42.68907928,
+      "sourceSequence": 13155,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 43.68907928,
+      "sourceSequence": 13294,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 44.68909454,
+      "sourceSequence": 13456,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 45.68923187,
+      "sourceSequence": 13647,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 46.68959808,
+      "sourceSequence": 13808,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 47.6896286,
+      "sourceSequence": 13932,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 48.68967438,
+      "sourceSequence": 14124,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 49.68982697,
+      "sourceSequence": 14262,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 50.69036102,
+      "sourceSequence": 14421,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 51.69037628,
+      "sourceSequence": 14541,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 52.69071198,
+      "sourceSequence": 14684,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 53.69101715,
+      "sourceSequence": 14853,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 54.69103241,
+      "sourceSequence": 14978,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 55.69106293,
+      "sourceSequence": 15113,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 56.69107819,
+      "sourceSequence": 15284,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 57.69109344,
+      "sourceSequence": 15431,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 58.69121552,
+      "sourceSequence": 15617,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 59.6917038,
+      "sourceSequence": 15772,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 60.69185638,
+      "sourceSequence": 15945,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 61.69185638,
+      "sourceSequence": 16097,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 62.69263458,
+      "sourceSequence": 16265,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 63.69307709,
+      "sourceSequence": 16392,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 64.69393158,
+      "sourceSequence": 16559,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 65.69406891,
+      "sourceSequence": 16701,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 66.69429779,
+      "sourceSequence": 16859,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 67.6944046,
+      "sourceSequence": 17030,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 68.69547272,
+      "sourceSequence": 17185,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 69.69557953,
+      "sourceSequence": 17358,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 70.69557953,
+      "sourceSequence": 17517,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 71.69561005,
+      "sourceSequence": 17643,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 72.69562531,
+      "sourceSequence": 17797,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 73.69564056,
+      "sourceSequence": 17968,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 74.69583893,
+      "sourceSequence": 18128,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 75.77100372,
+      "sourceSequence": 18302,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 76.85428619,
+      "sourceSequence": 18459,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 77.86087799,
+      "sourceSequence": 18623,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 78.86089325,
+      "sourceSequence": 18764,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 79.86138153,
+      "sourceSequence": 18934,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 80.86141205,
+      "sourceSequence": 19105,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 81.86141205,
+      "sourceSequence": 19273,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 82.86173248,
+      "sourceSequence": 19448,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 83.93112946,
+      "sourceSequence": 19576,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 84.93144989,
+      "sourceSequence": 19706,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 85.93146515,
+      "sourceSequence": 19899,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 86.93151093,
+      "sourceSequence": 20058,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 87.93158722,
+      "sourceSequence": 20230,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 88.93195343,
+      "sourceSequence": 20371,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 89.93199921,
+      "sourceSequence": 20538,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 90.94559479,
+      "sourceSequence": 20676,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 92.01413727,
+      "sourceSequence": 20859,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 93.01415253,
+      "sourceSequence": 21018,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    },
+    {
+      "at": 93.59749603,
+      "sourceSequence": 21115,
+      "shot": 18,
+      "camera": [
+        -32.94976807,
+        0.58460999,
+        0.52772522
+      ],
+      "pitch": 344.78753662109375,
+      "yaw": 270.91766357421875,
+      "roll": 8.84776682141819e-07,
+      "fov": 75,
+      "presentation": "Live",
+      "poseAudit": "Matched",
+      "diagnosticRepeat": false
+    }
+  ],
+  "stationaryInterval": {
+    "from": 24.61474609,
+    "through": 93.59749603,
+    "sampleCount": 827,
+    "sourceFrameCount": 824,
+    "heldFrameCount": 0,
+    "slateFrameCount": 0
+  }
+}

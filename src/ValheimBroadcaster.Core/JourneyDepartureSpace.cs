@@ -33,6 +33,10 @@ public sealed class JourneyDepartureSpace
     private readonly double[] retryAt = new double[CandidateCount];
     private readonly HashSet<string> observed = new HashSet<string>();
     private int cursor;
+    private long episodeJourney, episodeEpoch;
+    private AutonomyPosition episodeSeed, episodeGoal, episodeCarrier;
+    private double episodeStarted, episodeLast;
+    private bool episodeBound;
     public int Screened { get; private set; }
     public int Rejected { get; private set; }
     public int Deferred { get; private set; }
@@ -48,7 +52,8 @@ public sealed class JourneyDepartureSpace
         // The first comparison batch already spans lateral positions and
         // elevations. Searching every ground-level view first can spend the
         // entire budget beneath one continuous canopy or behind a ridge.
-        int bearing = id / (offsets.Length * 3), level = (id / offsets.Length + id % offsets.Length) % 3;
+        int block = id / offsets.Length;
+        int bearing = (id + block) % 3, level = (id + block / 3) % 3;
         double angle = (bearing == 1 ? 24 : bearing == 2 ? -24 : 0) * Math.PI / 180;
         var position = new AutonomyPosition((float)(seed.X + x * offset.Ahead + z * offset.Side),
             seed.Y + level * 8, (float)(seed.Z + z * offset.Ahead - x * offset.Side));
@@ -67,6 +72,23 @@ public sealed class JourneyDepartureSpace
             id = next; return true;
         }
         id = -1; return false;
+    }
+
+    /// <summary>Continue bounded proposal work across preparation batches.
+    /// This remembers search history, never loaded space or a safety proof.</summary>
+    public bool Bind(long journey, long epoch, AutonomyPosition seed, AutonomyPosition goal,
+        AutonomyPosition carrier, double now)
+    {
+        if (journey <= 0 || epoch < 0 || !Finite(now) || now < 0) throw new ArgumentOutOfRangeException(nameof(now));
+        bool same = episodeBound && episodeJourney == journey && episodeEpoch == epoch &&
+            episodeSeed.Distance(seed) <= 1 && episodeGoal.Distance(goal) <= 16 &&
+            episodeCarrier.Distance(carrier) <= 8 && now >= episodeLast && now - episodeStarted < 120;
+        if (!same)
+        {
+            Reset(); episodeBound = true; episodeJourney = journey; episodeEpoch = epoch;
+            episodeSeed = seed; episodeGoal = goal; episodeCarrier = carrier; episodeStarted = now;
+        }
+        episodeLast = now; return same;
     }
 
     public void Defer(int id, double now)
@@ -97,6 +119,7 @@ public sealed class JourneyDepartureSpace
     {
         Array.Clear(finished, 0, finished.Length); Array.Clear(retryAt, 0, retryAt.Length);
         cursor = Screened = Rejected = Deferred = 0; observed.Clear();
+        episodeBound = false; episodeJourney = episodeEpoch = 0; episodeStarted = episodeLast = 0;
     }
     private static void Index(int id) { if (id < 0 || id >= CandidateCount) throw new ArgumentOutOfRangeException(nameof(id)); }
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);

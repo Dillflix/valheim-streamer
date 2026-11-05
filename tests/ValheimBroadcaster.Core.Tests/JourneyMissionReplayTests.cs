@@ -15,6 +15,7 @@ internal static class JourneyMissionReplayTests
         yield return ("Recorded single-section reserve permits physically bounded departure without a second-section wait", RecordedLaunchReserve);
         yield return ("Integrated synthetic Journey crosses a kilometre through loading changes failed alternatives and local repair", SyntheticKilometre);
         yield return ("Integrated Journey releases travel only after explicit player or operator preemption", ExplicitPreemption);
+        yield return ("Recorded 0.8.49 readable stationary footage and twelve-second repair retries never earn travel progress", RecordedPlanningStall);
     }
 
     private const long Mission = 7, World = 42;
@@ -48,16 +49,118 @@ internal static class JourneyMissionReplayTests
         return mission;
     }
 
-    private static JsonDocument Fixture()
+    private static JsonDocument Fixture(string filename = "0.8.48-lifecycle.json")
     {
         foreach (string start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
         for (var folder = new DirectoryInfo(start); folder != null; folder = folder.Parent)
         {
-            string path = Path.Combine(folder.FullName, "tests", "fixtures", "journey-mission", "0.8.48-lifecycle.json");
+            string path = Path.Combine(folder.FullName, "tests", "fixtures", "journey-mission", filename);
             if (File.Exists(path)) return JsonDocument.Parse(File.ReadAllText(path));
         }
-        throw new FileNotFoundException("Sanitized 0.8.48 Journey observation fixture was not found");
+        throw new FileNotFoundException("Sanitized Journey observation fixture was not found: " + filename);
     }
+
+    private static void RecordedPlanningStall()
+    {
+        using var fixture = Fixture("0.8.49-planning-stall.json");
+        JsonElement root = fixture.RootElement;
+        Check(root.GetProperty("sourceVersion").GetString() == "0.8.49", "Wrong recorded failure version");
+        var mission = Begin(epoch: 3); var director = Director(); var runway = new JourneyRunwayPolicy();
+        double originalDistance = root.GetProperty("admittedRoute").GetProperty("travel").GetDouble();
+        double previousAt = 0, previousRepair = -1, recordedRepairAt = -1, watchdogRepairAt = -1;
+        double lastMeasured = 0; int repairFailures = 0, preparedWhileRetained = 0;
+        bool admitted = false, sawStoppedReserve = false;
+        foreach (JsonElement row in root.GetProperty("lifecycle").EnumerateArray())
+        {
+            double at = row.GetProperty("at").GetDouble();
+            string phase = row.GetProperty("phase").GetString()!;
+            bool repair = row.GetProperty("localRepair").GetBoolean();
+            bool picture = row.GetProperty("usablePicture").GetBoolean();
+            double measured = row.GetProperty("measuredMetres").GetDouble();
+            double remaining = row.GetProperty("freshRunwayMetres").GetDouble();
+            bool finish = phase == "finish";
+            // These are the recorded decisions/observations. No failed
+            // corridor is converted into a certified successor by this replay.
+            var evidence = admitted && !repair && remaining > 0
+                ? new JourneyRouteEvidence(18, 3, remaining) : default;
+            mission.Observe(new JourneyTravelObservation(at, World, 3,
+                preemption: finish ? JourneyTravelPreemption.Operator : JourneyTravelPreemption.None,
+                navigation: admitted ? JourneyTravelNavigation.Clear : JourneyTravelNavigation.WaitingForObservation,
+                pictureAvailable: picture, route: evidence, renderedTravelMetres: measured));
+            if (phase == "start")
+            {
+                Check(!admitted && runway.TryStart(1, originalDistance, 12, out _),
+                    "The recorded physically supported departure was rejected");
+                // A current ready observation is required independently of a
+                // readable picture. The complete captured admission supplies it.
+                mission.Observe(new JourneyTravelObservation(at, World, 3, pictureAvailable: picture, renderedTravelMetres: measured));
+                Check(mission.TryAcceptRoute(new JourneyRouteEvidence(18, 3, originalDistance), at, out _),
+                    "Recorded admitted route did not acquire mission authority");
+                admitted = true;
+            }
+            if (phase == "local-replan-start") recordedRepairAt = previousRepair = at;
+            if (mission.LocalReplanRequested && watchdogRepairAt < 0)
+            {
+                watchdogRepairAt = at; mission.AcknowledgeLocalReplan();
+            }
+            if (repair && phase == "preparation-retry")
+            {
+                Check(previousRepair >= 0 && at - previousRepair >= 12 && at - previousRepair < 13,
+                    "Fixture no longer represents the repeated twelve-second search budget");
+                previousRepair = at; repairFailures++;
+            }
+            if (admitted && !repair && row.GetProperty("effectiveCruise").GetDouble() == 0)
+            {
+                Check(remaining >= JourneyRunwayPolicy.StopMarginMetres && remaining < .6,
+                    "Recorded pause was not at the certified stopping margin");
+                sawStoppedReserve = true;
+            }
+            if (repair && !finish)
+            {
+                Check(!mission.CanAdvance && mission.State == JourneyTravelState.Replanning,
+                    "A retained live picture granted movement without a successor route");
+                if (row.GetProperty("ordinaryPrepared").GetInt64() == 29)
+                {
+                    Check(picture && row.GetProperty("plan").GetInt64() == 18,
+                        "The observed prepared-fallback/retained-picture conflict was lost");
+                    preparedWhileRetained++;
+                }
+            }
+            Tick(director, mission, at, Math.Min(.1, at - previousAt), picture);
+            if (!finish)
+                Check(mission.Active && mission.MissionId == Mission && director.PendingTravel == null,
+                    "A captured failed search/camera pause was misclassified as completed travel or ordinary relocation");
+            lastMeasured = measured; previousAt = at;
+        }
+        Check(admitted && sawStoppedReserve && repairFailures == 4 && preparedWhileRetained > 10,
+            "Replay omitted admission, physical stopping, repeated failed batches or the blocked prepared fallback");
+        Check(watchdogRepairAt >= recordedRepairAt && watchdogRepairAt - recordedRepairAt < 1.1,
+            "Sparse captured observations failed to request repair within their one-second recording interval");
+        Check(mission.State == JourneyTravelState.Cancelled && mission.Cause == JourneyTravelCause.OperatorPreempted &&
+            mission.NoProgressSeconds > 68 && mission.NoProgressSeconds < 70,
+            "Recorded manual stop was replaced by a false progress reset or unrelated timeout");
+        Near(34.586807262476135, lastMeasured);
+
+        JsonElement interval = root.GetProperty("stationaryInterval");
+        double stationaryFrom = interval.GetProperty("from").GetDouble();
+        var poses = new List<JsonElement>();
+        foreach (JsonElement sample in root.GetProperty("pictureSamples").EnumerateArray())
+            if (sample.GetProperty("at").GetDouble() >= stationaryFrom) poses.Add(sample);
+        Check(poses.Count > 60 && interval.GetProperty("through").GetDouble() - stationaryFrom > 68.9 &&
+            interval.GetProperty("heldFrameCount").GetInt32() == 0 && interval.GetProperty("slateFrameCount").GetInt32() == 0,
+            "Recorded failure was incorrectly reduced to a held texture or loading slate");
+        foreach (JsonElement pose in poses)
+        {
+            Check(pose.GetProperty("presentation").GetString() == "Live" && pose.GetProperty("poseAudit").GetString() == "Matched" &&
+                pose.GetProperty("shot").GetInt64() == 18, "Static recorded footage lost its real live-shot identity");
+            for (int coordinate = 0; coordinate < 3; coordinate++)
+                Near(poses[0].GetProperty("camera")[coordinate].GetDouble(), pose.GetProperty("camera")[coordinate].GetDouble());
+        }
+        // This asserts the measured failure, not a successful new route. Native
+        // geometry tests consume candidateQueries separately; a readable prefix
+        // is neither a complete reconstructed corridor nor a certified ending.
+    }
+
 
     private static void RecordedDwellPreemption()
     {
