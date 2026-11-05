@@ -48,8 +48,8 @@ public sealed class ReplayEngine
             if (kind == "header")
             {
                 string? version = row.GetProperty("version").GetString();
-                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31" || version == "0.8.32" || version == "0.8.33" || version == "0.8.34" || version == "0.8.35" || version == "0.8.36" || version == "0.8.37" || version == "0.8.38" || version == "0.8.39" || version == "0.8.40" || version == "0.8.41" || version == "0.8.42" || version == "0.8.43" || version == "0.8.44" || version == "0.8.45" || version == "0.8.46";
-                if (!compatible) Bad("Replay reads captures from 0.8.29 through 0.8.46 and checks their recorded coverage/deadline decisions; unsupported build");
+                compatible = version == "0.8.29" || version == "0.8.30" || version == "0.8.31" || version == "0.8.32" || version == "0.8.33" || version == "0.8.34" || version == "0.8.35" || version == "0.8.36" || version == "0.8.37" || version == "0.8.38" || version == "0.8.39" || version == "0.8.40" || version == "0.8.41" || version == "0.8.42" || version == "0.8.43" || version == "0.8.44" || version == "0.8.45" || version == "0.8.46" || version == "0.8.47";
+                if (!compatible) Bad("Replay reads captures from 0.8.29 through 0.8.47 and checks their recorded coverage/deadline decisions; unsupported build");
                 string current = row.GetProperty("utc").GetString()!;
                 if (session != current) { previousSequence = 0; session = current; unavailableSince = null; scenicTravel = false; }
                 return;

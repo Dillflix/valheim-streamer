@@ -106,7 +106,10 @@ namespace ValheimBroadcaster.Core
             double magnitude = itinerary.Origin.HorizontalDistance(next);
             Heading = new AutonomyPosition((float)((next.X - ObjectiveOrigin.X) / magnitude), 0,
                 (float)((next.Z - ObjectiveOrigin.Z) / magnitude));
-            MaximumSeconds = TargetMetres / cruiseSpeed * 1.5 + 45;
+            // Supported cruise may smoothly fall to its declared useful floor
+            // when real preparation latency consumes the certified reserve.
+            // Keep that legitimate travel inside the finite programme budget.
+            MaximumSeconds = TargetMetres / JourneyRunwayPolicy.MinimumCruise(cruiseSpeed) * 1.5 + 45;
             Outcome = ScenicJourneyOutcome.Running; Reason = itinerary.Description;
         }
 

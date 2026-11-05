@@ -17,6 +17,7 @@ namespace ValheimBroadcaster.Core
         private long lastAttemptedEpoch;
         private bool independentCut;
         public double ElapsedSeconds { get; private set; }
+        public double PreparationLimitSeconds { get; private set; } = PreparationSeconds;
         public ScenicJourneyDepartureState State { get; private set; }
         public string Reason { get; private set; } = "No departure requested";
         public bool Pending => State == ScenicJourneyDepartureState.Preparing || State == ScenicJourneyDepartureState.Ready;
@@ -25,16 +26,19 @@ namespace ValheimBroadcaster.Core
         public bool CanAttempt(long seed, long epoch) => seed > 0 && epoch > 0 && !Pending && !OwnsCoverage &&
             (seed != LastAttemptedSeed || epoch != lastAttemptedEpoch);
 
-        public void Begin(long seed, long epoch) => Begin(seed, epoch, false);
+        public void Begin(long seed, long epoch) => Begin(seed, epoch, false, PreparationSeconds);
 
         /// <summary>A separately validated departure is an editorial cut, not a
         /// continuation of the incidental ordinary shot that seeded its pose.</summary>
-        public void BeginIndependent(long seed, long epoch) => Begin(seed, epoch, true);
+        public void BeginIndependent(long seed, long epoch, double preparationSeconds = PreparationSeconds) =>
+            Begin(seed, epoch, true, preparationSeconds);
 
-        private void Begin(long seed, long epoch, bool cut)
+        private void Begin(long seed, long epoch, bool cut, double preparationSeconds)
         {
+            if (double.IsNaN(preparationSeconds) || double.IsInfinity(preparationSeconds) || preparationSeconds <= 0 || preparationSeconds > 90)
+                throw new ArgumentOutOfRangeException(nameof(preparationSeconds));
             if (!CanAttempt(seed, epoch)) throw new ArgumentException("Departure needs a fresh readable seed and scene.");
-            independentCut = cut;
+            independentCut = cut; PreparationLimitSeconds = preparationSeconds;
             SeedId = LastAttemptedSeed = seed; Epoch = lastAttemptedEpoch = epoch; ElapsedSeconds = 0;
             State = ScenicJourneyDepartureState.Preparing; Reason = "Preparing departure while ordinary Scenic coverage continues";
         }
@@ -54,7 +58,7 @@ namespace ValheimBroadcaster.Core
             if (!independentCut || !ready) ElapsedSeconds += deltaSeconds;
             if (independentCut)
             {
-                if (ElapsedSeconds > PreparationSeconds)
+                if (ElapsedSeconds > PreparationLimitSeconds)
                     Abandon("Departure preparation expired; ordinary coverage continues");
                 else if (ready && endpoint)
                 { State = ScenicJourneyDepartureState.Admitted; Reason = "Validated independent departure admitted at an editorial boundary"; }
@@ -68,11 +72,11 @@ namespace ValheimBroadcaster.Core
             }
             if (endpoint)
             {
-                if (ready && ElapsedSeconds <= PreparationSeconds)
+                if (ready && ElapsedSeconds <= PreparationLimitSeconds)
                 { State = ScenicJourneyDepartureState.Admitted; Reason = "Validated departure admitted at the seed endpoint"; }
                 else Abandon("Departure was not ready at the seed endpoint; ordinary coverage continues");
             }
-            else if (ElapsedSeconds > PreparationSeconds)
+            else if (ElapsedSeconds > PreparationLimitSeconds)
                 Abandon("Departure preparation expired; ordinary coverage continues");
             else
             {
@@ -129,7 +133,7 @@ namespace ValheimBroadcaster.Core
 
         public void Reset()
         {
-            independentCut = false; SeedId = Epoch = LastAttemptedSeed = lastAttemptedEpoch = 0; ElapsedSeconds = 0;
+            PreparationLimitSeconds = PreparationSeconds; independentCut = false; SeedId = Epoch = LastAttemptedSeed = lastAttemptedEpoch = 0; ElapsedSeconds = 0;
             State = ScenicJourneyDepartureState.None; Reason = "No departure requested";
         }
     }

@@ -13,6 +13,7 @@ internal sealed partial class ScenicProduction
     private readonly ScenicJourneyPolicy journey = new ScenicJourneyPolicy();
     private readonly ScenicJourneyDeparture departure = new ScenicJourneyDeparture();
     private readonly ScenicJourneyPlanner journeyPlanner = new ScenicJourneyPlanner();
+    private readonly ScenicSplinePath journeyLoadingPath = new ScenicSplinePath();
     private long journeyPredecessor, journeyEpoch;
     private readonly List<JourneySection> journeyQueue = new List<JourneySection>(2);
     private float journeyRunSeconds, nextJourneyTrace;
@@ -40,8 +41,8 @@ internal sealed partial class ScenicProduction
         (Plan?.JourneyId == journey.Id || Plan?.Id == journeyExitId);
     internal string JourneyStatus => journeyStatus + $"; {(departure.Pending && !journeyOwned ? "Preparing (not on air)" : requestedJourney ? "Requested (not on air)" : journey.Outcome.ToString())}; measured {journey.TravelMetres:F0}/{journey.TargetMetres:F0}m" +
         $"; destination {journey.Itinerary?.Description ?? "not selected"}; route progress {journey.RouteProgressMetres:F0}m; arrival shown {journey.ArrivalShownSeconds:F1}s" +
-        $"; displacement {journey.DisplacementMetres:F0}m; objective advance {journey.ObjectiveAdvanceMetres:F0}m; cruise {journey.CruiseSpeed:F1}m/s" +
-        $"; achieved {journey.AchievedMetresPerSecond:F1}m/s; shown {journey.ShownSeconds:F1}s; queued {journeyQueue.Count}; ahead {journeyPlanner.Reason}; selection {journeySelectionEvidence}";
+        $"; displacement {journey.DisplacementMetres:F0}m; objective advance {journey.ObjectiveAdvanceMetres:F0}m; requested cruise {journey.CruiseSpeed:F1}m/s; effective cruise {journeyRunway.EffectiveCruise:F1}m/s" +
+        $"; achieved {journey.AchievedMetresPerSecond:F1}m/s; shown {journey.ShownSeconds:F1}s; queued {journeyQueue.Count}; certified runway {JourneyRunwayMetres():F0}m; preparation {journeyRunway.PreparationSeconds:F1}s; ahead {journeyPlanner.Reason}; selection {journeySelectionEvidence}";
     internal string RequestJourney()
     {
         if (journeyOwned) return JourneyStatus;
@@ -58,10 +59,38 @@ internal sealed partial class ScenicProduction
         get
         {
             if (!JourneyActive || Plan == null) return null;
-            // This point lies on the CURRENT accepted route, not an unobserved
-            // proposal. The observer independently checks loaded carrier geometry.
-            double ahead = Math.Min(1, director.Progress + 24 / Math.Max(1, Plan.TravelMetres));
-            return FromCore(Plan.Sample(ahead).CameraPosition);
+            if (!Plan.IsJourney || journeyBraking) return FromCore(Plan.Sample(1).CameraPosition);
+            // Lead may cross a seam only through already certified successors.
+            // The observer still enforces its 32m camera tether and live loaded
+            // geometry checks; a pending proposal never moves the carrier.
+            ScenicShotPlan lead = Plan;
+            double distance = lead.TravelMetres * lead.MotionFraction(director.Progress) + 24;
+            long predecessor = lead.Id;
+            foreach (JourneySection section in journeyQueue)
+            {
+                if (distance <= lead.TravelMetres || !section.Proof.CanAdmit ||
+                    !JourneyRunwayPolicy.HeadMatches(section.Plan, predecessor, journey.Id,
+                        section.Epoch, section.PreparedAt, CameraSpatialScene.Shared.Epoch, Time.unscaledTime)) break;
+                distance -= lead.TravelMetres; lead = section.Plan; predecessor = lead.Id;
+            }
+            double fraction = Math.Min(1, distance / Math.Max(1, lead.TravelMetres));
+            double low = 0, high = 1;
+            for (int i = 0; i < 24; i++)
+            {
+                double middle = (low + high) * .5;
+                if (lead.MotionFraction(middle) < fraction) low = middle; else high = middle;
+            }
+            if (!journeyLoadingPath.Ready || journeyLoadingPath.PreparedPlan?.Id != lead.Id)
+            {
+                // A present fallback keeps the observer's smooth lead/return
+                // path engaged. Null would snap the carrier back to the camera
+                // whenever shared work postpones preparing the next spline.
+                Camera? camera = Camera.main;
+                Vector3 fallback = camera ? camera.transform.position : FromCore(Plan.Sample(director.Progress).CameraPosition);
+                if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return fallback;
+                using (work) if (!journeyLoadingPath.Prepare(lead, 1)) return fallback;
+            }
+            return FromCore(journeyLoadingPath.Sample((float)((low + high) * .5)).CameraPosition);
         }
     }
     internal bool RequestFixture(ScenicShotPlan plan, out string reason, float playbackMotion = 1, bool playbackDynamic = true)
@@ -208,7 +237,7 @@ internal sealed partial class ScenicProduction
     {
         StopFixture(); StopJourney(); journey.Reset(); nextJourneyAt = 0;
         ClearJourneyProgramme();
-        fixtureEvaluator.Dispose(); fixtureVisibility.Reset(); journeyPlanner.Dispose();
+        fixtureEvaluator.Dispose(); fixtureVisibility.Reset(); journeyPlanner.Dispose(); journeyLoadingPath.Dispose();
         destinationSubject.Reset(); destinationSurvey.Reset(); destinationFeatures.Clear(); nextDestinationSurvey = 0;
         director.Reset(); pictures.Reset(); pictureAdmission.Reset(); pictureVisibility.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
         refreshingSurvey = false; surveyRefreshAt = 0;
@@ -244,9 +273,16 @@ internal sealed partial class ScenicProduction
         bool travelling = journeyOwned && journey.Active;
         float motion = travelling ? 1 : explicitFixture ? fixtureMotion : Mathf.Clamp(settings.ShotMotion.Value, 0, 1.5f);
         lastMovementEnabled = (explicitFixture ? fixtureDynamic : settings.DynamicShots.Value) && motion > 0;
-        double step = travelling ? ScenicJourneyPolicy.SafeDeltaSeconds(Mathf.Max(0, dt), journey.CruiseSpeed) : Mathf.Max(0, dt);
-        if (travelling && journeyExitId == 0 && journeyBraking && Plan != null)
-            step *= JourneyHandoffPolicy.BrakingScale(Plan.TravelMetres * (1 - Plan.MotionFraction(director.Progress)), journey.CruiseSpeed);
+        double step = Mathf.Max(0, dt);
+        if (travelling && journeyExitId == 0 && Plan?.IsJourney == true)
+        {
+            double speed = journeyRunway.StepSpeed(journey.CruiseSpeed, JourneyRunwayMetres(), step, held, journeyBraking);
+            // Plans were timed at requested cruise. Changing the playback clock
+            // preserves their certified geometry and exact seams.
+            step = ScenicJourneyPolicy.SafeDeltaSeconds(step, speed) * speed / journey.CruiseSpeed;
+            if (journeyBraking)
+                step *= JourneyHandoffPolicy.BrakingScale(Plan.TravelMetres * (1 - Plan.MotionFraction(director.Progress)), speed);
+        }
         proposed = (float)director.Propose(step, lastMovementEnabled && !held, motion);
         return proposed;
     }
