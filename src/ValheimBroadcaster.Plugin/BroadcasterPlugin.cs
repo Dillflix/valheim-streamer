@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.43";
+    public const string PluginVersion = "0.8.44";
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -302,7 +302,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             RecordVisibleCoverage(recentPicture);
             ObserveLocalActivity(recentPicture);
             bool cutawayAllowed = wildlife.Update(roster, remote,
-                !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding ||
+                coverage.Preference != CoveragePreference.Auto || !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding ||
                 !observer.RemoteSession || observer.Phase != ObserverPhase.Watching || automatic?.ControlsSelection != true ||
                 automatic.RouteActive || HasFreshEncounter(), coverage.IsWildlifeCutaway);
             // Select the cutaway before the automatic director can rotate or
@@ -332,7 +332,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     presentedPlayerId == CurrentTarget()?.Identity.Id,
                 coverage.Mode == CoverageMode.Scenic && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true),
                 cameraFixtures?.AwaitingStart == true || idle.FixturePreparing,
-                scenicEditBoundary: coverage.Mode != CoverageMode.Scenic || idle.RelocationBoundary);
+                scenicEditBoundary: coverage.Mode != CoverageMode.Scenic || idle.RelocationBoundary,
+                preference: coverage.Preference);
             idle.SetDestinationSubject(observer.Phase == ObserverPhase.Travelling
                 ? automatic?.ActiveTravelInterest : automatic?.ScenicInterest);
             if (observer.Phase == ObserverPhase.Travelling)
@@ -356,7 +357,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             TargetRoster.Target? current = CurrentTarget();
             // A lost/dead subject must not block another ready player until its dwell expires.
             if (current != null && !IsReady(current)) { RefreshRoster(); current = CurrentTarget(); }
-            if (automatic?.ControlsSelection != true && !coverage.IsWildlifeCutaway)
+            if (CoveragePreferences.AllowsPlayers(coverage.Preference) && automatic?.ControlsSelection != true && !coverage.IsWildlifeCutaway)
             {
                 locallyReadyPlayers.Clear();
                 foreach (TargetRoster.Target target in roster.Targets.Values)
@@ -365,7 +366,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             }
             current = CurrentTarget();
             bool readyPlayer = CanShow(current);
-            bool preserveShot = coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
+            bool preserveShot = CoveragePreferences.AllowsPlayers(coverage.Preference) &&
+                coverage.Mode == CoverageMode.Player && automatic?.PreservePlayerShot(coverage.SubjectId) == true;
             // Rebase idle coverage when leaving a distant player. A transient
             // readiness query during idle coverage must not erase its search,
             // presentation evidence and failed-creature cooldowns every frame.
@@ -388,7 +390,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             // still requires a ready scene; frame hold/slate handles missing footage.
             if (!preserveShot)
                 coverage.Tick(Time.unscaledDeltaTime, readyPlayer ? current!.Identity.Id : null,
-                    roster.ConnectedOthers, !selfTest && (coverage.IsWildlifeCutaway ? readyPlayer : idle.SceneReady),
+                    roster.ConnectedOthers, !selfTest && (coverage.Preference == CoveragePreference.Auto && coverage.IsWildlifeCutaway
+                        ? readyPlayer : idle.SceneReady),
+                    !CoveragePreferences.AllowsCreatures(coverage.Preference) ||
                     !coverage.IsWildlifeCutaway && (idle.JourneyActive || idle.FixtureActive || cameraFixtures?.PendingPlayback == true)
                         ? Array.Empty<string>() : ReadyCreatureShots(), director.IsHolding, usableIdlePicture,
                     coverage.IsWildlifeCutaway && cutawayAllowed, current?.Identity.Id,
@@ -418,7 +422,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             }
             bool wasAcquiring = acquisitionWindow.Active;
             bool acquiring = acquisitionWindow.Tick(Time.unscaledDeltaTime,
-                !observer.Active && !selfTest && !readyPlayer && settings.RemoteTargets.Value && remotePatchAvailable && acquisition.Roster.Count > 0,
+                CoveragePreferences.AllowsPlayers(coverage.Preference) && !observer.Active && !selfTest && !readyPlayer && settings.RemoteTargets.Value && remotePatchAvailable && acquisition.Roster.Count > 0,
                 settings.Timeout.Value, settings.AcquisitionCooldown.Value);
             if (wasAcquiring && !acquiring) acquisition.Next();
             bool probing = probe.Active;
@@ -459,7 +463,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         acquisition.SetRoster(roster.Targets.Values.Where(target => target.PublicPosition.HasValue && !IsReady(target)).Select(target => target.Identity));
     }
 
-    private TargetRoster.Target? CurrentTarget() => roster.Find(automatic?.ControlsSelection == true ? automatic.TargetId : director.CurrentTarget?.Id);
+    private TargetRoster.Target? CurrentTarget() => CoveragePreferences.AllowsPlayers(coverage.Preference)
+        ? roster.Find(automatic?.ControlsSelection == true ? automatic.TargetId : director.CurrentTarget?.Id) : null;
     private IReadOnlyList<string> ReadyCreatureShots() => creatureAdmission.Offer(idle,
         coverage.Mode == CoverageMode.Creature ? coverage.SubjectId : null, actor =>
         {
@@ -594,6 +599,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     }
     private void MoveTarget(int direction)
     {
+        if (!CoveragePreferences.AllowsPlayers(coverage.Preference)) SelectCoverage(CoveragePreference.Player);
         wildlife.CancelForManual();
         if (automatic?.ControlsSelection == true) automatic.Next(direction);
         else if (direction > 0) director.Next(); else director.Previous();
@@ -686,6 +692,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         director.SetRoster(Array.Empty<PlayerTarget>());
         roster.Clear();
         coverage.Reset();
+        coverage.Preference = CoveragePreference.Auto;
         acquisitionWindow.Reset();
         acquisition.SetRoster(Array.Empty<PlayerTarget>());
         idle.Clear();
@@ -1064,7 +1071,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
         string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
         string discovery = observer.RemoteSession ? remote.DiscoveryStatus : roster.ConnectedOthers + " other connected; " + roster.Targets.Count + " known targets";
-        return "ON AIR: " + state + " | " + onAir + "\nDIRECTOR: " + StatusText(directing) + planning +
+        return "ON AIR: " + state + " | " + onAir + "\nMODE: " + coverage.Preference + " | " +
+            CoveragePreferences.Describe(coverage.Preference, coverage.Mode) + "\nDIRECTOR: " + StatusText(directing) + planning +
             "\nSESSION: " + session + " | " + StatusText(discovery) + "\nRTMP: " + StatusText(output?.Status ?? "Stopped");
     }
 
@@ -1394,7 +1402,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     {
         public override string Name => "broadcast";
         public override string Help => "broadcast journey start|stop|on|off|status|distance <metres>|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
-            "broadcast self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1404,6 +1412,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             {
                 switch (action)
                 {
+                    case "mode": plugin.ModeCommand(args, context); return;
                     case "camera": plugin.CameraCommand(args, context); return;
                     case "timelapse": plugin.LiveTimelapseCommand(args, context); return;
                     case "environment": plugin.EnvironmentCommand(args, context); return;
@@ -1472,6 +1481,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     case "resume": plugin.SetHolding(false); break;
                     case "follow":
                         if (args.Length != 2 || !plugin.director.Select(args[1])) { context?.AddString("Unknown target. Use broadcast list and follow its exact ID."); return; }
+                        if (!CoveragePreferences.AllowsPlayers(plugin.coverage.Preference)) plugin.SelectCoverage(CoveragePreference.Player);
                         if (plugin.automatic?.ControlsSelection == true) plugin.automatic.Select(args[1]);
                         plugin.SetHolding(true);
                         break;

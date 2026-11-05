@@ -14,6 +14,9 @@ namespace ValheimBroadcaster.Core
         public bool AwaitingPlayers { get; private set; }
         public long Revision { get; private set; }
         public bool IsWildlifeCutaway { get; private set; }
+        // Scene resets preserve operator intent. The session owner explicitly
+        // returns this to Auto on stop/world exit.
+        public CoveragePreference Preference { get; set; }
         private double elapsed, unshownSeconds, cutawaySeconds;
         private bool creaturePresented;
         private double scenicSeconds = 45, creatureSeconds = 25;
@@ -57,8 +60,11 @@ namespace ValheimBroadcaster.Core
             if (connectedOthers < 0) throw new ArgumentOutOfRangeException(nameof(connectedOthers));
             if (readyCreatures == null) throw new ArgumentNullException(nameof(readyCreatures));
             Duration(CreatureCooldownSeconds);
+            if (!CoveragePreferences.AllowsPlayers(Preference)) readyPlayerId = retainedPlayerId = null;
+            if (!CoveragePreferences.AllowsCreatures(Preference)) readyCreatures = Array.Empty<string>();
+            allowWildlifeCutaway &= Preference == CoveragePreference.Auto;
             clock += Math.Min(dt, 86400);
-            AwaitingPlayers = connectedOthers > 0 && readyPlayerId == null;
+            AwaitingPlayers = CoveragePreferences.AllowsPlayers(Preference) && connectedOthers > 0 && readyPlayerId == null;
             if (IsWildlifeCutaway && readyPlayerId == null && retainedPlayerId != null)
             {
                 // Selection can return before presentation is ready. The camera
@@ -84,13 +90,17 @@ namespace ValheimBroadcaster.Core
             // recovery behavior rather than inventing a ready return target.
             IsWildlifeCutaway = false; cutawaySeconds = 0;
             if (!idleSceneReady) { Change(CoverageMode.Recovery, null); return; }
+            if (Preference == CoveragePreference.Creature && Mode != CoverageMode.Creature && !holding &&
+                TrySelectCreature(readyCreatures)) return;
             if (Mode != CoverageMode.Scenic && Mode != CoverageMode.Creature)
             { Change(CoverageMode.Scenic, null); return; }
             if (Mode == CoverageMode.Creature && !Contains(readyCreatures, SubjectId))
             { Change(CoverageMode.Scenic, null); return; }
             if (Mode == CoverageMode.Creature)
             {
-                if (!TickCreature(dt, holding, usableFootage)) Change(CoverageMode.Scenic, null);
+                if (!TickCreature(dt, holding, usableFootage) &&
+                    !(Preference == CoveragePreference.Creature && TrySelectCreature(readyCreatures)))
+                    Change(CoverageMode.Scenic, null);
                 return;
             }
             if (usableFootage) unshownSeconds = 0;

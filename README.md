@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.44 adds explicit operator coverage modes.** Use `broadcast mode scenic` to keep Scenic coverage and its automatic travel running while other players are online; `broadcast mode auto` restores normal selection. Player and Creature preferences, fallback diagnostics and session cleanup are included. **No server update is required; protocol remains 3.** [Commands and behavior](docs/OPERATOR-MODES.md). In-game confirmation is pending.
+
 **0.8.43 repairs the Scenic acquisition failures recorded after 0.8.42.** Independent picture admission retains and advances an unfinished exact-pose check instead of consuming every proposal after one attempt. Region relocation cancels an obsolete foliage traversal while preserving conservative coverage. **No server update is required; observer protocol remains 3.** [Recorded evidence, repair scope and validation limits](docs/SCENIC-0.8.43-RECOVERY.md). In-game confirmation is pending.
 
 **0.8.42 rebuilds Scenic journeys around known destinations and prepared endings.** The director selects a catalogue itinerary, frames a forward-facing departure, develops gaze independently of camera travel and validates a six-second ending with every section. Ordinary coverage prepares concurrently. Actual captured frames now drive journey distance and arrival evidence. **No server update is required; observer protocol remains 3.** [Recorded failure, changes and runtime checks](docs/SCENIC-0.8.42-JOURNEYS.md). In-game visual validation is still pending.
@@ -214,6 +216,7 @@ Use Valheim's `-console` launch option to make the F5 console available. Command
 | `broadcast camera damping <position> <aim>` | Set independent damping in seconds, each 0.1–3 |
 | `broadcast framehold test` | After two seconds, hold the last valid camera scene for half a second; close the console to compare live/held orientation |
 | `broadcast diagnostics` | Inspect discovery age/counts, target/travel reasons, frame holds/slates, and output/reconnect state |
+| `broadcast mode auto/scenic/player/creature/status` | Select coverage intent independently of connected players; mode selection resumes direction. [Details](docs/OPERATOR-MODES.md) |
 | `broadcast auto on/off/status` | Resume/pause/inspect automatic player acquisition and scenic travel in a read-only session |
 | `broadcast route add [x y z]/start/stop/clear/status` | Run a world-session solo acquisition route through the same travel path |
 | `broadcast unattended on/off/status` | Arm/inspect recovery; `off` cancels it, pauses automation and stops requested output |

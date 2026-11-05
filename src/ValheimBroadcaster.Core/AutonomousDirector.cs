@@ -226,13 +226,18 @@ namespace ValheimBroadcaster.Core
             bool wildlifeCutaway = false, IReadOnlyList<PlayerActivityEvidence>? activity = null, bool usablePlayerFootage = true,
             bool? idleSceneAvailable = null, bool idleSearchExpired = false, bool? scenicFootageReady = null, double? scenicFootageDelta = null,
             bool scenicContentExhausted = false, bool relatedPlayerView = false, bool scenicJourneyActive = false, bool scenicPreparationActive = false,
-            bool scenicEditBoundary = true)
+            bool scenicEditBoundary = true, CoveragePreference preference = CoveragePreference.Auto)
         {
             Time(now, nameof(now)); Time(dt, nameof(dt));
             if (scenicFootageDelta.HasValue) Time(scenicFootageDelta.Value, nameof(scenicFootageDelta));
             if (players == null) throw new ArgumentNullException(nameof(players));
             if (regions == null) throw new ArgumentNullException(nameof(regions));
             if (players.Count > 128 || regions.Count > 1024) throw new ArgumentException("Discovery inputs exceed the bounded policy capacity.");
+            // The actual discovery roster remains intact outside this decision.
+            // Scenic/Creature intent suppresses player acquisition, not network
+            // presence or server permission checks. Native travel still finishes.
+            if (!CoveragePreferences.AllowsPlayers(preference)) players = Array.Empty<AutonomyPlayer>();
+            wildlifeCutaway &= preference == CoveragePreference.Auto;
             if (started && now < lastNow) throw new ArgumentOutOfRangeException(nameof(now), "Reset the director before changing clocks/worlds.");
             Positive(MinimumPlayerTravelDistance, nameof(MinimumPlayerTravelDistance));
             Positive(ReacquisitionGraceSeconds, nameof(ReacquisitionGraceSeconds));
