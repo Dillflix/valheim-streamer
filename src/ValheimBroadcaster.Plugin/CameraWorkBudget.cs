@@ -17,6 +17,10 @@ internal sealed class CameraWorkBudget
     private int depth, sequence, frame = -1;
     private long sampled;
     internal string Diagnostics => $"Camera CPU: live {schedule.LiveMilliseconds:F2}ms; background {schedule.BackgroundSpent:F2}/{CameraWorkSchedule.BackgroundMilliseconds:F1}ms; observations {schedule.ObservationMilliseconds:F2}ms; deferred {schedule.Deferred}; largest slice {schedule.LargestOperation:F2}ms";
+    internal bool WithinLive
+    {
+        get { Synchronize(); for (int i = 0; i < depth; i++) if (kinds[i] == CameraWorkKind.Live) return true; return false; }
+    }
 
     internal readonly struct Lease : IDisposable
     {

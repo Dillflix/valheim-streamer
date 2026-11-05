@@ -42,7 +42,7 @@ internal sealed class ScenicFoliageScene
     private bool anchored;
     private long epoch = -1;
     private float refreshedAt = float.NegativeInfinity;
-    private int geometryFrame = -1, omitted, empty, repaired, unresolved, metadataOverflow;
+    private int geometryFrame = -1, geometryWarmFrame = -1, omitted, empty, repaired, unresolved, metadataOverflow;
     private readonly int[] sampleCounts = new int[4];
     internal long Revision { get; private set; }
     internal long Generation { get; private set; }
@@ -131,7 +131,7 @@ internal sealed class ScenicFoliageScene
         collectingCoverage.Reset(origin); roots.Clear(); nodeRenderers.Clear(); traversal.Clear(); sceneHandles.Clear();
         publishedIds.Clear(); additions.Reset(origin); newAdditions.Reset(origin); pendingAdditions.Reset(origin); scanning = supplemental = published = false;
         refreshedAt = float.NegativeInfinity; anchored = false; epoch = -1;
-        sceneIndex = rootIndex = stepsThisFrame = 0; advancedFrame = geometryFrame = -1; previousRevision = Revision++;
+        sceneIndex = rootIndex = stepsThisFrame = 0; advancedFrame = geometryFrame = geometryWarmFrame = -1; previousRevision = Revision++;
     }
     internal void Ensure(Vector3 requested)
     {
@@ -142,6 +142,7 @@ internal sealed class ScenicFoliageScene
             Reset(); origin = anchor; anchored = true; epoch = currentEpoch;
         }
         Retarget(anchor, "carrier");
+        WarmPendingGeometry();
         float now = Time.unscaledTime;
         if (advancedFrame != Time.frameCount) { advancedFrame = Time.frameCount; stepsThisFrame = 0; }
         if (!scanning && now >= refreshedAt && now - refreshedAt < 2) return;
@@ -369,9 +370,22 @@ internal sealed class ScenicFoliageScene
             row = ScenicTrace.Vector(ScenicTrace.Vector(row, pair.Item1 + "Centre", pair.Item2.center), pair.Item1 + "Extent", pair.Item2.extents);
         ScenicTrace.Record(row);
     }
+    internal void WarmPendingGeometry()
+    {
+        if (epoch != CameraSpatialScene.Shared.WorldEpoch || geometryWarmFrame == Time.frameCount || CameraWorkBudget.Shared.WithinLive) return;
+        geometryWarmFrame = Time.frameCount;
+        if (geometryFrame != Time.frameCount) { geometryFrame = Time.frameCount; geometry.BeginSurvey(); }
+        geometry.WarmDemand();
+    }
     internal Bounds[]? Geometry(Renderer renderer, out bool pending)
     {
         if (geometryFrame != Time.frameCount) { geometryFrame = Time.frameCount; geometry.BeginSurvey(); }
         return geometry.Get(renderer, out pending);
+    }
+    internal FoliageGeometryPrecision Precision(Renderer renderer) => geometry.Precision(renderer);
+    internal FoliageTriangleGeometry? ExactGeometry(Renderer renderer, out FoliageGeometryAvailability availability, out string reason)
+    {
+        if (geometryFrame != Time.frameCount) { geometryFrame = Time.frameCount; geometry.BeginSurvey(); }
+        return geometry.Exact(renderer, out availability, out reason);
     }
 }

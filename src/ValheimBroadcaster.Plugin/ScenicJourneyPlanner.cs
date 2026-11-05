@@ -8,16 +8,21 @@ namespace ValheimBroadcaster.Plugin;
 /// <summary>Goal-directed, bounded local execution planning for a longer
 /// landscape objective. Every returned corridor has passed the complete native
 /// preflight. Unobserved space is a loading wait, never a usable route.</summary>
+internal enum ScenicJourneyPlanningFailure { None, ObservedExhaustion, ContextInvalidated, InvalidRequest }
+
 internal sealed class ScenicJourneyPlanner : IDisposable
 {
-    private readonly ScenicPathEvaluator evaluator = new ScenicPathEvaluator();
+    private readonly ScenicPathEvaluator continuationEvaluator = new ScenicPathEvaluator();
+    private ScenicPathEvaluator evaluator;
+    private ScenicVisibility activeVisibility;
     private readonly ScenicVisibility visibility = new ScenicVisibility("journey-ahead");
+    private readonly JourneyObservationViews openingViews = new JourneyObservationViews("journey-opening", 2);
     private readonly ScenicSplinePath measured = new ScenicSplinePath();
     private readonly NativeJourneyGaze.Evaluation gaze = new NativeJourneyGaze.Evaluation();
     private readonly JourneyDepartureSpace departureSpace = new JourneyDepartureSpace();
     private readonly List<Opening> openings = new List<Opening>(JourneyDepartureSpace.CandidateCount);
     private Opening? activeOpening;
-    private int pendingOpening = -1, openingScreensSinceRoute;
+    private int pendingOpening = -1;
     private float openingWaitStarted;
     private Vector3 openingPosition, openingFocus;
     private Vector3? pendingRaisedOpening;
@@ -25,16 +30,36 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private long planningEpoch;
     private float searchWindowLength;
     private int candidateOption;
-    private readonly JourneyNavigationPlanner navigation;
+    private readonly JourneyNavigationPlanner continuation = new JourneyNavigationPlanner("journey-continuation", false);
+    private readonly JourneyOpeningSchedule schedule = new JourneyOpeningSchedule(8, 4);
+    private readonly Dictionary<int, OriginLane> lanes = new Dictionary<int, OriginLane>();
+    private JourneyNavigationPlanner navigation;
     private bool navigationBound;
-    internal ScenicJourneyPlanner() { navigation = new JourneyNavigationPlanner(visibility); }
+    private int servicedOriginSlices, activeLane = -1;
+    internal ScenicJourneyPlanningFailure FailureKind { get; private set; }
+    private sealed class OriginLane
+    {
+        internal readonly Opening Opening;
+        internal readonly JourneyNavigationPlanner Navigation;
+        internal readonly ScenicPathEvaluator Evaluator = new ScenicPathEvaluator();
+        internal readonly ScenicVisibility Visibility;
+        internal ScenicShotPlan? Candidate;
+        internal bool Bound;
+        internal int Slices;
+        internal float RetryAt;
+        internal OriginLane(Opening opening)
+        { Opening = opening; Navigation = new JourneyNavigationPlanner("journey-origin-" + opening.Id, true);
+          Visibility = new ScenicVisibility("journey-origin-" + opening.Id + "-preflight"); }
+    }
+    internal ScenicJourneyPlanner() { navigation = continuation; evaluator = continuationEvaluator; activeVisibility = visibility; }
     private sealed class Opening
     {
+        internal readonly int Id;
         internal readonly Vector3 Position, Aim, Heading;
         internal readonly float Score;
         internal int Attempts;
-        internal Opening(Vector3 position, Vector3 aim, Vector3 heading, float score)
-        { Position = position; Aim = aim; Heading = heading; Score = score; }
+        internal Opening(int id, Vector3 position, Vector3 aim, Vector3 heading, float score)
+        { Id = id; Position = position; Aim = aim; Heading = heading; Score = score; }
     }
     private ScenicShotPlan? previous, candidate;
     private ScenicShotPlan? finalizing;
@@ -42,7 +67,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private long finalizingEpoch;
     private float finalizingGeometryAt;
     private long nextId, journeyId;
-    private float length, speed, selectedSpeed, aspect, nearClip, started, retryAt;
+    private float length, speed, selectedSpeed, aspect, nearClip, retryAt;
+    private float verifiedSpeed, unverifiedSpeed;
+    private int speedRefinements;
+    private bool refiningSpeed;
     private bool moveCarrier, exitRamp, departureCut, nativeSpline;
     private int alternative;
     private AutonomyPosition? goal, arrivalFocus, arrivalCenter;
@@ -53,6 +81,11 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     internal int AttemptCount { get; private set; }
     internal int OpeningCandidates => departureSpace.Screened;
     internal int RejectedOpenings => departureSpace.Rejected;
+    internal int ActiveOriginCount => lanes.Count;
+    internal int ActiveOrigin => activeLane;
+    internal int OriginServiceSlices => servicedOriginSlices;
+    internal float OnwardValidatedAt { get; private set; }
+    internal string OnwardReason { get; private set; } = "No selected onward seam";
     internal AutonomyPosition? DepartureOrigin => activeOpening == null ? (AutonomyPosition?)null : P(activeOpening.Position);
     internal ScenicShotPlan? Ready { get; private set; }
     internal long Epoch { get; private set; }
@@ -71,7 +104,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         length = Mathf.Clamp(metres, 1, 64); speed = selectedSpeed = metresPerSecond; aspect = cameraAspect; nearClip = cameraNearClip;
         moveCarrier = moveObserver; exitRamp = finalWindow; goal = objectiveGoal; arrivalFocus = observedArrivalFocus;
         this.arrivalCenter = arrivalCenter; this.arrivalRadius = arrivalRadius;
-        this.departureCut = departureCut; nativeSpline = nativeSplineOverride ?? predecessor.UseNativeSpline; started = Time.unscaledTime;
+        this.departureCut = departureCut; nativeSpline = nativeSplineOverride ?? predecessor.UseNativeSpline;
         this.planningCarrier = planningCarrier ?? (Player.m_localPlayer ? P(Player.m_localPlayer.transform.position) : (AutonomyPosition?)null);
         planningEpoch = CameraSpatialScene.Shared.Epoch;
         if (departureCut)
@@ -79,11 +112,17 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             ScenicShotSample seed = predecessor.Sample(1);
             AutonomyPosition directionGoal = objectiveGoal ?? P(V(seed.CameraPosition) + V(ObjectiveHeading(predecessor)) * 100);
             bool retained = departureSpace.Bind(journey, planningEpoch, seed.CameraPosition, directionGoal,
-                this.planningCarrier ?? seed.CameraPosition, Time.unscaledTime);
-            if (!retained) { openings.Clear(); searchWindowLength = 0; }
-            else foreach (Opening opening in openings)
-                if (opening.Attempts < JourneyDepartureSpace.RoutesPerOpening && navigation.MatchesOpening(opening.Position, opening.Aim))
-                { activeOpening = opening; break; }
+                this.planningCarrier ?? seed.CameraPosition, Time.unscaledTime,
+                compatibleLoadingContext: JourneyLoadingContext.ContainsPoint(seed.CameraPosition,
+                    this.planningCarrier ?? seed.CameraPosition, JourneyDepartureSpace.MaximumOriginRelocation + JourneyViewPolicy.ObservationRange));
+            if (!retained) { ClearOriginLanes(); openings.Clear(); searchWindowLength = 0; }
+            foreach (OriginLane lane in lanes.Values)
+            {
+                // Outer preparation may restart with a new plan identity or
+                // lens context. Keep search progress, never an old native
+                // candidate/proof. Binding renews the selected graph path.
+                lane.Bound = false; lane.Candidate = null; lane.Evaluator.Reset(); lane.RetryAt = 0;
+            }
             // A failed long path is not evidence against a shorter corridor
             // from the same observed origin. View history remains useful.
             if (Mathf.Abs(searchWindowLength - length) > .5f)
@@ -129,12 +168,16 @@ internal sealed class ScenicJourneyPlanner : IDisposable
 
     internal void Step()
     {
-        if (Complete || previous == null || Time.unscaledTime < retryAt) return;
+        if (Complete || previous == null || !departureCut && Time.unscaledTime < retryAt) return;
         if (planningEpoch != CameraSpatialScene.Shared.Epoch)
-        { Finish("Journey planning scene changed; discard mixed scene evidence"); return; }
-        if (Time.unscaledTime - started > ScenicJourneyPolicy.PreparationSeconds)
-        { Finish("Bounded connected navigation search expired; " + Reason + "; last evidence: " + lastFailure); return; }
+        { Finish("Journey planning scene changed; discard mixed scene evidence", ScenicJourneyPlanningFailure.ContextInvalidated); return; }
         if (finalizing != null) { StepFinalization(); return; }
+        if (departureCut)
+        {
+            if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var selectionWork)) return;
+            using (selectionWork) if (!SelectNavigationWork()) return;
+        }
+        else { navigation = continuation; activeLane = -1; evaluator = continuationEvaluator; activeVisibility = visibility; }
         if (candidate == null)
         {
             if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return;
@@ -154,11 +197,16 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 {
                     if (!navigationBound)
                     {
-                        if (departureCut && activeOpening == null && !SelectOpening()) return;
                         if (!BeginNavigation()) return;
+                        if (departureCut) lanes[activeLane].Bound = true;
                     }
+                    long proofBefore = navigation.ProofRefreshes, observationBefore = navigation.ObservationProgress;
                     JourneyNavigationStatus status = navigation.Step();
-                    Reason = navigation.Reason;
+                    bool proofProgress = navigation.ProofRefreshes > proofBefore || navigation.ObservationProgress > observationBefore;
+                    if (departureCut) schedule.ReportProofProgress(activeLane, navigation.SelectedProofPending,
+                        proofProgress, status == JourneyNavigationStatus.WaitingForObservations && !proofProgress);
+                    Reason = navigation.Reason + (departureCut ? "; origins " + lanes.Count + "/8; active " + activeLane +
+                        "; serviced slices " + servicedOriginSlices : "; exact continuation seam");
                     WaitingForLoading = status == JourneyNavigationStatus.WaitingForObservations;
                     if (status == JourneyNavigationStatus.Searching || WaitingForLoading) return;
                     if (status != JourneyNavigationStatus.Ready || navigation.Result == null)
@@ -166,19 +214,22 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                         lastFailure = Reason;
                         if (departureCut && status != JourneyNavigationStatus.Invalidated)
                         {
-                            activeOpening!.Attempts = JourneyDepartureSpace.RoutesPerOpening;
-                            activeOpening = null; navigation.Reset(); navigationBound = false; return;
+                            RetireOrigin(activeLane, "Navigation " + status + ": " + lastFailure); return;
                         }
-                        Finish("No connected route from this exact seam within the local search: " + Reason); return;
+                        Finish("No connected route from this exact seam within the local search: " + Reason,
+                            status == JourneyNavigationStatus.Invalidated ? ScenicJourneyPlanningFailure.ContextInvalidated : ScenicJourneyPlanningFailure.ObservedExhaustion); return;
                     }
-                    selectedSpeed = navigation.PlanningSpeed;
+                    // Geometry was searched at its useful2m/s floor. Actual
+                    // native interpolation now determines the fastest safe
+                    // authored pace up to the operator's request.
+                    selectedSpeed = speed;
                     if (!BuildNavigationCandidate(navigation.Result, out candidate))
                     { navigation.RejectCandidate(); return; }
                 }
                 AttemptCount++; candidateOption = AttemptCount;
-                openingScreensSinceRoute = 0;
                 TraceCandidate(candidate!, arrivalFocus.HasValue ? "observed-arrival" : "connected-navigation");
-                evaluator.Begin(candidate!, visibility, aspect, nearClip, moveCarrier);
+                if (departureCut) lanes[activeLane].Candidate = candidate;
+                evaluator.Begin(candidate!, activeVisibility, aspect, nearClip, moveCarrier);
             }
         }
         bool complete = evaluator.Step(6);
@@ -210,8 +261,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             // Unknown is neither a rejected graph edge nor a fresh route proof.
             // Keep the exact proposal and retry all native samples within the
             // original bounded planning deadline.
-            evaluator.Begin(candidate!, visibility, aspect, nearClip, moveCarrier);
-            WaitingForLoading = true; retryAt = Time.unscaledTime + .25f;
+            evaluator.Begin(candidate!, activeVisibility, aspect, nearClip, moveCarrier);
+            WaitingForLoading = true;
+            if (departureCut) lanes[activeLane].RetryAt = Time.unscaledTime + .25f;
+            else retryAt = Time.unscaledTime + .25f;
             Reason = "Waiting for native route observations: " + lastFailure; return;
         }
         RejectNavigationCandidate();
@@ -244,7 +297,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             navigationBound = true; return true;
         }
         catch (ArgumentException error)
-        { lastFailure = "Invalid connected navigation request: " + error.ParamName; Finish(lastFailure); return false; }
+        { lastFailure = "Invalid connected navigation request: " + error.ParamName; Finish(lastFailure, ScenicJourneyPlanningFailure.InvalidRequest); return false; }
     }
 
     private bool BuildNavigationCandidate(JourneyNavigationPath path, out ScenicShotPlan? result)
@@ -280,9 +333,31 @@ internal sealed class ScenicJourneyPlanner : IDisposable
 
     private void RejectNavigationCandidate()
     {
+        if (departureCut && lanes.TryGetValue(activeLane, out OriginLane? lane)) lane.Candidate = null;
         candidate = null; evaluator.Reset(); ClearFinalization(); WaitingForLoading = false;
         if (navigationBound) navigation.RejectCandidate(); else alternative++;
         Reason = "Native curve rejected; exploring another connected route: " + lastFailure;
+    }
+
+    internal JourneyNavigationEvidence RenewOnwardBeforeAdmission()
+    {
+        if (Ready == null || !Complete || Epoch != CameraSpatialScene.Shared.Epoch)
+        { OnwardReason = "No selected route in the current loaded scene"; return JourneyNavigationEvidence.Blocked; }
+        if (arrivalCenter.HasValue && arrivalFocus.HasValue)
+        { OnwardValidatedAt = Time.unscaledTime; OnwardReason = "Observed arrival has no onward travel requirement"; return JourneyNavigationEvidence.Clear; }
+        if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work))
+        { OnwardReason = "Exact onward renewal is waiting for camera work"; return JourneyNavigationEvidence.Unknown; }
+        using (work)
+        {
+            JourneyNavigationEvidence evidence = navigation.RenewOnward(Ready);
+            OnwardValidatedAt = navigation.OnwardValidatedAt; OnwardReason = navigation.OnwardReason;
+            return evidence;
+        }
+    }
+    internal void RejectReadyCandidate(string reason)
+    {
+        lastFailure = reason; Ready = null; Complete = false; Epoch = 0; ValidatedAt = OnwardValidatedAt = 0;
+        FailureKind = ScenicJourneyPlanningFailure.None; RejectNavigationCandidate();
     }
 
     internal bool WithinLoadingHorizon(Vector3 carrier)
@@ -294,28 +369,51 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         return !navigationBound || navigation.WithinLoadingHorizon(carrier);
     }
 
-    private bool SelectOpening()
+    private bool SelectNavigationWork()
     {
-        Opening? best = null;
-        int available = 0;
-        foreach (Opening opening in openings)
-            if (opening.Attempts < JourneyDepartureSpace.RoutesPerOpening)
-            { available++; if (best == null || opening.Score - opening.Attempts * .15f > best.Score - best.Attempts * .15f) best = opening; }
-        // Compare a small batch of distinct openings before spending full native
-        // route work. Interleave further discovery after a rejected corridor.
-        if (available < JourneyDepartureSpace.RetainedOpenings && (best == null || openingScreensSinceRoute < 4))
+        bool exhausted = departureSpace.Screened >= JourneyDepartureSpace.CandidateCount;
+        if (schedule.TakeDiscoveryTurn(pendingOpening >= 0, exhausted))
         {
-            if (pendingOpening < 0 && departureSpace.TryNext(Time.unscaledTime, out int id))
-            { pendingOpening = id; openingWaitStarted = Time.unscaledTime; }
-            if (pendingOpening >= 0)
-            { ScreenOpening(pendingOpening); return false; }
+            if (pendingOpening < 0 && departureSpace.TryNext(Time.unscaledTime, out int next))
+            { pendingOpening = next; openingWaitStarted = Time.unscaledTime; }
+            if (pendingOpening >= 0) ScreenOpening(pendingOpening);
+            return false;
         }
-        if (best != null) { activeOpening = best; return true; }
-        if (departureSpace.Screened >= JourneyDepartureSpace.CandidateCount)
-            Finish("No complete route from the measured departure openings; screened " + departureSpace.Screened +
-                ", rejected " + departureSpace.Rejected + "; last evidence: " + lastFailure);
-        else Reason = "Waiting for local departure observations; no unknown opening is authorized";
-        return false;
+        if (!schedule.TryNext(out long selected))
+        {
+            if (exhausted) Finish("All observed independent departure origins exhausted their bounded connected search; last evidence: " + lastFailure);
+            else Reason = "Observing independent departure origins; no unknown viewpoint is authorized";
+            return false;
+        }
+        activeLane = (int)selected;
+        OriginLane lane = lanes[activeLane];
+        activeOpening = lane.Opening; navigation = lane.Navigation; navigationBound = lane.Bound;
+        candidate = lane.Candidate; evaluator = lane.Evaluator; activeVisibility = lane.Visibility;
+        if (navigationBound && Player.m_localPlayer && !navigation.WithinLoadingHorizon(Player.m_localPlayer.transform.position))
+        { RetireOrigin(activeLane, "This origin's actual required viewing horizon left the loaded region"); return false; }
+        if (Time.unscaledTime < lane.RetryAt) return false;
+        lane.Slices++; servicedOriginSlices++;
+        if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Row("journey-origin-service").Field("plan", nextId)
+            .Field("journey", journeyId).Field("origin", activeLane).Field("origins", lanes.Count)
+            .Field("laneSlices", lane.Slices).Field("totalSlices", servicedOriginSlices));
+        return true;
+    }
+
+    private void RetireOrigin(int id, string reason)
+    {
+        if (lanes.TryGetValue(id, out OriginLane? lane))
+        { lane.Opening.Attempts = JourneyDepartureSpace.RoutesPerOpening; lane.Navigation.Reset(); lane.Evaluator.Dispose(); lane.Visibility.Reset(); lanes.Remove(id); }
+        schedule.Remove(id); activeOpening = null; navigation = continuation; navigationBound = false; activeLane = -1;
+        candidate = null; evaluator = continuationEvaluator; activeVisibility = visibility;
+        Reason = "Retired one departure origin: " + reason;
+        if (ScenicTrace.Enabled) ScenicTrace.Record(ScenicTrace.Row("journey-origin-retired").Field("plan", nextId)
+            .Field("journey", journeyId).Field("origin", id).Field("reason", reason));
+    }
+    private void ClearOriginLanes()
+    {
+        foreach (OriginLane lane in lanes.Values) { lane.Navigation.Reset(); lane.Evaluator.Dispose(); lane.Visibility.Reset(); }
+        lanes.Clear(); schedule.Reset(); openingViews.Reset(); activeLane = -1; servicedOriginSlices = 0;
+        candidate = null; evaluator = continuationEvaluator; activeVisibility = visibility; navigation = continuation; navigationBound = false;
     }
 
     private void ScreenOpening(int id)
@@ -351,10 +449,12 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         ScenicShotPlan probe = ScenicShotPlan.Picture(nextId, landscape, ScenicShotRole.Traverse, P(position), P(focus), previous.FieldOfView,
             0, -.04f).WithStableWaterClearance(true).WithJourneyView();
         var pose = new ScenicPose(position, focus, ScenicVisibility.Compose(position, focus, 0, -.04f, previous.FieldOfView, aspect), previous.FieldOfView, 0);
-        bool readable = ScenicPoseValidation.Check(pose, probe, visibility, aspect, nearClip, false, moveCarrier,
+        if (!openingViews.TryGet(id + 1L, planningEpoch, position, out ScenicVisibility openingView))
+        { DeferOpening(id, openingViews.Reason, true); return; }
+        bool readable = ScenicPoseValidation.Check(pose, probe, openingView, aspect, nearClip, false, moveCarrier,
             out float quality, out ScenicRejectionKind kind, out string reason);
         if (!readable && !pendingRaisedOpening.HasValue && kind == ScenicRejectionKind.InsideVegetation &&
-            visibility.TryCanopyLift(position, out float canopyLift))
+            openingView.TryCanopyLift(position, out float canopyLift))
         {
             Vector3 raised = position + Vector3.up * canopyLift;
             if (Vector3.Distance(raised, V(seed.CameraPosition)) <= JourneyDepartureSpace.MaximumOriginRelocation &&
@@ -363,37 +463,39 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 // Retain the exact proposed origin while its new observation
                 // matures. Rechecking the buried origin every frame would keep
                 // recentering the survey away from the measured escape.
-                pendingRaisedOpening = raised; openingWaitStarted = Time.unscaledTime;
+                openingViews.Release(id + 1L); pendingRaisedOpening = raised; openingWaitStarted = Time.unscaledTime;
                 Reason = "Screening an independent departure above the measured canopy"; return;
             }
         }
         if (!readable && (kind == ScenicRejectionKind.SurveyIncomplete || kind == ScenicRejectionKind.Geometry ||
             kind == ScenicRejectionKind.Acquisition || kind == ScenicRejectionKind.CarrierRange))
-        { DeferOpening(id, reason); return; }
+        { DeferOpening(id, reason, kind == ScenicRejectionKind.SurveyIncomplete); return; }
         // Remember only observed outcomes. Missing evidence can be retried; a
         // clipped/obstructed opening cannot reappear under a different label.
         bool unique = departureSpace.RememberMeasured(P(position), P(focus));
         if (readable && unique)
         {
             float local = 1 - Mathf.Clamp01(Vector3.Distance(position, V(seed.CameraPosition)) / 32);
-            openings.Add(new Opening(position, focus, V(proposal.Heading), quality + local * .1f));
+            var opening = new Opening(id, position, focus, V(proposal.Heading), quality + local * .1f);
+            openings.Add(opening);
+            if (schedule.Register(id)) lanes.Add(id, new OriginLane(opening));
         }
         CompleteOpening(id, readable && unique, !unique ? "Equivalent measured departure opening already considered" : reason);
     }
 
-    private void DeferOpening(int id, string reason)
+    private void DeferOpening(int id, string reason, bool projectionPending = false)
     {
         WaitingForLoading = true; lastFailure = reason;
         Reason = "Observing departure opening " + (id + 1) + ": " + reason;
         // Give one exact foreground projection a chance to finish; moving its
         // centre every frame would reproduce the old survey starvation.
-        if (Time.unscaledTime - openingWaitStarted < .75f) return;
-        departureSpace.Defer(id, Time.unscaledTime); pendingOpening = -1; pendingRaisedOpening = null; openingScreensSinceRoute++;
+        if (projectionPending || Time.unscaledTime - openingWaitStarted < .75f) return;
+        openingViews.Release(id + 1L); departureSpace.Defer(id, Time.unscaledTime); pendingOpening = -1; pendingRaisedOpening = null;
     }
 
     private void CompleteOpening(int id, bool readable, string reason)
     {
-        departureSpace.Complete(id, readable); pendingOpening = -1; pendingRaisedOpening = null; openingScreensSinceRoute++;
+        openingViews.Release(id + 1L); departureSpace.Complete(id, readable); pendingOpening = -1; pendingRaisedOpening = null;
         WaitingForLoading = false; lastFailure = readable ? lastFailure : reason;
         Reason = "Departure space: " + openings.Count + " readable openings from " + departureSpace.Screened +
             " measured views; " + reason;
@@ -417,41 +519,62 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 // travels. Retiming changes no normalized pose or certificate.
                 if (!measured.Prepare(fitted, 1))
                 { Finish("Validated journey native path could not be measured"); return; }
-                double distance = fitted.UseNativeSpline ? measured.Length : fitted.TravelMetres;
-                finalizingDuration = distance / selectedSpeed /
-                    ScenicJourneyMotion.CruiseFraction(fitted.JourneyEaseIn, fitted.JourneyEaseOut);
-                if (arrivalCenter.HasValue) finalizingDuration = Math.Max(1, finalizingDuration);
+                selectedSpeed = speed;
+                finalizingDuration = DurationAt(fitted, selectedSpeed);
                 gaze.Begin(measured, finalizingDuration);
             }
             for (int i = 0; i < 64 && !gaze.Complete && CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic); i++)
                 gaze.Step(1);
             if (!gaze.Complete)
             { Reason = "Verifying native journey gaze: " + gaze.CheckedIntervals + "/256 intervals"; return; }
-            if (!gaze.Accepted)
+            if (!refiningSpeed && !gaze.Accepted)
             {
-                if (selectedSpeed > 2.001f)
+                if (selectedSpeed <= 2.001f)
+                { lastFailure = "Native Journey gaze exceeds its angular bound at the useful2m/s floor"; RejectNavigationCandidate(); return; }
+                refiningSpeed = true; verifiedSpeed = 0; unverifiedSpeed = selectedSpeed; speedRefinements = 0;
+                VerifySpeed(fitted, 2); return;
+            }
+            if (refiningSpeed)
+            {
+                if (gaze.Accepted) verifiedSpeed = selectedSpeed;
+                else
                 {
-                    selectedSpeed = (float)JourneyNavigationGazePolicy.SlowerTier(selectedSpeed);
-                    finalizingDuration = (fitted.UseNativeSpline ? measured.Length : fitted.TravelMetres) / selectedSpeed /
-                        ScenicJourneyMotion.CruiseFraction(fitted.JourneyEaseIn, fitted.JourneyEaseOut);
-                    gaze.Begin(measured, finalizingDuration);
-                    Reason = "Verifying the actual native curve at a slower " + selectedSpeed.ToString("F1") + "m/s viewing pace";
-                    return;
+                    unverifiedSpeed = selectedSpeed;
+                    if (selectedSpeed <= 2.001f)
+                    { lastFailure = "Native Journey gaze cannot maintain the useful2m/s floor"; RejectNavigationCandidate(); return; }
                 }
-                lastFailure = "Native journey gaze exceeds the bounded angular rate even at the minimum cruise";
-                RejectNavigationCandidate(); return;
+                speedRefinements++;
+                if (speedRefinements < 8 && unverifiedSpeed - verifiedSpeed > .1f)
+                { VerifySpeed(fitted, (verifiedSpeed + unverifiedSpeed) * .5f); return; }
+                // Retiming does not change geometry. The retained lower bound
+                // is an actually verified speed, not an inferred safe rate.
+                selectedSpeed = verifiedSpeed;
+                finalizingDuration = DurationAt(fitted, selectedSpeed);
             }
             Ready = fitted.WithDuration(finalizingDuration).WithJourneyCruiseSpeed(selectedSpeed);
             Epoch = finalizingEpoch; ValidatedAt = finalizingGeometryAt;
-            Complete = true; WaitingForLoading = false;
+            Complete = true; WaitingForLoading = false; FailureKind = ScenicJourneyPlanningFailure.None;
             Reason = "Validated " + fitted.TravelMetres.ToString("F0") + "m goal-directed corridor after " + AttemptCount + " proposals";
         }
+    }
+
+    private double DurationAt(ScenicShotPlan plan, float cruise)
+    {
+        double seconds = (plan.UseNativeSpline ? measured.Length : plan.TravelMetres) / cruise /
+            ScenicJourneyMotion.CruiseFraction(plan.JourneyEaseIn, plan.JourneyEaseOut);
+        return arrivalCenter.HasValue ? Math.Max(1, seconds) : seconds;
+    }
+    private void VerifySpeed(ScenicShotPlan plan, float cruise)
+    {
+        selectedSpeed = cruise; finalizingDuration = DurationAt(plan, cruise);
+        gaze.Begin(measured, finalizingDuration);
+        Reason = "Measuring the fastest bounded native Journey pace: " + cruise.ToString("F1") + "m/s";
     }
 
     private void ClearFinalization()
     {
         finalizing = null; finalizingDuration = 0; finalizingEpoch = 0; finalizingGeometryAt = 0;
-        measured.Reset(); gaze.Reset();
+        measured.Reset(); gaze.Reset(); refiningSpeed = false; verifiedSpeed = unverifiedSpeed = 0; speedRefinements = 0;
     }
 
     private void TraceCandidate(ScenicShotPlan plan, string source)
@@ -520,8 +643,10 @@ internal sealed class ScenicJourneyPlanner : IDisposable
             if (!WorldPoint(fitted[i])) { lastFailure = Reason = "Journey composition exceeds world bounds"; return false; }
             body[i] = P(fitted[i]);
         }
+        // A sharp but usable arrival may require a slower authored pace.
+        // Native finalization will independently find its fastest safe speed.
         AutonomyPosition startingAim = end.AimPosition;
-        if (!JourneyGazePolicy.TryBuild(body, startingAim, speed, preceding.Feature?.WaterDirection,
+        if (!JourneyGazePolicy.TryBuild(body, startingAim, 2, preceding.Feature?.WaterDirection,
             arrivalFocus, out AutonomyPosition[] aims, out string gazeReason,
             contextYawDegrees: option % 3 == 1 ? 12 : option % 3 == 2 ? -12 : 0,
             contextElevation: option / 3 % 2 == 1 ? 3 : 0))
@@ -571,20 +696,26 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         AutonomyPosition before = preceding.IsSpatial ? preceding.CameraWaypoint(preceding.WaypointCount - 2) : preceding.Sample(15d / 16).CameraPosition;
         return (end - V(before)).normalized;
     }
-    private void Finish(string reason) { Complete = true; Ready = null; Reason = reason; }
+    private void Finish(string reason, ScenicJourneyPlanningFailure failure = ScenicJourneyPlanningFailure.ObservedExhaustion)
+    { Complete = true; Ready = null; Reason = reason; FailureKind = failure; }
     internal void Reset()
     {
-        previous = candidate = Ready = null; goal = arrivalFocus = arrivalCenter = null; arrivalRadius = 0; evaluator.Reset(); visibility.Reset();
+        openingViews.Reset();
+        previous = candidate = Ready = null; goal = arrivalFocus = arrivalCenter = null; arrivalRadius = 0;
+        continuationEvaluator.Reset(); evaluator = continuationEvaluator; visibility.Reset(); activeVisibility = visibility;
         activeOpening = null; planningCarrier = null;
-        pendingOpening = -1; openingScreensSinceRoute = 0; openingWaitStarted = 0; planningEpoch = 0;
+        pendingOpening = -1; openingWaitStarted = 0; planningEpoch = 0;
         pendingRaisedOpening = null;
         openingPosition = openingFocus = default;
         navigationBound = false;
         ClearFinalization();
+        FailureKind = ScenicJourneyPlanningFailure.None; OnwardValidatedAt = 0; OnwardReason = "No selected onward seam";
+        navigation = continuation; activeLane = -1;
         Complete = WaitingForLoading = departureCut = false; alternative = AttemptCount = 0; Epoch = 0; ValidatedAt = retryAt = 0; lastFailure = "none";
     }
-    internal void ForgetSearchEpisode() { departureSpace.Reset(); openings.Clear(); searchWindowLength = 0; navigation.Reset(); navigationBound = false; }
-    public void Dispose() { Reset(); ForgetSearchEpisode(); evaluator.Dispose(); measured.Dispose(); }
+    internal void ForgetSearchEpisode()
+    { departureSpace.Reset(); openings.Clear(); searchWindowLength = 0; ClearOriginLanes(); continuation.Reset(); navigation = continuation; navigationBound = false; }
+    public void Dispose() { Reset(); ForgetSearchEpisode(); continuationEvaluator.Dispose(); measured.Dispose(); }
     private static bool WorldPoint(Vector3 point) => TargetRoster.Finite(point) &&
         Mathf.Abs(point.x) <= 20000 && Mathf.Abs(point.y) <= 20000 && Mathf.Abs(point.z) <= 20000;
     private static Vector3 V(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);

@@ -57,6 +57,21 @@ public readonly struct JourneyNavigationProbe
     internal JourneyNavigationProbe(long id, JourneyNavigationPose from, AutonomyPosition position,
         AutonomyPosition incomingDirection, AutonomyPosition? requiredAim, bool start, bool entry, bool onward)
     { Id = id; From = from; Position = position; IncomingDirection = incomingDirection; RequiredAim = requiredAim; IsStart = start; IsEntry = entry; IsOnward = onward; }
+
+    /// <summary>Re-observe the already selected next native seam after route
+    /// finalization. This creates a query, never a clearance certificate.
+    /// Use a reserved positive identity outside the graph's bounded probe IDs.</summary>
+    public static JourneyNavigationProbe ExactContinuation(long id, JourneyNavigationPose from, JourneyNavigationPose to)
+    {
+        if (id <= 0 || !JourneyNavigationSearch.ValidPose(from) || !JourneyNavigationSearch.ValidPose(to) ||
+            Math.Abs(from.Position.Distance(to.Position) - 2) > .01)
+            throw new ArgumentOutOfRangeException(nameof(id));
+        double horizontal = from.Position.HorizontalDistance(to.Position);
+        if (horizontal < .5) throw new ArgumentOutOfRangeException(nameof(to));
+        var direction = new AutonomyPosition((float)((to.Position.X - from.Position.X) / horizontal), 0,
+            (float)((to.Position.Z - from.Position.Z) / horizontal));
+        return new JourneyNavigationProbe(id, from, to.Position, direction, to.Aim, false, false, true);
+    }
 }
 
 public readonly struct JourneyNavigationObservation
@@ -87,11 +102,13 @@ public sealed class JourneyNavigationPath
     public double Length { get; }
     public double GoalProgress { get; }
     public double OldestEvidence { get; }
+    public double OnwardObservedAt { get; }
     public long Epoch { get; }
     public bool AtGoal { get; }
     internal JourneyNavigationPath(JourneyNavigationPose[] poses, JourneyNavigationPose? onward, double length,
-        double progress, double oldest, long epoch, bool atGoal)
-    { Poses = Array.AsReadOnly(poses); OnwardPose = onward; Length = length; GoalProgress = progress; OldestEvidence = oldest; Epoch = epoch; AtGoal = atGoal; }
+        double progress, double oldest, double onwardObservedAt, long epoch, bool atGoal)
+    { Poses = Array.AsReadOnly(poses); OnwardPose = onward; Length = length; GoalProgress = progress; OldestEvidence = oldest;
+      OnwardObservedAt = onwardObservedAt; Epoch = epoch; AtGoal = atGoal; }
 }
 
 /// <summary>Incremental bounded kinodynamic graph search. Steering and grade
@@ -126,6 +143,8 @@ public sealed class JourneyNavigationSearch
     public int Probes { get; private set; }
     public int PendingCount => pending.Count;
     public int RejectedCandidates { get; private set; }
+    public bool SelectedProofPending => candidate != null && !Terminal;
+    public long ProofRefreshes { get; private set; }
     public string Diagnostics { get; private set; } = "No connected navigation search";
 
     private sealed class Node
@@ -296,7 +315,7 @@ public sealed class JourneyNavigationSearch
     {
         nodes.Clear(); open.Clear(); pending.Clear(); best.Clear(); expandedCells.Clear(); request = null; candidate = null; Result = null;
         nextProbe = 0; lastNow = initialGoalDistance = 0; seedStage = activeOperations = scheduling = selections = 0; activeNode = -1;
-        nodeLimit = false; Edges = Probes = RejectedCandidates = 0;
+        nodeLimit = false; Edges = Probes = RejectedCandidates = 0; ProofRefreshes = 0;
         Status = JourneyNavigationStatus.Idle; Diagnostics = "No connected navigation search";
     }
 
@@ -419,6 +438,7 @@ public sealed class JourneyNavigationSearch
             if (observed.Evidence != JourneyNavigationEvidence.Clear || !Exact(work.Probe.Value, observed.Pose))
             { nodes[work.Node].CandidateRejected = true; candidate = null; RejectedCandidates++; return false; }
             if (onward) work.OnwardObservedAt = observed.ObservedAt; else node!.ObservedAt = observed.ObservedAt;
+            ProofRefreshes++;
             work.Probe = null; work.Cursor++;
         }
         double oldest = work.Onward.HasValue ? work.OnwardObservedAt : now;
@@ -430,7 +450,8 @@ public sealed class JourneyNavigationSearch
         if (now - oldest > MaximumEvidenceAge) { work.Cursor = 0; return false; }
         Node end = nodes[work.Node];
         Result = new JourneyNavigationPath(poses, work.Onward, end.Length,
-            initialGoalDistance - end.Pose.Position.Distance(request!.Goal), oldest, request.Epoch, AtGoal(end));
+            initialGoalDistance - end.Pose.Position.Distance(request!.Goal), oldest,
+            work.Onward.HasValue ? work.OnwardObservedAt : 0, request.Epoch, AtGoal(end));
         Finish(JourneyNavigationStatus.Ready, "Fresh connected body/aim proposal and onward witness; native curve and ending still require full validation");
         return true;
     }
@@ -441,8 +462,14 @@ public sealed class JourneyNavigationSearch
         for (int node = index; node >= 0; node = nodes[node].Parent) path.Add(node);
         path.Reverse(); candidate = new Candidate(index, path, onward, at);
     }
-    private bool Eligible(Node node) => !node.CandidateRejected && node.Depth >= 3 && node.Length >= request!.TargetMetres &&
-        node.Length <= request.MaximumMetres && initialGoalDistance - node.Pose.Position.Distance(request.Goal) >= Math.Min(8, request.TargetMetres * .25);
+    // Fine-grained turns can consume all native knots well before the nominal
+    // distance target. That is a section boundary, not a mission/shot ending;
+    // the exact next seam must still be observed before this prefix is offered.
+    private bool Eligible(Node node) => !node.CandidateRejected && node.Depth >= 3 &&
+        node.Length >= ScenicJourneyPolicy.MinimumWindowMetres &&
+        (node.Length >= request!.TargetMetres || node.Depth == MaximumWaypoints) &&
+        node.Length <= request!.MaximumMetres &&
+        initialGoalDistance - node.Pose.Position.Distance(request.Goal) >= Math.Min(8, node.Length * .25);
     private bool AtGoal(Node node) => node.Depth >= 3 && node.Length >= ScenicJourneyPolicy.MinimumWindowMetres &&
         node.Pose.Position.Distance(request!.Goal) <= Math.Max(.5, request.StepMetres * .3);
     private bool Inside(JourneyNavigationPose pose) => pose.Position.Distance(request!.Carrier) + request.ViewDepth <= request.ReachMetres;

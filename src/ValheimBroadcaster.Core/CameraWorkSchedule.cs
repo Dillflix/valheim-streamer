@@ -9,6 +9,7 @@ public enum CameraWorkKind { Live, Candidate, Scenic, Observation }
 /// operation is indivisible, so overruns are recorded and defer later work.</summary>
 public sealed class CameraWorkSchedule
 {
+    public static CameraWorkKind FoliageQueryKind(bool withinLive) => withinLive ? CameraWorkKind.Live : CameraWorkKind.Observation;
     public const double BackgroundMilliseconds = 3;
     private readonly double[] spent = new double[4];
     private readonly int[] starts = new int[4];

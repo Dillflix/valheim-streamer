@@ -6,6 +6,7 @@ namespace ValheimBroadcaster.Plugin;
 internal sealed partial class ScenicVisibility
 {
     private readonly JourneyViewSample[] journeySamples = new JourneyViewSample[JourneyViewPolicy.SampleCount];
+    private readonly Vector3[] journeyDirections = new Vector3[JourneyViewPolicy.SampleCount];
 
     internal readonly struct JourneyViewObservation
     {
@@ -35,7 +36,6 @@ internal sealed partial class ScenicVisibility
         Vector3 readinessPoint = camera + forward * (float)JourneyViewPolicy.ObservationRange;
         bool complete = ScenicObservationPolicy.Coverage(Vector3.Distance(camera, origin), coveredRadius) == ScenicCoverageGap.None;
         bool inside = false;
-        for (int i = 0; i < activeCount; i++) if (activeBounds[i].Contains(camera)) { inside = true; break; }
         int count = Physics.OverlapSphereNonAlloc(camera, .25f, overlaps, obstructionMask, QueryTriggerInteraction.Ignore);
         bool cameraClear = !SolidOverlap(count);
         if (cameraClear)
@@ -46,7 +46,9 @@ internal sealed partial class ScenicVisibility
             cameraClear = !SolidOverlap(count);
         }
         bool sceneReady = PlayerShotReadiness.PositionReady(camera, true);
-        if (cameraClear && !inside && complete)
+        bool solidCameraClear = cameraClear;
+        FoliageProjection.JourneyObservation? leaves = null;
+        if (cameraClear && complete)
         {
             for (int row = 0; row < JourneyViewPolicy.Rows; row++)
             for (int column = 0; column < JourneyViewPolicy.Columns; column++)
@@ -54,33 +56,48 @@ internal sealed partial class ScenicVisibility
                 // Samples span the useful picture, including its outer context,
                 // and use the same actual composed rotation as final rendering.
                 float x = (column - 2) * .40f, y = (row - 1) * .65f;
-                Vector3 direction = (forward + right * (x * vertical * aspect) + up * (y * vertical)).normalized;
+                journeyDirections[row * JourneyViewPolicy.Columns + column] =
+                    (forward + right * (x * vertical * aspect) + up * (y * vertical)).normalized;
+            }
+            leaves = foliage.ObserveJourney(camera, rotation, fov, aspect, nearClip, journeyDirections, QueryId, QueryStage);
+            inside = leaves.Complete && leaves.BodyIntersection;
+            cameraClear &= !leaves.Complete || !leaves.NearPlaneIntersection;
+            if (leaves.Complete && !inside && cameraClear)
+            for (int sample = 0; sample < journeyDirections.Length; sample++)
+            {
+                Vector3 direction = journeyDirections[sample];
                 bool loaded = PlayerShotReadiness.PositionReady(camera + direction * (float)JourneyViewPolicy.ObservationRange, true);
                 sceneReady &= loaded;
-                double solidDepth = JourneyViewPolicy.ObservationRange, leafDepth = JourneyViewPolicy.FoliageRange;
+                double solidDepth = JourneyViewPolicy.ObservationRange;
                 count = Physics.RaycastNonAlloc(camera, direction, hits, (float)JourneyViewPolicy.ObservationRange,
                     obstructionMask, QueryTriggerInteraction.Ignore);
                 bool known = loaded && count < hits.Length;
                 for (int i = 0; i < count; i++)
                     if (Solid(hits[i].collider)) solidDepth = System.Math.Min(solidDepth, hits[i].distance);
-                Ray ray = new Ray(camera, direction);
-                for (int i = 0; i < activeCount; i++)
-                    if (activeBounds[i].IntersectRay(ray, out float distance) && distance >= 0 && distance < leafDepth)
-                        leafDepth = distance;
-                journeySamples[row * JourneyViewPolicy.Columns + column] = new JourneyViewSample(solidDepth, leafDepth, known);
+                journeySamples[sample] = new JourneyViewSample(solidDepth, leaves.Depth[sample], known, leaves.Known[sample], leaves.UncertainDepth[sample]);
             }
         }
-        JourneyViewPolicy.Result view = JourneyViewPolicy.Evaluate(journeySamples, cameraClear, complete, inside, nearClip);
+        JourneyViewPolicy.Result view = JourneyViewPolicy.Evaluate(journeySamples, cameraClear,
+            complete && leaves != null && leaves.Complete, inside, nearClip);
+        if (view.Status == JourneyViewStatus.Unknown && leaves != null && !leaves.Complete)
+            view = new JourneyViewPolicy.Result(JourneyViewStatus.Unknown, 0, 0, 0, 0, 0, leaves.Reason);
+        if (leaves != null && leaves.Complete && leaves.Intersects)
+            view = new JourneyViewPolicy.Result(JourneyViewStatus.CameraBlocked, 0, 0, 0, 0, 0, leaves.Reason);
         if (ScenicTrace.Enabled)
         {
             CameraTraceRecord trace = ScenicTrace.Row("journey-view").Field("owner", owner).Field("query", QueryId).Field("stage", QueryStage)
                 .Field("status", view.Status.ToString()).Field("cameraClear", cameraClear).Field("insideVegetation", inside)
+                .Field("solidCameraClear", solidCameraClear).Field("nearPlaneFoliage", leaves?.NearPlaneIntersection ?? false)
                 .Field("surveyComplete", complete).Field("sceneReady", sceneReady).Field("nearOcclusion", view.NearOcclusion)
                 .Field("foliageCoverage", view.FoliageCoverage).Field("meanDepth", view.MeanDepth)
+                .Field("foliageUncertainty", view.FoliageUncertainty).Field("triangleComplete", leaves?.Complete ?? false)
+                .Field("containingBroadBounds", leaves?.ContainingBounds ?? 0).Field("exactRenderers", leaves?.ExactRenderers ?? 0)
+                .Field("unsupportedRenderers", leaves?.UnsupportedRenderers ?? 0)
                 .Field("usefulColumns", view.UsefulColumns).Field("score", view.Score).Field("reason", view.Reason);
-            if (cameraClear && !inside && complete)
+            if (cameraClear && !inside && complete && leaves != null && leaves.Complete)
                 for (int i = 0; i < journeySamples.Length; i++) trace.Field("solid" + i, journeySamples[i].SolidDepth)
-                    .Field("foliage" + i, journeySamples[i].FoliageDepth).Field("known" + i, journeySamples[i].Known);
+                    .Field("foliage" + i, journeySamples[i].FoliageDepth).Field("known" + i, journeySamples[i].Known)
+                    .Field("foliageKnown" + i, journeySamples[i].FoliageKnown).Field("uncertainFoliage" + i, journeySamples[i].UncertainFoliageDepth);
             ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(trace, "camera", camera), "forward", forward));
         }
         return new JourneyViewObservation(view, cameraClear, inside, complete, sceneReady, readinessPoint);

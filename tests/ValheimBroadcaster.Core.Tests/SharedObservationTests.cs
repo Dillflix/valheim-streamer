@@ -13,6 +13,7 @@ internal static class SharedObservationTests
         yield return ("Place survey recenter and newly exposed geometry do not invalidate old geometry", Recenter);
         yield return ("Measured construction movement and removal invalidate camera space", GeometryChanges);
         yield return ("Partial place observations do not turn rediscovery into new construction", Partial);
+        yield return ("Exhausted background observation allowance cannot starve bounded live foliage validation", LiveFoliage);
     }
     private static void Check(bool value, string reason) { if (!value) throw new Exception(reason); }
     private static void ReservedWork()
@@ -55,6 +56,19 @@ internal static class SharedObservationTests
         var b = new CameraWorkSchedule(); b.BeginFrame(1);
         for (int i = 0; i < 12; i++) Check(b.TryStart(CameraWorkKind.Candidate), "Expected bounded start allowance");
         Check(!b.TryStart(CameraWorkKind.Candidate) && b.TryStart(CameraWorkKind.Live), "Zero-time candidates loop without bound");
+    }
+    private static void LiveFoliage()
+    {
+        var budget = new CameraWorkSchedule(); budget.BeginFrame(7);
+        for (int i = 0; i < 32; i++) Check(budget.TryStart(CameraWorkKind.Observation), "Background start bound changed");
+        budget.Charge(CameraWorkKind.Observation, 1.5);
+        CameraWorkKind background = CameraWorkSchedule.FoliageQueryKind(false), live = CameraWorkSchedule.FoliageQueryKind(true);
+        Check(!budget.TryStart(background) && !budget.CanContinue(background), "Background triangle work bypassed exhausted observation limits");
+        Check(budget.TryStart(CameraWorkKind.Live) && budget.TryStart(live) && budget.CanContinue(live),
+            "Late live triangle validation inherited Update's exhausted background lane");
+        budget.Charge(live, .4);
+        Check(budget.LiveMilliseconds == .4 && budget.ObservationMilliseconds == 1.5,
+            "Live traversal cost was hidden or charged again to background observation");
     }
     private static PlacePieceObservation Piece(string id, float x) => new PlacePieceObservation(id,
         new PlaceBounds(new AutonomyPosition(x - 1, 0, -1), new AutonomyPosition(x + 1, 3, 1)));

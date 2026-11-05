@@ -13,15 +13,23 @@ internal sealed class JourneyNavigationPlanner
 {
     private JourneyNavigationSearch search = new JourneyNavigationSearch();
     private readonly Dictionary<long, Pending> pending = new Dictionary<long, Pending>();
-    private readonly ScenicVisibility visibility;
+    private readonly JourneyObservationViews views;
+    private readonly int pendingLimit;
     private long epoch, query;
     private float speed, fov, aspect, near, screenX, screenY;
     private Vector3 goal;
     private bool active;
     private long mission;
-    private float episodeAt, requestedMetres, requestedSpeed;
+    private float episodeAt, requestedSpeed;
     private JourneyNavigationRequest? request;
     internal float PlanningSpeed => speed;
+    internal bool SelectedProofPending => search.SelectedProofPending;
+    internal long ProofRefreshes => search.ProofRefreshes;
+    internal long ObservationProgress { get; private set; }
+    private const long AdmissionOnwardToken = 1_000_000_000;
+    private JourneyNavigationPose? admissionFrom, admissionTo;
+    internal float OnwardValidatedAt { get; private set; }
+    internal string OnwardReason { get; private set; } = "Onward seam has not been renewed";
     private JourneyNavigationPose boundStart, boundEntry;
     private AutonomyPosition? currentDemand;
     internal string Reason { get; private set; } = "No navigation search";
@@ -41,7 +49,8 @@ internal sealed class JourneyNavigationPlanner
         internal Pending(float now) { LastServiced = now; }
     }
 
-    internal JourneyNavigationPlanner(ScenicVisibility observations) { visibility = observations; }
+    internal JourneyNavigationPlanner(string owner, bool independent)
+    { pendingLimit = independent ? 1 : 8; views = new JourneyObservationViews(owner, pendingLimit + 1); }
 
     internal void Begin(long mission, long sceneEpoch, long planId, ScenicShotSample first, Vector3 incoming,
         Vector3 entryAim, Vector3 destination, Vector3 carrier, float metres, float metresPerSecond, float fieldOfView, float cameraAspect, float nearClip)
@@ -51,7 +60,7 @@ internal sealed class JourneyNavigationPlanner
             Time.unscaledTime - episodeAt < 120 && boundStart.Position.Distance(first.CameraPosition) < .005 &&
             boundStart.Aim.Distance(first.AimPosition) < .005 && boundEntry.Position.Distance(P(proposedEntry)) < .005 &&
             boundEntry.Aim.Distance(P(entryAim)) < .005 && Vector3.Distance(goal, destination) < .05f &&
-            Mathf.Abs(requestedMetres - metres) < .05f && Mathf.Abs(requestedSpeed - metresPerSecond) < .001f &&
+            Mathf.Abs(requestedSpeed - metresPerSecond) < .001f &&
             Mathf.Abs(fov - fieldOfView) < .001f && Mathf.Abs(aspect - cameraAspect) < .001f &&
             Mathf.Abs(near - nearClip) < .001f && Mathf.Abs(screenX - first.ScreenX) < .001f && Mathf.Abs(screenY - first.ScreenY) < .001f &&
             WithinLoadingHorizon(carrier);
@@ -61,8 +70,8 @@ internal sealed class JourneyNavigationPlanner
             if (search.Status == JourneyNavigationStatus.Ready) search.ResumeCandidateValidation();
             Reason = "Resuming the existing connected navigation episode; fresh proof still required"; return;
         }
-        Reset(); this.mission = mission; epoch = sceneEpoch; query = planId; goal = destination; speed = metresPerSecond;
-        requestedMetres = metres; requestedSpeed = metresPerSecond; episodeAt = Time.unscaledTime;
+        Reset(); this.mission = mission; epoch = sceneEpoch; query = planId; goal = destination; speed = 2;
+        requestedSpeed = metresPerSecond; episodeAt = Time.unscaledTime;
         fov = fieldOfView; aspect = cameraAspect; near = nearClip; screenX = first.ScreenX; screenY = first.ScreenY;
         Vector3 start = V(first.CameraPosition), aim = V(first.AimPosition), entry = start + incoming.normalized * 2f;
         var opening = new JourneyNavigationPose(first.CameraPosition, first.AimPosition);
@@ -71,9 +80,9 @@ internal sealed class JourneyNavigationPlanner
         var firstEdge = new JourneyNavigationPose(P(entry), P(entryAim));
         boundStart = opening; boundEntry = firstEdge;
         request = new JourneyNavigationRequest(mission, epoch, opening, firstEdge, P(destination), P(carrier),
-            targetMetres: Math.Max(8, Math.Min(56, metres)), maximumMetres: Math.Min(64, Math.Max(12, metres)),
+            targetMetres: 56, maximumMetres: 64,
             reachMetres: JourneyRunwayPolicy.LocalReachMetres,
-            stepMetres: 4, maximumNodes: 512, maximumEdges: 8192, viewDepth: JourneyViewPolicy.ObservationRange, maximumPending: 8);
+            stepMetres: 4, maximumNodes: 512, maximumEdges: 8192, viewDepth: JourneyViewPolicy.ObservationRange, maximumPending: pendingLimit);
         search.Begin(request, Time.unscaledTime);
         active = true; Reason = "Searching connected loaded camera space";
     }
@@ -86,13 +95,6 @@ internal sealed class JourneyNavigationPlanner
             status = search.Step(1, Time.unscaledTime, CameraSpatialScene.Shared.Epoch, Observe);
             if (status != JourneyNavigationStatus.Searching) break;
         }
-        if ((status == JourneyNavigationStatus.Exhausted || status == JourneyNavigationStatus.BudgetExhausted) && speed > 2.001f)
-        {
-            speed = (float)JourneyNavigationGazePolicy.SlowerTier(speed); pending.Clear();
-            search.Begin(request!, Time.unscaledTime);
-            Reason = "Replanning the connected route at " + speed.ToString("F1") + "m/s to allow bounded forward gaze through turns";
-            return JourneyNavigationStatus.Searching;
-        }
         Reason = search.Diagnostics + "; planning " + speed.ToString("F1") + "m/s; " + Reason;
         if (Reason.Length > 600) Reason = search.Diagnostics;
         return status;
@@ -100,9 +102,63 @@ internal sealed class JourneyNavigationPlanner
 
     internal void RejectCandidate()
     {
-        search.RejectCandidate(); pending.Clear();
+        search.RejectCandidate(); pending.Clear(); views.Reset(); ClearOnward();
         Reason = "Native curve rejected; retaining the connected search frontier";
     }
+
+    internal JourneyNavigationEvidence RenewOnward(ScenicShotPlan plan)
+    {
+        if (!active || epoch != CameraSpatialScene.Shared.Epoch || search.Result == null)
+        { OnwardReason = "The selected navigation context no longer matches the loaded scene"; return JourneyNavigationEvidence.Blocked; }
+        if (!search.Result.OnwardPose.HasValue)
+        {
+            if (!search.Result.AtGoal)
+            { OnwardReason = "A continuing route has no measured onward seam"; return JourneyNavigationEvidence.Blocked; }
+            OnwardValidatedAt = Time.unscaledTime; OnwardReason = "The local goal needs no onward continuation";
+            return JourneyNavigationEvidence.Clear;
+        }
+        // Renew the seam the final native plan will actually hand to the next
+        // planner. Fitting may change its terminal tangent, so the graph's
+        // earlier polyline witness alone cannot certify this handoff.
+        int last = plan.WaypointCount - 1;
+        if (!plan.IsSpatial || last < 1)
+        { OnwardReason = "The selected journey has no exact terminal tangent"; return JourneyNavigationEvidence.Blocked; }
+        Vector3 end = V(plan.CameraWaypoint(last)), before = V(plan.CameraWaypoint(last - 1));
+        float distance = Vector3.Distance(end, before);
+        if (distance < .05f)
+        { OnwardReason = "The selected journey has a degenerate terminal tangent"; return JourneyNavigationEvidence.Blocked; }
+        var from = new JourneyNavigationPose(plan.CameraWaypoint(last), plan.AimWaypoint(last));
+        Vector3 bodyTo = end + (end - before) * (2f / distance);
+        Vector3 aimTo = V(from.Aim) + (V(from.Aim) - V(plan.AimWaypoint(last - 1))) * (2f / distance);
+        if (!TargetRoster.Finite(bodyTo) || !TargetRoster.Finite(aimTo))
+        { OnwardReason = "The exact onward seam is nonfinite"; return JourneyNavigationEvidence.Blocked; }
+        var to = new JourneyNavigationPose(P(bodyTo), P(aimTo));
+        bool same = admissionFrom.HasValue && admissionTo.HasValue &&
+            admissionFrom.Value.Position.Distance(from.Position) < .001 && admissionFrom.Value.Aim.Distance(from.Aim) < .001 &&
+            admissionTo.Value.Position.Distance(to.Position) < .001 && admissionTo.Value.Aim.Distance(to.Aim) < .001;
+        if (!same)
+        {
+            pending.Remove(AdmissionOnwardToken); views.Release(AdmissionOnwardToken);
+            admissionFrom = from; admissionTo = to; OnwardValidatedAt = 0;
+        }
+        if (OnwardValidatedAt > 0 && Time.unscaledTime - OnwardValidatedAt < 1f)
+            return JourneyNavigationEvidence.Clear;
+        JourneyNavigationProbe renewal;
+        try { renewal = JourneyNavigationProbe.ExactContinuation(AdmissionOnwardToken, from, to); }
+        catch (ArgumentOutOfRangeException)
+        { OnwardReason = "The exact onward seam exceeds supported local geometry"; return JourneyNavigationEvidence.Blocked; }
+        JourneyNavigationObservation observed = Observe(renewal);
+        OnwardReason = Reason;
+        if (observed.Evidence == JourneyNavigationEvidence.Clear)
+        {
+            OnwardValidatedAt = (float)observed.ObservedAt;
+            if (Time.unscaledTime - OnwardValidatedAt > JourneyNavigationSearch.MaximumEvidenceAge)
+            { OnwardReason = "Exact onward evidence expired during renewal"; return JourneyNavigationEvidence.Unknown; }
+        }
+        return observed.Evidence;
+    }
+    private void ClearOnward()
+    { admissionFrom = admissionTo = null; OnwardValidatedAt = 0; OnwardReason = "Onward seam has not been renewed"; }
 
     internal bool WithinLoadingHorizon(Vector3 carrier)
     {
@@ -126,14 +182,14 @@ internal sealed class JourneyNavigationPlanner
         if (!CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic))
             return Unknown(probe, "Connected navigation work deferred");
         bool retained = pending.TryGetValue(probe.Id, out Pending? work);
-        if (!retained || Time.unscaledTime - work!.LastServiced > 2f ||
-            !double.IsPositiveInfinity(work.EvidenceAt) && Time.unscaledTime - work.EvidenceAt > JourneyNavigationSearch.MaximumEvidenceAge)
+        if (!retained || !double.IsPositiveInfinity(work!.EvidenceAt) && Time.unscaledTime - work.EvidenceAt > JourneyNavigationSearch.MaximumEvidenceAge)
         {
-            // Core admits at most eight unresolved probes. One additional
-            // slot belongs to its selected-path proof refresh, which may run
-            // while the unrelated frontier remains pending. Never evict work
+            // Each lane bounds its unresolved probes. One additional slot
+            // belongs to selected-path proof refresh while the unrelated
+            // frontier remains pending. Never evict work
             // that the Core scheduler still owns.
-            if (!retained && pending.Count >= 9) return Unknown(probe, "Navigation observation backpressure retains existing partial work");
+            if (!retained && pending.Count >= pendingLimit + 1) return Unknown(probe, "Navigation observation backpressure retains existing partial work");
+            views.Release(probe.Id);
             work = new Pending(Time.unscaledTime); pending[probe.Id] = work;
         }
         Pending observation = work!;
@@ -155,7 +211,7 @@ internal sealed class JourneyNavigationPlanner
             float horizontal = Vector3.ProjectOnPlane(point - from, Vector3.up).magnitude;
             if (!probe.IsStart && (horizontal < .1f || Math.Abs(point.y - from.y) > horizontal * JourneyTerrainProfile.MaximumGrade + .001f))
                 return Blocked(probe, "Navigation edge exceeds the bounded climb grade");
-            observation.Position = point; observation.Positioned = true; currentDemand = P(point);
+            observation.Position = point; observation.Positioned = true; currentDemand = P(point); ObservationProgress++;
         }
         while (CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic))
         {
@@ -177,15 +233,21 @@ internal sealed class JourneyNavigationPlanner
                     fov, aspect, near, CameraSpaceUse.Journey, true);
                 if (!physical.Known) return Unknown(probe, physical.Reason);
                 if (!physical.Clear) { observation.Option++; continue; }
+                if (!views.TryGet(probe.Id, epoch, observation.Position, out ScenicVisibility visibility))
+                    return Unknown(probe, views.Reason);
                 visibility.QueryId = query; visibility.QueryStage = "navigation " + probe.Id + " gaze " + observation.Option;
                 var view = visibility.EvaluateJourney(observation.Position, observation.Rotation, fov, aspect, near);
+                // Positive body evidence outranks missing unrelated survey
+                // coverage; changing gaze cannot move an intersecting camera.
+                if (view.InsideVegetation) return Blocked(probe, view.View.Reason);
+                if (!view.CameraClear) { views.Release(probe.Id); observation.Option++; continue; }
                 if (!view.SceneReady || !view.SurveyComplete || view.View.Status == JourneyViewStatus.Unknown)
                     return Unknown(probe, view.View.Reason);
-                if (!view.CameraClear || view.InsideVegetation || !view.View.Readable)
-                { observation.Option++; continue; }
+                if (!view.View.Usable)
+                { views.Release(probe.Id); observation.Option++; continue; }
                 if (!IdleShots.Ready(view.ReadinessPoint)) return Unknown(probe, "Navigation view has not been acquired");
                 observation.Quality = view.View.Score; observation.EvidenceAt = Math.Min(observation.EvidenceAt, physical.ObservedAt);
-                observation.ViewSelected = true;
+                observation.ViewSelected = true; views.Release(probe.Id); ObservationProgress++;
             }
             if (!observation.Swept)
             {
@@ -198,7 +260,7 @@ internal sealed class JourneyNavigationPlanner
                     if (!corridor.Known) return Unknown(probe, corridor.Reason);
                     if (!corridor.Clear)
                     { observation.Option++; observation.ViewSelected = false; continue; }
-                    observation.EvidenceAt = Math.Min(observation.EvidenceAt, corridor.ObservedAt); observation.Swept = true;
+                    observation.EvidenceAt = Math.Min(observation.EvidenceAt, corridor.ObservedAt); observation.Swept = true; ObservationProgress++;
                 }
             }
             // A clear endpoint is not enough: inspect the intermediate picture
@@ -209,16 +271,20 @@ internal sealed class JourneyNavigationPlanner
                 if (!CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Scenic)) break;
                 Vector3 middle = Vector3.Lerp(from, observation.Position, .5f);
                 Quaternion startRotation = ScenicVisibility.Compose(from, fromAim, screenX, screenY, fov, aspect);
-                visibility.QueryStage = "navigation " + probe.Id + " midpoint";
+                if (!views.TryGet(probe.Id, epoch, middle, out ScenicVisibility visibility))
+                    return Unknown(probe, views.Reason);
+                visibility.QueryId = query; visibility.QueryStage = "navigation " + probe.Id + " midpoint";
                 var view = visibility.EvaluateJourney(middle, Quaternion.Slerp(startRotation, observation.Rotation, .5f), fov, aspect, near);
+                if (view.InsideVegetation) return Blocked(probe, view.View.Reason);
+                if (!view.CameraClear) { views.Release(probe.Id); observation.Option++; observation.ViewSelected = observation.Swept = false; continue; }
                 if (!view.SceneReady || !view.SurveyComplete || view.View.Status == JourneyViewStatus.Unknown)
                     return Unknown(probe, view.View.Reason);
-                if (!view.CameraClear || view.InsideVegetation || !view.View.Readable)
-                { observation.Option++; observation.ViewSelected = observation.Swept = false; continue; }
+                if (!view.View.Usable)
+                { views.Release(probe.Id); observation.Option++; observation.ViewSelected = observation.Swept = false; continue; }
                 if (!IdleShots.Ready(view.ReadinessPoint)) return Unknown(probe, "Intermediate navigation view has not been acquired");
-                observation.Quality = Math.Min(observation.Quality, view.View.Score); observation.ViewSample++;
+                observation.Quality = Math.Min(observation.Quality, view.View.Score); observation.ViewSample++; ObservationProgress++;
             }
-            pending.Remove(probe.Id);
+            pending.Remove(probe.Id); views.Release(probe.Id);
             Reason = "Connected camera edge and viewing neighbourhood observed";
             var result = new JourneyNavigationObservation(JourneyNavigationEvidence.Clear,
                 new JourneyNavigationPose(P(observation.Position), P(observation.Aim)), observation.Quality, epoch, observation.EvidenceAt);
@@ -236,7 +302,7 @@ internal sealed class JourneyNavigationPlanner
     }
     private JourneyNavigationObservation Blocked(JourneyNavigationProbe probe, string reason)
     {
-        Reason = reason; pending.Remove(probe.Id);
+        Reason = reason; pending.Remove(probe.Id); views.Release(probe.Id);
         Trace(probe, "Blocked", reason, V(probe.Position), V(probe.RequiredAim ?? probe.From.Aim));
         return new JourneyNavigationObservation(JourneyNavigationEvidence.Blocked,
             new JourneyNavigationPose(probe.Position, probe.RequiredAim ?? probe.From.Aim), 0, epoch, Time.unscaledTime);
@@ -244,11 +310,13 @@ internal sealed class JourneyNavigationPlanner
     private void Trace(JourneyNavigationProbe probe, string evidence, string reason, Vector3 body, Vector3 aim)
     {
         if (!ScenicTrace.Enabled) return;
-        ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Row("journey-navigation-edge")
-            .Field("plan", query).Field("probe", probe.Id).Field("evidence", evidence).Field("onward", probe.IsOnward)
-            .Field("reason", reason), "camera", body), "focus", aim));
+        CameraTraceRecord row = ScenicTrace.Row("journey-navigation-edge").Field("plan", query).Field("probe", probe.Id)
+            .Field("evidence", evidence).Field("onward", probe.IsOnward).Field("entry", probe.IsEntry).Field("start", probe.IsStart)
+            .Field("requiredAim", probe.RequiredAim.HasValue).Field("planningCruise", speed).Field("reason", reason);
+        ScenicTrace.Record(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Vector(ScenicTrace.Vector(row,
+            "fromCamera", V(probe.From.Position)), "fromFocus", V(probe.From.Aim)), "camera", body), "focus", aim));
     }
-    internal void Reset() { search = new JourneyNavigationSearch(); pending.Clear(); currentDemand = null; active = false; }
+    internal void Reset() { search = new JourneyNavigationSearch(); pending.Clear(); views.Reset(); currentDemand = null; active = false; ObservationProgress = 0; ClearOnward(); }
     private static Vector3 V(AutonomyPosition value) => new Vector3(value.X, value.Y, value.Z);
     private static AutonomyPosition P(Vector3 value) => new AutonomyPosition(value.x, value.y, value.z);
 }

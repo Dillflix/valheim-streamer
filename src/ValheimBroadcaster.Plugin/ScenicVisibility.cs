@@ -20,8 +20,9 @@ internal sealed partial class ScenicVisibility
     private ScenicSurveyRefresh refreshAction;
     internal long QueryId;
     internal string QueryStage = "unspecified";
-    internal ScenicVisibility(string owner = "unspecified") { this.owner = owner; }
-    private readonly FoliageProjection foliage = new FoliageProjection(SurveyRadius);
+    internal bool ProjectionUpdating => foliage.Updating;
+    internal ScenicVisibility(string owner = "unspecified") { this.owner = owner; foliage = new FoliageProjection(SurveyRadius, owner); }
+    private readonly FoliageProjection foliage;
     private Vector3 origin;
     private float refreshedAt = float.NegativeInfinity, coveredRadius;
     private int obstructionMask;

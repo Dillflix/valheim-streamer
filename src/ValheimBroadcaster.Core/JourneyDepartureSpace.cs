@@ -77,12 +77,12 @@ public sealed class JourneyDepartureSpace
     /// <summary>Continue bounded proposal work across preparation batches.
     /// This remembers search history, never loaded space or a safety proof.</summary>
     public bool Bind(long journey, long epoch, AutonomyPosition seed, AutonomyPosition goal,
-        AutonomyPosition carrier, double now)
+        AutonomyPosition carrier, double now, bool compatibleLoadingContext = false)
     {
         if (journey <= 0 || epoch < 0 || !Finite(now) || now < 0) throw new ArgumentOutOfRangeException(nameof(now));
         bool same = episodeBound && episodeJourney == journey && episodeEpoch == epoch &&
             episodeSeed.Distance(seed) <= 1 && episodeGoal.Distance(goal) <= 16 &&
-            episodeCarrier.Distance(carrier) <= 8 && now >= episodeLast && now - episodeStarted < 120;
+            (compatibleLoadingContext || episodeCarrier.Distance(carrier) <= 8) && now >= episodeLast && now - episodeStarted < 120;
         if (!same)
         {
             Reset(); episodeBound = true; episodeJourney = journey; episodeEpoch = epoch;

@@ -33,7 +33,6 @@ internal sealed partial class ScenicProduction
     private float journeyPreparationStarted, journeyRetryAt;
     private int journeyPreparationFailures;
     private string journeyLastPreparationFailure = "none";
-    private double journeyWindowScale = 1;
     private Vector3 journeyFailureCarrier;
     private readonly ScenicJourneyEndingPlanner journeyEndingPlanner = new ScenicJourneyEndingPlanner();
     private readonly ScenicJourneyEndingLease journeyEndingLease = new ScenicJourneyEndingLease();
@@ -106,7 +105,7 @@ internal sealed partial class ScenicProduction
         RetireJourneyQueue(); journeySection?.Dispose();
         journeyPlanner.ForgetSearchEpisode();
         journeyEndingPlanner.Dispose(); journeyEndingLease.Dispose(); journeyPendingSection = null; journeySection = null;
-        journeyRunway.Reset(); journeyPreparationFailures = 0; journeyRetryAt = 0; journeyWindowScale = 1;
+        journeyRunway.Reset(); journeyPreparationFailures = 0; journeyRetryAt = 0;
         journeyTravel.Reset(); journeyPlayback.Reset(); journeyRepairing = journeyRetainsPicture = false; journeyRepairMissingSeconds = 0; journeyRepairSeed = null;
         journeyExitId = 0; journeyBraking = journeyPendingArrival = journeyEndingArrival = journeyExitExhausted = false;
         journeyDepartureSeed = null;
@@ -151,11 +150,11 @@ internal sealed partial class ScenicProduction
     private void PreparationFailed(string reason)
     {
         journeyPreparationFailures++; journeyLastPreparationFailure = reason;
-        // A failed local search is evidence about this window, not a terminal
-        // outcome. Try a materially shorter route as loading progresses.
-        journeyWindowScale = Math.Max(.4, journeyWindowScale * .7);
+        // Loading reach already bounds every request. An unsuccessful proof
+        // or a yielded work slice does not establish that a shorter route is
+        // needed; changing the request here discarded compatible graph work.
         journeyRetryAt = Time.unscaledTime + .35f;
-        journeyStatus = "Retrying continuation with a shorter loaded window: " + reason;
+        journeyStatus = "Retrying continuation with fresh local evidence: " + reason;
         ResetJourneyPreparation();
         // A failed search is not producer throughput and does not cancel the
         // destination. The persistent request deadline bounds repeated work.
@@ -268,11 +267,24 @@ internal sealed partial class ScenicProduction
         }
         if (journeyEndingPlanner.Ready != null && journeyEndingPlanner.Epoch == CameraSpatialScene.Shared.Epoch)
         {
+            // Native fitting and ending preparation can outlive the graph's
+            // original onward witness. Renew the exact fitted terminal seam
+            // before queueing this section; pending evidence retains the work.
+            JourneyNavigationEvidence onward = journeyPlanner.RenewOnwardBeforeAdmission();
+            if (onward == JourneyNavigationEvidence.Unknown)
+            { journeyStatus = journeyPlanner.OnwardReason; return; }
+            if (onward == JourneyNavigationEvidence.Blocked)
+            {
+                journeyStatus = journeyLastPreparationFailure = journeyPlanner.OnwardReason;
+                journeyPlanner.RejectReadyCandidate(journeyPlanner.OnwardReason);
+                journeyPendingSection = null; journeyPendingArrival = false; journeyEndingPlanner.Reset();
+                return;
+            }
             journeyQueue.Add(new JourneySection(journeyPendingSection, journeyEndingPlanner.Ready,
-                journeyEndingPlanner.Epoch, journeyPlanner.ValidatedAt, journeyEndingPlanner.ValidatedAt,
+                journeyEndingPlanner.Epoch, Math.Min(journeyPlanner.ValidatedAt, journeyPlanner.OnwardValidatedAt), journeyEndingPlanner.ValidatedAt,
                 journeyEndingPlanner.ArrivalFramed, moveCarrier));
             journeyRunway.ObservePreparation(journeyPendingSection.TravelMetres, journeyPreparationStarted, Time.unscaledTime);
-            journeyPreparationFailures = 0; journeyWindowScale = 1; journeyRetryAt = 0;
+            journeyPreparationFailures = 0; journeyRetryAt = 0;
             ResetJourneyPreparation();
         }
         else PreparationFailed("No validated ending for the next section: " + journeyEndingPlanner.Reason);
@@ -447,7 +459,7 @@ internal sealed partial class ScenicProduction
             Vector3.Distance(Player.m_localPlayer.transform.position, FromCore(seam)), ScenicJourneyPolicy.WindowMetres,
             inheritedGazeMetres: inheritedGaze,
             observationReachMetres: predecessor.UsesJourneyView ? (double?)JourneyViewPolicy.ObservationRange : null);
-        double metres = Math.Min(journey.NextWindowMetres(committed) * journeyWindowScale, available);
+        double metres = Math.Min(journey.NextWindowMetres(committed), available);
         if (metres < ScenicJourneyPolicy.MinimumWindowMetres) return;
         ScenicFeature? arrival = independent ? null : ObservedArrivalSubject(seam, metres + 8);
         Camera? camera = Camera.main;
@@ -515,7 +527,7 @@ internal sealed partial class ScenicProduction
         testing = best = null; searching = planning = false; evaluator.Reset(); spatial.Reset();
         subjects.Clear(); subjectRetry.Clear(); retryAt = 0; proposed = (float)journeyPlayback.Progress;
         survey.Begin(origin); refreshingSurvey = false; refreshSurvey.Reset(); surveyRefreshAt = Time.unscaledTime + 15;
-        journeyPreparationFailures = 0; journeyWindowScale = 1; journeyRetryAt = 0;
+        journeyPreparationFailures = 0; journeyRetryAt = 0;
         journeyStatus = reason; journey.BreakPresentation();
         TraceJourney("local-replan-start");
     }
@@ -545,7 +557,7 @@ internal sealed partial class ScenicProduction
         {
             RetireJourneyQueue(); journeyPlanner.ForgetSearchEpisode();
             journeyRepairSeed = SnapshotTravelOrigin(Plan);
-            journeyRetryAt = 0; journeyWindowScale = 1;
+            journeyRetryAt = 0;
             TraceJourney("local-replan-horizon-rebased");
         }
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
@@ -564,7 +576,7 @@ internal sealed partial class ScenicProduction
             journeyRepairSeed.Sample(0).CameraPosition.Distance(journeyExitCapture.GetValueOrDefault().Position) > 8)
         {
             journeyRepairSeed = SnapshotTravelOrigin(Plan);
-            journeyRetryAt = 0; journeyWindowScale = 1;
+            journeyRetryAt = 0;
             TraceJourney("local-replan-rebased");
         }
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
@@ -658,7 +670,7 @@ internal sealed partial class ScenicProduction
             }
             journeyDepartureSeed = seed;
             journey.Start(++nextId, itinerary!, settings.ScenicJourneySpeed.Value);
-            journeyRunway.Reset(); journeyPreparationFailures = 0; journeyWindowScale = 1; journeyRetryAt = 0;
+            journeyRunway.Reset(); journeyPreparationFailures = 0; journeyRetryAt = 0;
             journeyPlayback.Reset(); journeyRepairing = journeyRetainsPicture = false; journeyRepairMissingSeconds = 0; journeyRepairSeed = null;
             journeyTravel.Begin(journey.Id, journeyAuthorityWorld, epoch, Time.unscaledTime,
                 requestedJourney ? Math.Max(.01, journeyRequestExpiresAt - Time.unscaledTime) : 90, journey.MaximumSeconds);
@@ -761,6 +773,8 @@ internal sealed partial class ScenicProduction
             .Field("missionDepartureSeconds", journeyTravel.DepartureElapsedSeconds)
             .Field("noProgressSeconds", journeyTravel.NoProgressSeconds).Field("replanRequested", journeyTravel.LocalReplanRequested)
             .Field("openingCandidates", journeyPlanner.OpeningCandidates).Field("rejectedOpenings", journeyPlanner.RejectedOpenings)
+            .Field("planningFailure", journeyPlanner.FailureKind.ToString()).Field("activeOrigins", journeyPlanner.ActiveOriginCount)
+            .Field("activeOrigin", journeyPlanner.ActiveOrigin).Field("originServiceSlices", journeyPlanner.OriginServiceSlices)
             .Field("loading", journeyPlanner.WaitingForLoading).Field("planner", journeyPlanner.Reason));
     }
 }

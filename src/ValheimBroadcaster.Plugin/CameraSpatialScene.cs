@@ -143,7 +143,7 @@ internal sealed class CameraSpatialScene
         double now = Time.unscaledTime;
         if (segments.TryGetValue(key, out CameraSpaceObservation cached) && Fresh(cached, now, SegmentLifetime)) return cached;
         if (!pending.TryGetValue(key, out PendingEdge? work) || now < work.Started ||
-            (use == CameraSpaceUse.Journey ? now - work.LastServiced > PendingLifetime || now - work.EvidenceAt > JourneyNavigationSearch.MaximumEvidenceAge :
+            (use == CameraSpaceUse.Journey ? now - work.EvidenceAt > JourneyNavigationSearch.MaximumEvidenceAge :
                 now - work.Started > PendingLifetime))
         {
             if (work == null && pending.Count >= PendingCapacity) EvictOldestPending();

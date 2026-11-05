@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.51";
+    public const string PluginVersion = "0.8.52";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -254,6 +254,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         }
         try
         {
+            // Live camera validation can request a previously unseen readable
+            // mesh. Service its bounded CPU/BVH work before other planning,
+            // rather than waiting for an unrelated candidate to discover it.
+            if (director.IsEnabled) ScenicFoliageScene.Shared.WarmPendingGeometry();
             ObserverPhase previousPhase = observer.Phase;
             if (observer.Tick(Time.deltaTime))
             {
