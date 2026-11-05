@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.44 operator coverage modes
+
+`broadcast mode auto|scenic|player|creature|status` separates operator coverage intent from actual output and transport automation. Scenic ignores connected-player acquisition while retaining automatic destination travel; Player disables wildlife cutaways; Creature prefers eligible local actors and falls back to scenery. Native travel completes before the new intent controls the arrived scene. No server update is required; observer protocol stays 3.
+
+Real-reference client/server/replay compilation passed with warnings as errors; **1,142/1,142 Core tests** and **94/94 native math tests** passed. New cases cover ready/distant player suppression, continued Scenic travel, in-flight mode changes, Auto restoration, safe missing-subject fallback, creature cooldowns and preference lifecycle. Console/game/rendering validation remains pending; see [operator controls and runtime checks](OPERATOR-MODES.md).
+
 ## 0.8.43 Scenic acquisition repair
 
 The supplied 0.8.42 recordings are a failed runtime result: 492 of 517 mapped frames show a slate, and first live output follows two relocations, about 41.8 seconds after region setup. No Journey starts. The trace demonstrates demand-stepped independent picture admission that never completes its cold foliage projection, plus obsolete catalogue traversal after relocation. [Evidence, repair and limits](SCENIC-0.8.43-RECOVERY.md). The exact 0.8.42 change that triggered this sequence remains unresolved; the user’s before/after regression is accepted.
