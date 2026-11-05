@@ -139,6 +139,7 @@ internal static class Program
             .Concat(JourneyHandoffTests.Cases())
             .Concat(JourneyRunwayTests.Cases())
             .Concat(JourneyTravelControllerTests.Cases())
+            .Concat(JourneyOperatorStatusTests.Cases())
             .Concat(JourneyRoutePlaybackTests.Cases())
             .Concat(JourneyDepartureSpaceTests.Cases())
             .Concat(JourneyMissionReplayTests.Cases())

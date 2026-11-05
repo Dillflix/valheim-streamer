@@ -104,6 +104,7 @@ internal sealed partial class ScenicProduction
     private void ClearJourneyProgramme()
     {
         RetireJourneyQueue(); journeySection?.Dispose();
+        journeyPlanner.ForgetSearchEpisode();
         journeyEndingPlanner.Dispose(); journeyEndingLease.Dispose(); journeyPendingSection = null; journeySection = null;
         journeyRunway.Reset(); journeyPreparationFailures = 0; journeyRetryAt = 0; journeyWindowScale = 1;
         journeyTravel.Reset(); journeyPlayback.Reset(); journeyRepairing = journeyRetainsPicture = false; journeyRepairMissingSeconds = 0; journeyRepairSeed = null;
@@ -536,10 +537,34 @@ internal sealed partial class ScenicProduction
             journeyQueue.RemoveAt(0); journeyRepairSeed = null; journey.BreakPresentation();
             TraceJourney("local-replan-resumed"); changed = true; return true;
         }
+        // A moving fallback may develop away from the stopped travel pose.
+        // Rebase between completed search batches, using actual presentation,
+        // rather than cancelling useful work on every ordinary camera cut.
+        if (!journeyRetainsPicture && !journeyPlanning && journeyQueue.Count == 0 &&
+            HasUsablePicture && journeyExitCapture.HasValue && journeyExitCapturedPlan?.Id == Plan?.Id &&
+            Time.unscaledTimeAsDouble >= journeyExitCapture.Value.Time &&
+            Time.unscaledTimeAsDouble - journeyExitCapture.Value.Time <= .25 &&
+            journeyRepairSeed.Sample(0).CameraPosition.Distance(journeyExitCapture.Value.Position) > 8)
+        {
+            journeyRepairSeed = SnapshotTravelOrigin(Plan);
+            journeyRetryAt = 0; journeyWindowScale = 1;
+            TraceJourney("local-replan-rebased");
+        }
+        if (journeyRepairSeed == null) return JourneyOwnsPicture;
         PrepareJourneyTail(settings, journeyRepairSeed, 0, moveCarrier, true);
         journeyStatus = "Replanning the same Journey: " + journeyPlanner.Reason;
         if (Time.unscaledTime >= nextJourneyTrace) { TraceJourney("local-replan-progress"); nextJourneyTrace = Time.unscaledTime + 1; }
         return JourneyOwnsPicture;
+    }
+
+    private void ReleaseJourneyRepairPicture(long admittedPicture)
+    {
+        if (!journeyRepairing || !journeyRetainsPicture) return;
+        // Called only after ordinary admission has succeeded. A pending or
+        // rejected candidate cannot remove the currently readable route pose.
+        journeyRetainsPicture = false;
+        journey.BreakPresentation();
+        ScenicTrace.Event("journey-repair-picture", "Fresh local coverage replaces the stationary Journey view; travel mission retained", admittedPicture);
     }
 
     private static bool WithinJourneyHorizon(ScenicShotPlan plan, Vector3 carrier) =>
@@ -681,6 +706,7 @@ internal sealed partial class ScenicProduction
         }
         journeyOwned = false; requestedJourney = manualJourney = false;
         RetireJourneyQueue(); journeyPredecessor = 0; nextJourneyAt = Time.unscaledTime + 180;
+        journeyPlanner.ForgetSearchEpisode();
         journeyStatus = reason;
         if (wasOwned || wasRequested) TraceJourney("finish");
         journeyTravel.Cancel(reason); journeyRequestExpiresAt = 0;

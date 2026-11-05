@@ -22,6 +22,8 @@ internal sealed class IdleShots
     internal bool ManualJourneyPending => scenic.ManualJourneyPending;
     internal Vector3? JourneyLoadingPoint => scenic.JourneyLoadingPoint;
     internal string JourneyStatus => scenic.JourneyStatus;
+    internal JourneyOperatorStatus JourneyOperator => scenic.JourneyOperator;
+    internal string JourneyPictureLabel => scenic.JourneyPictureLabel;
     internal long JourneyEndRevision => scenic.JourneyEndRevision;
     internal ScenicRegion? JourneyArrivedDestination => scenic.JourneyArrivedDestination;
     internal WorldInterestSite? JourneyArrivedSite => scenic.JourneyArrivedSite;

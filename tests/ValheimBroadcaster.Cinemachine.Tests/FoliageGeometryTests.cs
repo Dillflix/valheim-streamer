@@ -24,6 +24,7 @@ internal static class FoliageGeometryTests
         yield return ("Canopy escape requires complete camera-inside evidence", CanopyEvidence);
         yield return ("Canopy escape rejects excessive lifts instead of clamping inside leaves", CanopyBounded);
         yield return ("Canopy escape ignores distant crowns and unused array entries", CanopyNeighborhood);
+        yield return ("Journey foreground obstruction can propose a measured escape without claiming physical camera intersection", ForegroundEscape);
     }
 
     private static void EmptyBounds()
@@ -38,6 +39,22 @@ internal static class FoliageGeometryTests
             Check(FoliageGeometryMath.ResolveBounds(default, default, Matrix4x4.identity, true, out _) ==
                 FoliageGeometryMath.BoundsSource.Empty, "Empty entry consumed coverage.");
         Check(map.CoverageAt(Vector3.zero, 16) == 16, "Empty entries erased coverage.");
+    }
+
+    private static void ForegroundEscape()
+    {
+        var camera = new Vector3(0, 10, 0);
+        var foliage = new[] { new Bounds(new Vector3(3, 12, 0), new Vector3(2, 6, 2)),
+            new Bounds(new Vector3(3, 18, 0), new Vector3(2, 4, 2)) };
+        Check(!FoliageGeometryMath.TryCanopyLift(camera, foliage, foliage.Length, true, 6, out _),
+            "Ordinary camera-inside evidence was silently weakened for all Scenic modes");
+        Check(FoliageGeometryMath.TryCanopyLift(camera, foliage, foliage.Length, true, 6, out float lift, true) &&
+            Math.Abs(lift - 11) < .0001, "Measured foreground escape failed to clear the observed stacked canopy column");
+        Check(!FoliageGeometryMath.TryCanopyLift(camera, foliage, foliage.Length, false, 6, out _, true),
+            "Incomplete foliage observations invented a canopy height");
+        var distant = new[] { new Bounds(new Vector3(30, 12, 0), new Vector3(2, 6, 2)) };
+        Check(!FoliageGeometryMath.TryCanopyLift(camera, distant, 1, true, 6, out _, true),
+            "A distant tree supplied a local camera escape");
     }
     private static void RecoverBounds()
     {

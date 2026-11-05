@@ -199,6 +199,8 @@ internal sealed class ScenicPathEvaluator : IDisposable
         return window.HasRejectedContinuation ? section.WithRejectedContinuation(window.ContinuationRejection) : section;
     }
     internal float SuggestedCanopyLift { get; private set; }
+    internal ScenicPose? RejectedPose { get; private set; }
+    internal ScenicPose? CanopyEscapePose { get; private set; }
     internal ScenicRejectionKind FailureKind { get; private set; }
     internal string FailureReason { get; private set; } = "none";
     internal string Reason { get; private set; } = "No scenic route prepared";
@@ -316,9 +318,13 @@ internal sealed class ScenicPathEvaluator : IDisposable
                 // the route. Continue looking for a connected usable section;
                 // an occluded opening must not hide a clear middle or ending.
                 RecordRejection(kind, reason);
+                RejectedPose ??= pose;
                 if ((kind == ScenicRejectionKind.Foliage || kind == ScenicRejectionKind.Focus || kind == ScenicRejectionKind.InsideVegetation) &&
-                    visibility.TryCanopyLift(pose.Position, out float lift))
+                    visibility.TryCanopyLift(pose.Position, out float lift, plan.IsJourney && kind == ScenicRejectionKind.Foliage))
+                {
+                    if (lift > SuggestedCanopyLift) CanopyEscapePose = pose;
                     SuggestedCanopyLift = Mathf.Max(SuggestedCanopyLift, lift);
+                }
             }
             if (Finite(surveyWaitStarted))
             {
@@ -390,6 +396,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
         sceneEpoch = 0;
         fitting = false; fitLift = totalLift = 0; fitPasses = 0;
         routeRejected = previousReadable = false; measuredTravel = 0; SuggestedCanopyLift = 0; window.Reset();
+        RejectedPose = CanopyEscapePose = null;
         surveyWaitSeconds = 0; surveyWaitStarted = float.NegativeInfinity;
         FailureKind = ScenicRejectionKind.None; FailureReason = "none"; Reason = "No scenic route prepared";
     }

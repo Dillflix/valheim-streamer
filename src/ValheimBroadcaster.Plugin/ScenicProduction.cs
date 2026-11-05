@@ -482,7 +482,10 @@ internal sealed partial class ScenicProduction
         if (FixtureActive && TickFixture(settings, moveCarrier, held, allowActivate, out bool fixtureChanged)) return fixtureChanged;
         // Journey execution owns the on-air plan, not the whole planning pipeline.
         // Continue local surveys and stage ordinary exit coverage under the shared budget.
-        allowActivate &= !journeyControls;
+        // A retained Journey pose keeps footage available while repair works;
+        // it must not veto a freshly validated local fallback. Travel ownership
+        // remains with the mission even after the picture changes.
+        allowActivate &= !journeyControls || journeyRepairing;
         // A previously measured clear node keeps progressing toward actual
         // admission even if route search changes subject, finishes or resets.
         // This owns no footage until complete current validation succeeds.
@@ -750,7 +753,8 @@ internal sealed partial class ScenicProduction
         // A requested editorial improvement must not discard a valid moving
         // shot for the first static graph node encountered during preparation.
         // Actual blocked/completed routes retain independent-picture fallback.
-        bool protectCurrent = HasUsablePicture && (pictures.Current != null || !director.BlocksMovement);
+        bool protectCurrent = HasUsablePicture && !(journeyRepairing && journeyRetainsPicture) &&
+            (pictures.Current != null || !director.BlocksMovement);
         if (!pictures.WantsCandidate(protectCurrent)) { pictureAdmission.Reset(); return false; }
         long epoch = CameraSpatialScene.Shared.Epoch;
         if (pictureAdmission.Pending == null)
@@ -776,6 +780,7 @@ internal sealed partial class ScenicProduction
         if (!pictures.TryOffer(admitted, epoch, CameraSpatialScene.Shared.Epoch, Time.unscaledTime,
             Time.unscaledTime, protectCurrent)) return false;
         usingIndependentPicture = true;
+        ReleaseJourneyRepairPicture(admitted.Id);
         journeyExitExhausted = false;
         readiness.Reset(); proposed = 0;
         if (director.Current != null) director.RequestReplacement("Developing a new cinematic route while a measured picture remains available");
@@ -990,6 +995,7 @@ internal sealed partial class ScenicProduction
         { retryAt = 0; Reason = "Prepared view already covered; planning a fresh feature"; return false; }
         director.Accept(selected, Time.unscaledTime); readiness.Reset();
         usingIndependentPicture = false;
+        ReleaseJourneyRepairPicture(selected.Id);
         journeyExitExhausted = false;
         // Acceptance is only a proposed cut. Only rendered readable output may
         // renew the on-air recovery budget or clear its exhausted state.
