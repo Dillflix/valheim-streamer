@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.45 corrects Scenic successor scheduling and repeated foliage inventory scans.** Normal prefetch considers developed views before settling for another establishing shot, reconciles duplicate building observations, and ranks local cuts for continuity. A scene-owned foliage index reduces repeated stationary-geometry enumeration without weakening visibility checks. **No server update required; protocol remains 3.** [Evidence, scope and runtime limits](docs/SCENIC-0.8.45-EDITORIAL.md). In-game visual confirmation remains pending.
+
 **0.8.44 adds explicit operator coverage modes.** Use `broadcast mode scenic` to keep Scenic coverage and its automatic travel running while other players are online; `broadcast mode auto` restores normal selection. Player and Creature preferences, fallback diagnostics and session cleanup are included. **No server update is required; protocol remains 3.** [Commands and behavior](docs/OPERATOR-MODES.md). In-game confirmation is pending.
 
 **0.8.43 repairs the Scenic acquisition failures recorded after 0.8.42.** Independent picture admission retains and advances an unfinished exact-pose check instead of consuming every proposal after one attempt. Region relocation cancels an obsolete foliage traversal while preserving conservative coverage. **No server update is required; observer protocol remains 3.** [Recorded evidence, repair scope and validation limits](docs/SCENIC-0.8.43-RECOVERY.md). In-game confirmation is pending.

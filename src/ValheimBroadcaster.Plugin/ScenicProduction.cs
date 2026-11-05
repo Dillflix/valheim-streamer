@@ -420,7 +420,7 @@ internal sealed partial class ScenicProduction
         }
         RefreshEnvironment();
         // Preparing never advances the current camera or earns presentation time.
-        if (allowActivate && director.Prepared != null && (!held || Plan == null) && pictures.CanYield(Time.unscaledTime) &&
+        if (allowActivate && director.Prepared != null && director.SuccessorContextReady(director.Prepared) && (!held || Plan == null) && pictures.CanYield(Time.unscaledTime) &&
             (NeedsReplacement || director.ShouldPrefetch && Time.unscaledTime - preparedAt > 4f))
         {
             ScenicShotPlan staged = director.TakePrepared()!;
@@ -446,7 +446,8 @@ internal sealed partial class ScenicProduction
         {
             if (!planning)
             {
-                if (subjects.Count == 0 || attempts >= ScenicCandidateSchedule.SpatialAttemptLimit(subjects, CurrentFeatureIndex(), sweep))
+                if (subjects.Count == 0 || ScenicCandidateSchedule.ComparisonComplete(attempts, best != null) ||
+                    attempts >= ScenicCandidateSchedule.SpatialAttemptLimit(subjects, CurrentFeatureIndex(), sweep))
                     return FinishSearch(held, allowActivate);
                 if (!BeginSpatialCandidate(settings, moveCarrier, recovery.Active && allowActivate)) return false;
             }
@@ -516,7 +517,7 @@ internal sealed partial class ScenicProduction
             RememberFailure();
         }
         testing = null;
-        if (best != null && (recovery.Active && allowActivate || Plan == null || revalidating || attempts >= 4 && bestScore >= .6))
+        if (best != null && (recovery.Active && allowActivate || Plan == null || revalidating || ScenicCandidateSchedule.ComparisonComplete(attempts, true)))
             return FinishSearch(held, allowActivate);
         revalidating = false;
         return false;
@@ -577,11 +578,16 @@ internal sealed partial class ScenicProduction
 
     private bool BeginSpatialCandidate(BroadcastSettings settings, bool moveCarrier, bool urgent)
     {
-        ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.SelectSpatial(subjects, CurrentFeatureIndex(), sweep, attempts++);
+        ScenicCandidateSchedule.Candidate candidate = ScenicCandidateSchedule.SelectSpatial(subjects, CurrentFeatureIndex(), sweep, attempts++,
+            developing: !urgent && HasUsablePicture && !director.BlocksMovement);
         ScenicFeature feature = subjects[candidate.FeatureIndex];
         if (!director.CanDevelopSubject(feature)) return false;
-        ScenicShotRole preferred = destinationSubject.Prioritize && destinationSubject.Meaningful(feature) &&
-            destinationSubject.EstablishedSeconds < DestinationSubjectCoverage.ContextSeconds ? ScenicShotRole.Establish : director.PreferredRole(feature);
+        ScenicShotRole preferred = urgent ? director.PreferredRole(feature) : director.PreferredNextRole(feature);
+        bool anticipatedDevelopment = !urgent && director.Current?.FeatureId == feature.Id &&
+            director.Current.Role == ScenicShotRole.Establish && director.ElapsedSeconds >= 2 && preferred != ScenicShotRole.Establish;
+        if (destinationSubject.Prioritize && destinationSubject.Meaningful(feature) &&
+            destinationSubject.EstablishedSeconds < DestinationSubjectCoverage.ContextSeconds && !anticipatedDevelopment)
+            preferred = ScenicShotRole.Establish;
         ScenicShotRole role = ScenicCandidateSchedule.Role(feature, preferred, candidate.RoleIndex);
         testingKey = feature.Id + "/" + role;
         if (subjectRetry.TryGetValue(testingKey, out float retry) && Time.unscaledTime < retry) return false;
@@ -691,7 +697,8 @@ internal sealed partial class ScenicProduction
         foreach (ScenicFeature feature in destinationFeatures)
         {
             bool exists = false;
-            foreach (ScenicFeature retained in subjects) if (retained.Id == feature.Id) { exists = true; break; }
+            foreach (ScenicFeature retained in subjects)
+                if (retained.Id == feature.Id || ScenicFeatureIdentity.SameMeasuredStructure(retained, feature)) { exists = true; break; }
             if (exists) continue;
             if (subjects.Count >= 32)
             {
@@ -782,6 +789,8 @@ internal sealed partial class ScenicProduction
     {
         if (validatedEpoch != CameraSpatialScene.Shared.Epoch)
         { retryAt = 0; Reason = "Observed geometry changed before scenic cut"; return false; }
+        if (!director.SuccessorContextReady(selected))
+        { director.Stage(selected); Reason = "Prepared subject development awaits shown establishing context"; return false; }
         if (!director.CanOffer(selected))
         { retryAt = 0; Reason = "Prepared view already covered; planning a fresh feature"; return false; }
         director.Accept(selected, Time.unscaledTime); readiness.Reset();

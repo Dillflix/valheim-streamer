@@ -46,7 +46,10 @@ internal sealed class ScenicVisibility
 
     internal void Reset()
     {
-        ScenicTrace.Event(owner, "Survey reset", QueryId);
+        // Inactive rigs may be reset every frame. Record actual observation
+        // invalidation, not a no-op that crowds useful diagnostics out of retention.
+        if (foliage.Updating || !float.IsNegativeInfinity(refreshedAt) || activeCount > 0)
+            ScenicTrace.Event(owner, "Survey reset", QueryId);
         foliage.Reset(); refreshedAt = float.NegativeInfinity; coveredRadius = 0; activeCount = 0;
     }
 

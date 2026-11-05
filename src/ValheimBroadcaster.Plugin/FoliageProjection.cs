@@ -21,6 +21,7 @@ internal sealed class FoliageProjection
     private readonly List<float> distances = new List<float>(Capacity);
     private readonly Bounds[] active = new Bounds[BoundsCapacity];
     private IReadOnlyList<ScenicFoliageScene.Observation>? source;
+    private readonly List<int> sourceCandidates = new List<int>(Capacity);
     private Vector3 origin, pendingOrigin, priority;
     private float coveredRadius, pendingCoverage, refreshedAt = float.NegativeInfinity;
     private long epoch = -1, revision = -1, pendingRevision, pendingGeneration;
@@ -59,7 +60,7 @@ internal sealed class FoliageProjection
     internal FoliageProjection(float radius, string owner = "scenic") { this.radius = radius; this.owner = owner; }
     internal void Reset()
     {
-        retained.Clear(); staging.Clear(); distances.Clear(); source = null; collecting = refining = false;
+        retained.Clear(); staging.Clear(); distances.Clear(); sourceCandidates.Clear(); source = null; collecting = refining = false;
         coveredRadius = pendingCoverage = 0; refreshedAt = float.NegativeInfinity; epoch = revision = -1;
         activeFrame = refinementFrame = -1; ActiveCount = Omitted = Detailed = retainedRefineIndex = 0;
         refinementPending = pendingRefinement = false; nextProgressTrace = 0;
@@ -81,6 +82,11 @@ internal sealed class FoliageProjection
             if (revision == scene.Revision && now >= refreshedAt && now - refreshedAt < 5 &&
                 Vector3.Distance(requested, origin) <= allowance && CoveredRadius > allowance)
             { RefineRetained(scene, detailPriority ?? requested); return; }
+            if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out CameraWorkBudget.Lease queryWork))
+            { Trace("budget-deferred", requested); return; }
+            // Bind the broad phase to the same published generation as source.
+            // Publication aborts pending work before it can use recycled storage.
+            using (queryWork) scene.Query(requested, radius, sourceCandidates);
             source = scene.Renderers; pendingRevision = scene.Revision; pendingGeneration = scene.Generation; pendingOrigin = requested;
             priority = detailPriority ?? requested; pendingCoverage = scene.CoverageAt(requested, radius);
             staging.Clear(); distances.Clear(); sourceIndex = refineIndex = furthest = 0;
@@ -91,17 +97,17 @@ internal sealed class FoliageProjection
         using (lease)
         {
             int steps = 0;
-            while (collecting && sourceIndex < source!.Count && steps++ < 256 &&
+            while (collecting && sourceIndex < sourceCandidates.Count && steps++ < 256 &&
                 CameraWorkBudget.Shared.CanContinue(CameraWorkKind.Observation))
             {
-                ScenicFoliageScene.Observation item = source[sourceIndex++];
+                ScenicFoliageScene.Observation item = source![sourceCandidates[sourceIndex++]];
                 Renderer renderer = item.Renderer;
                 if (!renderer || !renderer.enabled || renderer.forceRenderingOff || !renderer.gameObject.activeInHierarchy) continue;
                 if (!item.TryBounds(out Bounds bounds))
                 { pendingCoverage = item.LimitUnknownCoverage(pendingOrigin, pendingCoverage); continue; }
                 Add(item, bounds);
             }
-            if (collecting && sourceIndex == source!.Count)
+            if (collecting && sourceIndex == sourceCandidates.Count)
             {
                 collecting = false; refining = true; detailRemaining = DetailBudget; pendingRefinement = false;
                 // Deterministic priority: containing/nearest camera geometry is
@@ -144,7 +150,7 @@ internal sealed class FoliageProjection
         CameraTraceRecord row = ScenicTrace.Row("foliage-projection").Field("action", action).Field("projection", id).Field("owner", owner)
             .Field("radius", radius).Field("revision", revision).Field("pendingRevision", pendingRevision)
             .Field("generation", pendingGeneration).Field("catalogueGeneration", ScenicFoliageScene.Shared.Generation)
-            .Field("sourceIndex", sourceIndex).Field("sourceCount", source?.Count ?? 0)
+            .Field("sourceIndex", sourceIndex).Field("sourceCount", sourceCandidates.Count).Field("inventoryCount", source?.Count ?? 0)
             .Field("refineIndex", refineIndex).Field("refineCount", staging.Count)
             .Field("retained", retained.Count).Field("omitted", Omitted)
             .Field("coveredRadius", CoveredRadius).Field("pendingCoverage", pendingCoverage)
