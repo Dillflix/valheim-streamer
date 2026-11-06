@@ -242,6 +242,13 @@ internal sealed partial class ScenicProduction
         Camera? camera = Camera.main;
         if (journeyPendingSection == null)
         {
+            if (journeyOwned && !journeyRepairing)
+            {
+                double runway = JourneyRunwayMetres();
+                double speed = Math.Max(2, journeyRunway.EffectiveCruise);
+                if (runway / speed <= journeyRunway.RequiredRunwaySeconds)
+                    journeyPlanner.LimitContinuationGuide(Math.Max(ScenicJourneyPolicy.MinimumWindowMetres, runway * .5));
+            }
             journeyPlanner.Step(); journeyStatus = journeyPlanner.Reason;
             if (!journeyPlanner.Complete) return;
             if (journeyPlanner.Ready == null || journeyPlanner.Epoch != CameraSpatialScene.Shared.Epoch)
@@ -523,7 +530,7 @@ internal sealed partial class ScenicProduction
         Camera? currentCamera = Camera.main;
         if (currentCamera) origin = currentCamera.transform.position;
         CancelComparison("Rebase fallback at the interrupted Journey position");
-        director.Reset(); pictures.Reset(); pictureAdmission.Reset(); usingIndependentPicture = false;
+        director.RebaseInWorld(); pictures.Reset(); pictureAdmission.Reset(); usingIndependentPicture = false;
         testing = best = null; searching = planning = false; evaluator.Reset(); spatial.Reset();
         subjects.Clear(); subjectRetry.Clear(); retryAt = 0; proposed = (float)journeyPlayback.Progress;
         survey.Begin(origin); refreshingSurvey = false; refreshSurvey.Reset(); surveyRefreshAt = Time.unscaledTime + 15;

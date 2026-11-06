@@ -262,10 +262,23 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(quality));
             double score = siteSequence.Priority(plan.Feature!) + quality + plan.Feature!.Confidence * .08 + Math.Min(.1, plan.VisualChange * .2);
             int sameFeature = RecentCount(plan.FeatureId);
+            double repeatedRockSetting = 0;
             foreach (ShownShot shown in history)
             {
                 double age = now - shown.At;
                 if (age < 0 || age > 300) continue;
+                if (age <= 90 && plan.Feature.Kind == ScenicFeatureKind.Rock && shown.Plan.Feature?.Kind == ScenicFeatureKind.Rock &&
+                    plan.Role == ScenicShotRole.Establish && shown.Plan.Role == ScenicShotRole.Establish)
+                {
+                    // Neighbouring rocks can describe the same landscape. Use
+                    // the width of the shown composition at its aim distance.
+                    ScenicShotSample sample = shown.Plan.Sample(.5);
+                    double width = 2 * sample.CameraPosition.Distance(sample.AimPosition) *
+                        Math.Tan(shown.Plan.FieldOfView * Math.PI / 360);
+                    double separation = shown.Plan.Feature.Center.Distance(plan.Feature.Center);
+                    repeatedRockSetting = Math.Max(repeatedRockSetting,
+                        .35 * Math.Max(0, 1 - separation / Math.Max(1, width)) * (1 - age / 90));
+                }
                 if (shown.Plan.FeatureId == plan.FeatureId)
                 {
                     if (shown.Plan.Role == plan.Role) score -= .16;
@@ -283,7 +296,7 @@ namespace ValheimBroadcaster.Core
                 if (now < history[i].At || now - history[i].At > 300 || history[i].Plan.Role != plan.Role) break;
                 repeatedRole++;
             }
-            score -= repeatedRole * .16;
+            score -= repeatedRole * .16 + repeatedRockSetting;
             if (HasPresented && ElapsedSeconds >= 2)
                 score += ScenicEditContinuity.Score(Current, NeedsReplacement ? Progress : 1, plan);
             if (Current?.FeatureId == plan.FeatureId && sameFeature > 0 && sameFeature < 3) score += .1;
@@ -381,13 +394,20 @@ namespace ValheimBroadcaster.Core
             return true;
         }
 
-        public void Reset()
+        public void RebaseInWorld()
         {
             Current = Prepared = null; Progress = ElapsedSeconds = BlockedSeconds = 0;
-            lastObservation = -1; now = badPictureSeconds = missingPictureSeconds = 0;
+            lastObservation = -1; badPictureSeconds = missingPictureSeconds = 0;
             recorded = false; movementEnabled = true; HasPresented = false; stationarySeconds = 0; replacementCause = ReplacementCause.None;
             editorialReason = null;
-            history.Clear(); episodes.Clear(); siteSequence.Reset(); Reason = "Awaiting a measured scenic subject";
+            siteSequence.Reset(); Reason = "Awaiting a measured scenic subject";
+        }
+        public void Reset()
+        {
+            RebaseInWorld();
+            now = 0;
+            history.Clear();
+            episodes.Clear();
         }
         private static void CheckPlan(ScenicShotPlan plan)
         {

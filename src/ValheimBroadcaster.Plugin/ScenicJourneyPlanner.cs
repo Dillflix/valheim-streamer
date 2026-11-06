@@ -370,6 +370,12 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         FailureKind = ScenicJourneyPlanningFailure.None; RejectNavigationCandidate();
     }
 
+    internal void LimitContinuationGuide(double metres)
+    {
+        if (!departureCut && !arrivalCenter.HasValue)
+            continuation.LimitGuide(Math.Max(ScenicJourneyPolicy.MinimumWindowMetres, Math.Floor(metres / 4) * 4));
+    }
+
     internal bool WithinLoadingHorizon(Vector3 carrier)
     {
         AutonomyPosition observer = P(carrier);

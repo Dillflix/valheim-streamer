@@ -21,6 +21,7 @@ internal static class ScenicDirectorTests
         yield return ("Scenic shot progression never repays an interruption", NoCatchUp);
         yield return ("Actual scenic footage earns sequence beats, candidate search does not", SequenceEvidence);
         yield return ("Scenic ranking rewards distinct views and retires exhausted subjects", ViewMemory);
+        yield return ("Scenic fallback ranks a different rock setting above another nearby establishing view", RockSetting);
         yield return ("Scenic memory remains bounded and resets across worlds", BoundedHistory);
         yield return ("Missing or unreadable scenic output requests bounded replacement", PictureFailure);
         yield return ("Scenic rejected progress never revokes already accepted progress", MonotonicProgress);
@@ -218,12 +219,30 @@ internal static class ScenicDirectorTests
         Check(d.Rank(Plan(6, "new-ridge"), .9) > d.Rank(Plan(7), .9),
             "An exhausted feature did not yield to an unshown place.");
     }
+    private static void RockSetting()
+    {
+        ScenicShotPlan Rock(long id, float x)
+        {
+            var rock = new ScenicFeature("rock-" + id, ScenicFeatureKind.Rock, P(x), P(1, 0, 0), 3, 3, .8f);
+            return ScenicShotPlan.Directed(id, rock, ScenicShotRole.Establish,
+                P(x - 8, 26, -30), P(x + 8, 26, -30), P(x), P(x + 2), 55);
+        }
+        var director = new ScenicDirector();
+        director.Accept(Rock(1, 0), 0);
+        Observe(director, 0, 22);
+        director.RebaseInWorld();
+        Check(director.Rank(Rock(3, 100), .9) > director.Rank(Rock(2, 12), .9) + .1,
+            "A new rock ID made the same nearby establishing view score like a different setting");
+    }
     private static void BoundedHistory()
     {
         var d = new ScenicDirector();
         for (int shot = 0; shot < 40; shot++)
         { d.Accept(Plan(shot + 1, "feature" + shot), shot * 3); Observe(d, shot * 30, shot * 30 + 22); }
         Check(d.RememberedShots == 24, "Scenic viewing memory grew without a bound.");
+        d.RebaseInWorld();
+        Check(d.Current == null && d.Prepared == null && d.RememberedShots == 24,
+            "Local Journey repair must retire camera plans while preserving shown Scenic history");
         d.Reset(); Check(d.Current == null && d.Prepared == null && d.RememberedShots == 0 && d.Progress == 0,
             "World reset retained scenic identities or direction history.");
     }
