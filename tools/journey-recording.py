@@ -234,8 +234,20 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
         if r["phase"] == "section-admitted":
             before = prepared.get(r.get("section"))
             handoffs.append({"at": round(r["time"]-start, 2), "section": r.get("section"),
-                             "secondsReadyBeforeAdmission": round(r["time"]-before["time"], 2) if before else None,
-                             "previousRunwayAtPreparation": before["freshRunwayMetres"] if before else None})
+                             "secondsBetweenPreparationAndAdmission": round(r["time"]-before["time"], 2) if before else None,
+                             "totalVerifiedMetresAtPreparation": before["freshRunwayMetres"] if before else None})
+    timeline = []
+    prior = None
+    for row in rows:
+        dt = row["time"]-prior["time"] if prior else 0
+        if prior and dt < 1 and row["phase"] not in ("finish", "section-admitted", "section-prepared"):
+            continue
+        timeline.append({"at": round(row["time"]-start, 2), "metres": round(row["measuredMetres"], 2),
+                         "measuredSpeed": round((row["measuredMetres"]-prior["measuredMetres"])/dt, 2) if dt > 0 else None,
+                         "commandedSpeed": row.get("effectiveCruise"), "section": row.get("section"),
+                         "verifiedMetresAhead": row.get("freshRunwayMetres"), "successorReady": row.get("successorReady"),
+                         "state": row["departureState"], "cause": row["missionCause"]})
+        prior = row
     transitions = [{"at": round(group[0]["time"] - start, 1), "state": key[0], "cause": key[1],
                     "seconds": round(group[-1]["time"] - group[0]["time"], 1)}
                    for key, items in itertools.groupby(rows, lambda r: (r["departureState"], r["missionCause"]))
@@ -246,7 +258,7 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
             "longestNearlyStationaryTravelShotSeconds": round(longest_stationary, 2), "videoSegments": len(files), "videoSamples": len(samples),
             "longestVideoGap": maximum_gap, "longestNoProgress": max(stops, default=0),
             "biomes": sorted(terrain), "surfaces": sorted(surfaces), "travelPoseJumps": jumps,
-            "stateIntervals": transitions, "footageCuts": cuts, "handoffs": handoffs, "issues": issues,
+            "progressTimeline": timeline, "stateIntervals": transitions, "footageCuts": cuts, "handoffs": handoffs, "issues": issues,
             "result": "incomplete" if issues else "ready for footage review",
             "review": "Inspect the actual terrain changes, controls, camera continuity, cuts, speed and original-destination arrival."}
 

@@ -798,6 +798,7 @@ internal sealed partial class ScenicProduction
             .Field("destinationX", journey.Itinerary?.Destination.Position.X ?? 0)
             .Field("destinationZ", journey.Itinerary?.Destination.Position.Z ?? 0)
             .Field("arrivalRadius", journey.Itinerary?.ArrivalRadius ?? 0)
+            .Field("successorReady", journeyPlayback.Current != null && JourneyHeadReady(journeyPlayback.Current))
             .Field("preparedSection", prepared).Field("arrivalEnding", journeyEndingArrival ? journeyExitId : 0)
             .Field("trailCells", journey.Trail.Count).Field("journeyOwnsPicture", JourneyOwnsPicture)
             .Field("travelSection", journeyPlayback.Current?.IsJourney == true).Field("section", journeyPlayback.Current?.Id ?? 0).Field("producerMetresPerSecond", journeyRunway.ProductionMetresPerSecond)
