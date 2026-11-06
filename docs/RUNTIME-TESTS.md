@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.53 Journey departure preparation
+
+Two 0.8.52 departures in the supplied session expired after 90 seconds with zero certified runway. In the retained tail of Journey 1069, plan 1085 proposed a 58 m route with onward evidence about 10.2 seconds before expiry. Three origins were already evaluating native curves; one reached sample 0.922. The complete Journey 1131 interval contains 462 clear edges and 32 blocked edges for plan 1132, repeated selected-route refresh and nine origin retirements as their required viewing horizons left local range. It never proposed a native curve.
+
+The production graph now hands its connected guide to the actual native preflight while preserving the measured age of each guide's oldest evidence. The native evaluator checks the fitted camera path, and its independent ending and final onward renewal still precede queueing. Initial search length follows the physical launch reserve and requested speed; continuation retains the longer search. A progressing native preflight receives bounded service priority while other origins continue to advance.
+
+The regression exercises a stale guide, fresh and blocked onward renewal, and launch reserve at multiple speeds. These cases do not replay Valheim's forest geometry. Runtime acceptance requires measurable travel across successive sections.
+
 ## 0.8.52 Journey observation ownership and departure searches
 
 The supplied 0.8.51 first attempt failed to admit any Journey route. Two departure views were readable, but only the first received graph exploration; a 12-second preparation boundary restarted that search. All 3,631 recorded Journey views had solid camera clearance and a ready scene. Of these, 2,385 were rejected by vegetation-bounds containment. The recording does not identify the containing mesh or establish actual leaf intersection. It also records 76 of 263 completed foliage projections failing coverage for the request being evaluated at completion. The request was explicitly stopped after 23.8 seconds; the 90-second deadline had not expired. [Evidence and repair scope](JOURNEY-0.8.52-OBSERVATIONS.md).

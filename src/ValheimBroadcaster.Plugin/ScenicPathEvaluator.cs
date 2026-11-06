@@ -204,6 +204,7 @@ internal sealed class ScenicPathEvaluator : IDisposable
     private float aspect, nearClip, minimumScore, surveyWaitSeconds;
     private float surveyWaitStarted = float.NegativeInfinity;
     private int samples, passSamples;
+    internal int CompletedSamples => samples;
     private long sceneEpoch;
     internal bool Complete { get; private set; }
     internal bool Accepted { get; private set; }

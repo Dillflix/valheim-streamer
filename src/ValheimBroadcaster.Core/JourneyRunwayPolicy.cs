@@ -184,6 +184,16 @@ public sealed class JourneyRunwayPolicy
     public static double MinimumCruise(double requestedCruise)
     { Speed(requestedCruise); return 2; }
 
+    // The opening section needs enough distance to launch at an adapted
+    // speed. Longer continuation searches run as soon as the first is queued.
+    public static double DepartureGuideMetres(double requestedCruise, double available)
+    {
+        Speed(requestedCruise);
+        Number(available, nameof(available));
+        double distance = StoppingDistance(MinimumCruise(requestedCruise)) + requestedCruise * MinimumUsefulSeconds;
+        return Math.Max(ScenicJourneyPolicy.MinimumWindowMetres, Math.Min(available, distance));
+    }
+
     public static double MinimumLaunchMetres(double requestedCruise)
     {
         double speed = MinimumCruise(requestedCruise);

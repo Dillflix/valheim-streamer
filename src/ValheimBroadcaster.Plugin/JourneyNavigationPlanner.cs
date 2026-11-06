@@ -15,6 +15,7 @@ internal sealed class JourneyNavigationPlanner
     private readonly Dictionary<long, Pending> pending = new Dictionary<long, Pending>();
     private readonly JourneyObservationViews views;
     private readonly int pendingLimit;
+    private readonly bool departure;
     private long epoch, query;
     private float speed, fov, aspect, near, screenX, screenY;
     private Vector3 goal;
@@ -50,7 +51,7 @@ internal sealed class JourneyNavigationPlanner
     }
 
     internal JourneyNavigationPlanner(string owner, bool independent)
-    { pendingLimit = independent ? 1 : 8; views = new JourneyObservationViews(owner, pendingLimit + 1); }
+    { departure = independent; pendingLimit = independent ? 1 : 8; views = new JourneyObservationViews(owner, pendingLimit + 1); }
 
     internal void Begin(long mission, long sceneEpoch, long planId, ScenicShotSample first, Vector3 incoming,
         Vector3 entryAim, Vector3 destination, Vector3 carrier, float metres, float metresPerSecond, float fieldOfView, float cameraAspect, float nearClip)
@@ -80,9 +81,9 @@ internal sealed class JourneyNavigationPlanner
         var firstEdge = new JourneyNavigationPose(P(entry), P(entryAim));
         boundStart = opening; boundEntry = firstEdge;
         request = new JourneyNavigationRequest(mission, epoch, opening, firstEdge, P(destination), P(carrier),
-            targetMetres: 56, maximumMetres: 64,
+            targetMetres: departure ? JourneyRunwayPolicy.DepartureGuideMetres(metresPerSecond, metres) : 56, maximumMetres: 64,
             reachMetres: JourneyRunwayPolicy.LocalReachMetres,
-            stepMetres: 4, maximumNodes: 512, maximumEdges: 8192, viewDepth: JourneyViewPolicy.ObservationRange, maximumPending: pendingLimit);
+            stepMetres: 4, maximumNodes: 512, maximumEdges: 8192, viewDepth: JourneyViewPolicy.ObservationRange, maximumPending: pendingLimit, forNativePreflight: true);
         search.Begin(request, Time.unscaledTime);
         active = true; Reason = "Searching connected loaded camera space";
     }

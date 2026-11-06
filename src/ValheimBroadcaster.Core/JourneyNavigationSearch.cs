@@ -21,11 +21,14 @@ public sealed class JourneyNavigationRequest
     public readonly JourneyNavigationPose Start, Entry;
     public readonly AutonomyPosition Goal, Carrier;
     public readonly double TargetMetres, MaximumMetres, ReachMetres, StepMetres, ViewDepth;
+    // A guide is only an input to the native curve evaluator. Its historic
+    // node timestamps must never be promoted into a movement certificate.
+    public readonly bool ForNativePreflight;
     public readonly int MaximumNodes, MaximumEdges, MaximumPending;
     public JourneyNavigationRequest(long missionId, long epoch, JourneyNavigationPose start, JourneyNavigationPose entry,
         AutonomyPosition goal, AutonomyPosition carrier, double targetMetres = 32, double maximumMetres = 80,
         double reachMetres = 85, double stepMetres = 4, int maximumNodes = 512, int maximumEdges = 8192, double viewDepth = 12,
-        int maximumPending = JourneyNavigationSearch.MaximumPending)
+        int maximumPending = JourneyNavigationSearch.MaximumPending, bool forNativePreflight = false)
     {
         if (missionId <= 0 || epoch <= 0 || !JourneyNavigationSearch.ValidPose(start) || !JourneyNavigationSearch.ValidPose(entry) ||
             !JourneyNavigationSearch.ValidPoint(goal) || !JourneyNavigationSearch.ValidPoint(carrier) ||
@@ -38,7 +41,7 @@ public sealed class JourneyNavigationRequest
             throw new ArgumentOutOfRangeException(nameof(targetMetres));
         MissionId = missionId; Epoch = epoch; Start = start; Entry = entry; Goal = goal; Carrier = carrier;
         TargetMetres = targetMetres; MaximumMetres = maximumMetres; ReachMetres = reachMetres; StepMetres = stepMetres;
-        MaximumNodes = maximumNodes; MaximumEdges = maximumEdges; ViewDepth = viewDepth; MaximumPending = maximumPending;
+        MaximumNodes = maximumNodes; MaximumEdges = maximumEdges; ViewDepth = viewDepth; MaximumPending = maximumPending; ForNativePreflight = forNativePreflight;
     }
     private static bool Finite(double x) => !double.IsNaN(x) && !double.IsInfinity(x);
 }
@@ -426,6 +429,7 @@ public sealed class JourneyNavigationSearch
             bool onward = work.Cursor == work.Path.Count;
             Node? node = onward ? null : nodes[work.Path[work.Cursor]];
             double at = onward ? work.OnwardObservedAt : node!.ObservedAt;
+            if (!onward && request!.ForNativePreflight) { work.Cursor++; continue; }
             if (now - at <= MaximumEvidenceAge && at <= now + .000001) { work.Cursor++; continue; }
             if (used >= budget) return false;
             JourneyNavigationPose pose = onward ? work.Onward!.Value : node!.Pose;
@@ -447,12 +451,12 @@ public sealed class JourneyNavigationSearch
         { Node node = nodes[work.Path[i]]; poses[i] = node.Pose; oldest = Math.Min(oldest, node.ObservedAt); }
         // Long observation waits can stale an earlier revalidation. Retry from
         // that same immutable path; never relabel old evidence as fresh.
-        if (now - oldest > MaximumEvidenceAge) { work.Cursor = 0; return false; }
+        if (!request!.ForNativePreflight && now - oldest > MaximumEvidenceAge) { work.Cursor = 0; return false; }
         Node end = nodes[work.Node];
         Result = new JourneyNavigationPath(poses, work.Onward, end.Length,
             initialGoalDistance - end.Pose.Position.Distance(request!.Goal), oldest,
             work.Onward.HasValue ? work.OnwardObservedAt : 0, request.Epoch, AtGoal(end));
-        Finish(JourneyNavigationStatus.Ready, "Fresh connected body/aim proposal and onward witness; native curve and ending still require full validation");
+        Finish(JourneyNavigationStatus.Ready, "Connected guide ready for native curve and ending validation");
         return true;
     }
 

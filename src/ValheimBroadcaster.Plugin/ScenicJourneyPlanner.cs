@@ -46,7 +46,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         internal ScenicShotPlan? Candidate;
         internal bool Bound;
         internal int Slices;
-        internal float RetryAt;
+        internal float RetryAt, LastNativeProgressAt = float.NegativeInfinity;
         internal OriginLane(Opening opening)
         { Opening = opening; Navigation = new JourneyNavigationPlanner("journey-origin-" + opening.Id, true);
           Visibility = new ScenicVisibility("journey-origin-" + opening.Id + "-preflight"); }
@@ -232,7 +232,17 @@ internal sealed class ScenicJourneyPlanner : IDisposable
                 evaluator.Begin(candidate!, activeVisibility, aspect, nearClip, moveCarrier);
             }
         }
+        int before = evaluator.CompletedSamples;
         bool complete = evaluator.Step(6);
+        if (departureCut)
+        {
+            OriginLane lane = lanes[activeLane];
+            if (evaluator.CompletedSamples > before) lane.LastNativeProgressAt = Time.unscaledTime;
+            // Let a productive native preflight finish across short query
+            // waits. The scheduler still services other origins between bursts.
+            bool progressing = Time.unscaledTime - lane.LastNativeProgressAt < .35f;
+            schedule.ReportProofProgress(activeLane, !complete, progressing, !progressing);
+        }
         if (!complete && (evaluator.FailureKind == ScenicRejectionKind.None || evaluator.FailureKind == ScenicRejectionKind.SurveyIncomplete))
         { Reason = evaluator.Reason; return; }
         ScenicShotPlan? fitted = evaluator.EvaluatedPlan;
