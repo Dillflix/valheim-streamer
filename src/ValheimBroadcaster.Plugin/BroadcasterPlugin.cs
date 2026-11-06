@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.55";
+    public const string PluginVersion = "0.8.56";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -102,7 +102,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     {
         if (GUIManager.IsHeadless()) { enabled = false; return; }
         settings = new BroadcastSettings(Config);
-        ScenicTrace.Initialize(BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
+        ScenicTrace.Initialize(BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message), settings.TraceRetentionMiB.Value);
         remote = new RemoteObserverClient(() => settings.ObserverConnection.Value, message => Logger.LogInfo(message));
         cameraFixtures = new CameraFixtureController(BepInEx.Paths.ConfigPath);
         scenicEnvironment = new ScenicEnvironmentController(remote, message => Logger.LogInfo(message));
@@ -140,7 +140,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             diagnosticCapture.Configure(frameHold,
                 () => enabled && director.IsEnabled && settings.DiagnosticVideo.Value && ScenicTrace.Enabled &&
                     Player.m_localPlayer && ZNet.instance && activeWorld == ZNet.instance,
-                () => settings.FFmpegPath.Value, BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message));
+                () => settings.FFmpegPath.Value, BepInEx.Paths.BepInExRootPath, message => Logger.LogInfo(message), settings.VideoRetentionMiB.Value);
             timelapseCapture = gameObject.AddComponent<TimelapseCapture>();
             timelapseCapture.Configure(frameHold,
                 () => enabled && director.IsEnabled && !probe.Active && Player.m_localPlayer &&
@@ -1588,7 +1588,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                         { plugin.settings.DiagnosticVideo.Value = true; ScenicTrace.Start(); plugin.diagnosticCapture?.Retry(); }
                         else if (args.Length != 1 && !(args.Length == 2 && args[1].Equals("status", StringComparison.OrdinalIgnoreCase)))
                         { context?.AddString("broadcast capture on|off|status"); return; }
-                        context?.AddString(plugin.diagnosticCapture?.Status ?? "Footage capture unavailable"); return;
+                        context?.AddString((plugin.diagnosticCapture?.Status ?? "Footage capture unavailable") +
+                            $" | rolling retention: video {plugin.settings.VideoRetentionMiB.Value} MiB, trace {plugin.settings.TraceRetentionMiB.Value} MiB"); return;
                     case "diagnostics": context?.AddString(plugin.Diagnostics()); return;
                     case "destinations": context?.AddString(plugin.remote.InterestDiagnostics()); return;
                     case "status": break;

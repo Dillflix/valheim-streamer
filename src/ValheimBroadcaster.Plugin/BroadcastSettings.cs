@@ -25,6 +25,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
     internal readonly ConfigEntry<bool> FlipVertical, AutomaticOrientation;
     internal readonly ConfigEntry<bool> DiagnosticVideo;
+    internal readonly ConfigEntry<int> TraceRetentionMiB, VideoRetentionMiB;
     internal readonly ConfigEntry<VideoEncoderKind> VideoEncoder;
     internal readonly ConfigEntry<int> NvencGpu;
     internal readonly ConfigEntry<bool> AutoStream, RetryStream, Automation, ScenicTravel, Unattended;
@@ -51,6 +52,12 @@ internal sealed class BroadcastSettings
         StartupServer = config.Bind("Startup", "ServerAddress", "", "Dedicated Steam server DNS name or IPv4 address and explicit port, for example server.example:2456. Crossplay/join codes are not supported.");
         StartupPasswordFile = config.Bind("Startup", "PasswordFile", "", "Absolute path to a private local file containing the server password on one line. Empty means passwordless server. Never put the password in this setting or launch arguments.");
         FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
+        TraceRetentionMiB = config.Bind("Diagnostics", "TraceRetentionMiB", 2048, new ConfigDescription(
+            "Rolling storage for automatic scenic traces in MiB. Oldest trace segments expire first.",
+            new AcceptableValueRange<int>(32, 16384)));
+        VideoRetentionMiB = config.Bind("Diagnostics", "VideoRetentionMiB", 2048, new ConfigDescription(
+            "Rolling storage for clean diagnostic video and its frame mappings in MiB. Oldest pairs expire together.",
+            new AcceptableValueRange<int>(32, 16384)));
         DiagnosticVideo = config.Bind("Diagnostics", "VideoCapture", true, "Record bounded local 640x360/12fps clean-program diagnostic video and synchronized frame metadata while broadcasting and trace capture is enabled. Uses a separate low-cost FFmpeg encoder; no audio or upload. Can be disabled with broadcast capture off.");
         VideoEncoder = config.Bind("Streaming", "VideoEncoder", VideoEncoderKind.libx264, "H.264 encoder: libx264 for CPU or h264_nvenc for NVIDIA GPU. Requires encoder support in the actual FFmpeg executable and a compatible driver.");
         NvencGpu = config.Bind("Streaming", "NvencGpu", -1, "NVIDIA encoder device index, or -1 for automatic selection.");

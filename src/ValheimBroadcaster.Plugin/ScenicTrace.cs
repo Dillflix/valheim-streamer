@@ -12,6 +12,7 @@ internal static class ScenicTrace
     private static CameraTraceWriter? writer;
     private static Action<string>? log;
     private static string? directory;
+    private static int retentionMiB;
     private static long sequence;
     private static bool reportedError;
     private static float nextPicture, nextWarning;
@@ -23,16 +24,16 @@ internal static class ScenicTrace
         $"Scenic trace: {writer.Written} records, {writer.Pending} queued, {writer.Dropped} dropped; " +
         (writer.Error == null ? writer.DirectoryPath : "I/O stopped: " + writer.Error);
 
-    internal static void Initialize(string root, Action<string> logger)
-    { directory = Path.Combine(root, "diagnostics", "ValheimBroadcaster"); log = logger; Start(); }
+    internal static void Initialize(string root, Action<string> logger, int traceRetentionMiB)
+    { directory = Path.Combine(root, "diagnostics", "ValheimBroadcaster"); log = logger; retentionMiB = traceRetentionMiB; Start(); }
     internal static void Start()
     {
         if (writer != null || directory == null) return;
         string header = new CameraTraceRecord("header", 0).Field("version", BroadcasterPlugin.PluginVersion)
             .Field("protocol", ObserverProtocol.Version).Field("unity", Application.unityVersion)
             .Field("utc", DateTime.UtcNow.ToString("O")).ToString();
-        writer = new CameraTraceWriter(directory, header); reportedError = false;
-        log?.Invoke("Automatic scenic evidence capture enabled: " + directory + " (up to 8 files / approximately 32 MiB). No upload is performed.");
+        writer = new CameraTraceWriter(directory, header, retentionBytes: retentionMiB * 1024L * 1024); reportedError = false;
+        log?.Invoke("Automatic scenic evidence capture enabled: " + directory + " (" + retentionMiB + " MiB rolling retention). No upload is performed.");
     }
     internal static CameraTraceRecord Row(string kind) => new CameraTraceRecord(kind, Time.unscaledTime)
         .Field("seq", ++sequence).Field("frame", Time.frameCount).Field("epoch", CameraSpatialScene.Shared.Epoch);

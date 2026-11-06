@@ -1,5 +1,9 @@
 # Validation and runtime test record
 
+## 0.8.56 In-client capture retention
+
+The existing automatic trace and diagnostic video writers now use independent, configurable rolling disk budgets. Defaults are 2 GiB each. The existing capture commands, synchronized mappings, normal output locations and separate RTMP encoder apply to all modes. Retention regression cases exercise more than eight segments, oldest-first expiry and preservation of paired videos and mappings. The external collection step has been removed from the expedition workflow. The 2 km in-game milestone remains open.
+
 ## 0.8.55 Experimental expedition branch
 
 [Runbook and acceptance](JOURNEY-EXPEDITION.md). The next milestone requires a full in-game recording of departure, at least 2 km of measured travel through mixed terrain and presented arrival at the original destination. No successful run has been recorded here. Core regression coverage includes two successive sections retreating along an observed passage, directional travel memory, and speed reduction under slow replenishment. The capture reviewer can reject incomplete or failed attempts and does not grade cinematography.

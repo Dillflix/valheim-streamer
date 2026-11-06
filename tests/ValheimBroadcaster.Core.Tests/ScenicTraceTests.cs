@@ -16,6 +16,7 @@ internal static class ScenicTraceTests
         yield return ("Replay reproduces competing candidate and unknown-query deadlines", Deadlines);
         yield return ("Replay reports divergence and missing evidence without inventing clear space", DamagedEvidence);
         yield return ("Trace encoding preserves finite numeric inputs across locales and escapes text", Encoding);
+        yield return ("Configured trace retention keeps more than eight segments inside its disk budget", ConfiguredRetention);
         yield return ("Flight recorder rotates bounded files and preserves unrelated files", Rotation);
         yield return ("Flight recorder reports inaccessible storage without throwing into the producer", StorageFailure);
         yield return ("Encounter source metadata survives held-frame reuse and current replay headers", EncounterCapture);
@@ -160,6 +161,22 @@ internal static class ScenicTraceTests
         }
         finally { Directory.Delete(directory, true); }
     }
+    private static void ConfiguredRetention()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "valheim-retention-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var writer = new CameraTraceWriter(directory, Header(), 1024, retentionBytes: 16 * 1024);
+            for (int i = 0; i < 200; i++)
+                Check(writer.Record(Row("test", i, i + 1).Field("data", new string('x', 200)).ToString()), "Unexpected queue failure");
+            writer.Dispose();
+            var files = Directory.GetFiles(directory, "scenic-*.jsonl");
+            Check(writer.Error == null && files.Length > 8 && files.Sum(path => new FileInfo(path).Length) <= 16 * 1024,
+                "Configured trace byte budget was ignored");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
     private static void StorageFailure()
     {
         string file = Path.GetTempFileName();

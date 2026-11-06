@@ -27,26 +27,3 @@ class JourneyEvidenceTests(unittest.TestCase):
             self.assertEqual("incomplete", result["result"])
             self.assertIn("Video coverage gap or missing footage", result["issues"])
             self.assertIn("Independent footage-camera distance differs from mission counter", result["issues"])
-
-
-class ArchiveTests(unittest.TestCase):
-    def test_rotated_file_survives_and_open_file_gets_its_final_contents(self):
-        from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as temp:
-            source = Path(temp) / "diagnostics"
-            archive = Path(temp) / "archive"
-            source.mkdir()
-            first = source / "scenic-s-00001.jsonl"
-            second = source / "scenic-s-00002.jsonl"
-            first.write_bytes(b"first")
-            second.write_bytes(b"partial")
-
-            def rotate(_):
-                first.unlink()
-                second.write_bytes(b"complete")
-                raise KeyboardInterrupt()
-
-            with patch.object(review.time, "sleep", side_effect=rotate):
-                review.collect(source, archive, 1000)
-            self.assertEqual(b"first", (archive / first.name).read_bytes())
-            self.assertEqual(b"complete", (archive / second.name).read_bytes())

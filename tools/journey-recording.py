@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preserve the game's rotating evidence and review a complete Journey locally."""
+"""Review evidence recorded by the in-game broadcaster."""
 import argparse
 import itertools
 import json
@@ -9,7 +9,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 
 
 def records(path):
@@ -19,58 +18,6 @@ def records(path):
                 yield json.loads(line)
             except ValueError as exc:
                 raise ValueError(f"{path.name}:{number}: incomplete or invalid JSON") from exc
-
-
-def collect(source, output, limit):
-    source, output = source.resolve(), output.resolve()
-    if not source.is_dir() or source == output or source in output.parents or output in source.parents:
-        raise ValueError("Use an existing diagnostics directory and a separate new archive directory")
-    output.mkdir(parents=True, exist_ok=False)
-    (output / "footage").mkdir()
-    seen = {}
-    total = 0
-
-    def copy_pass():
-        nonlocal total
-        for pattern in ("scenic-*.jsonl", "footage/footage-*.jsonl", "footage/footage-*.mp4"):
-            for path in source.glob(pattern):
-                relative = path.relative_to(source)
-                try:
-                    st = path.stat()
-                    signature = (st.st_size, st.st_mtime_ns)
-                    if seen.get(relative) == signature:
-                        continue
-                    target = output / relative
-                    scratch = target.with_suffix(target.suffix + ".copy")
-                    if total + st.st_size > limit:
-                        raise ValueError("Archive limit reached. Previously copied evidence is preserved.")
-                    with path.open("rb") as src, scratch.open("wb") as dst:
-                        remaining = st.st_size
-                        while remaining:
-                            chunk = src.read(min(remaining, 1024 * 1024))
-                            if not chunk:
-                                raise OSError("Source rotated during copy")
-                            dst.write(chunk)
-                            remaining -= len(chunk)
-                    # A writer may still be appending. Keep this prefix and
-                    # revisit it on the next pass, including final MP4 headers.
-                    old_size = seen.get(relative, (0, 0))[0]
-                    os.replace(scratch, target)
-                    total += signature[0] - old_size
-                    seen[relative] = signature
-                except (FileNotFoundError, PermissionError):
-                    # Windows may temporarily deny reads of an open segment.
-                    # Retry it after the writer closes it.
-                    continue
-
-    print(f"Archiving {source} to {output}. Stop game capture before pressing Ctrl+C.", flush=True)
-    try:
-        while True:
-            copy_pass()
-            time.sleep(1)
-    except KeyboardInterrupt:
-        copy_pass()
-    print(f"Archived {len(seen)} files, {total} bytes.")
 
 
 def scan(directory):
@@ -266,10 +213,6 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    watch = sub.add_parser("collect")
-    watch.add_argument("source", type=Path)
-    watch.add_argument("archive", type=Path)
-    watch.add_argument("--limit-gib", type=int, default=4)
     check = sub.add_parser("review")
     check.add_argument("archive", type=Path)
     check.add_argument("--distance", type=int, default=2000)
@@ -280,16 +223,11 @@ def main():
     check.add_argument("--ffmpeg", default="ffmpeg")
     args = parser.parse_args()
     try:
-        if args.action == "collect":
-            if args.limit_gib < 1:
-                raise ValueError("Archive limit must be positive")
-            collect(args.source, args.archive, args.limit_gib * 1024**3)
-        else:
-            if not 256 <= args.distance <= 5000:
-                raise ValueError("Expected request distance must be between 256 and 5,000 metres")
-            result = summarize(args.archive, args.session, args.mission, args.export, args.ffprobe, args.ffmpeg, args.distance)
-            print(json.dumps(result, indent=2))
-            return int(bool(result["issues"]))
+        if not 256 <= args.distance <= 5000:
+            raise ValueError("Expected request distance must be between 256 and 5,000 metres")
+        result = summarize(args.archive, args.session, args.mission, args.export, args.ffprobe, args.ffmpeg, args.distance)
+        print(json.dumps(result, indent=2))
+        return int(bool(result["issues"]))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         parser.exit(2, f"{exc}\n")
     return 0

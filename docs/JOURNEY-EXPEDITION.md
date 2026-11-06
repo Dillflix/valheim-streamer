@@ -10,16 +10,7 @@ Speed control uses measured preparation time when a successor is being built and
 
 ## Capture on the Windows broadcaster
 
-1. Install the branch client in the sandboxed broadcaster profile. Keep the main-branch supervisor paused for this experiment. Use a world with generated scenery and an authorized read-only observer.
-2. On the host, start the collector **before requesting Journey**. Use a new archive directory outside the sandbox. The collector copies the existing rotating JSONL/MP4 streams and stops with an error at its storage limit. It does not delete old evidence. Use PowerShell on the host and supply the diagnostics directory used by your broadcaster client:
-
-```powershell
-$diag = Read-Host 'Full host path to the broadcaster BepInEx\diagnostics\ValheimBroadcaster directory'
-$archive = Join-Path $env:USERPROFILE ("Videos\ValheimEvidence\Journey-" + (Get-Date -Format yyyyMMdd-HHmmss))
-py -3 .\journey-recording.py collect "$diag" "$archive"
-```
-
-3. In the Valheim console, run these commands on separate lines. Allow a few seconds of ordinary footage after enabling capture and close the console after starting the trip.
+Install the experiment's client into the sandboxed broadcaster profile and keep its main-branch supervisor paused. In an authorized observer session, run the existing Valheim console commands:
 
 ```
 broadcast journey off
@@ -30,14 +21,11 @@ broadcast journey speed 6
 broadcast journey start
 ```
 
-4. Leave the director unattended until arrival or a terminal failure. Preserve failed attempts too. Do not nudge, teleport, restart, or splice across attempts. After the outcome, run `broadcast capture off`, let the encoder finish writing the last MP4 and mapping, then press Ctrl+C in the collector.
-5. In the same PowerShell window, review the archive. Supply the FFmpeg tools that accompany the broadcaster's FFmpeg installation:
+After arrival or failure, run `broadcast capture off` and allow the last MP4 to finalize. Share the normal `BepInEx/diagnostics/ValheimBroadcaster` folder (including `footage`) and `BepInEx/LogOutput.log`. This uses the same automatic recorder for all coverage modes. No external collector is required.
 
-```powershell
-py -3 .\journey-recording.py review "$archive" --ffprobe 'C:\Tools\ffmpeg\bin\ffprobe.exe'
-```
+Automatic capture now retains up to 2 GiB each of footage (including its mappings) and trace data by default, on a rolling basis. The limits apply across sessions in the active profile. For longer retention, edit `Diagnostics.VideoRetentionMiB` and `Diagnostics.TraceRetentionMiB` in the broadcaster configuration and restart the client. Limits govern disk use, not guaranteed recording durations. Copy finished evidence before later recording fills the budget.
 
-For a different experiment, pass the actual requested scale with `--distance <metres>`. The milestone uses the 2,000 m default. If multiple missions are present, the tool lists their session and mission IDs. Select one with `--session <id> --mission <number>`. To export a single review MP4 for a mechanically complete attempt, add `--export "$archive\Journey.mp4" --ffmpeg 'C:\Tools\ffmpeg\bin\ffmpeg.exe'`. Export retains the full first and last video segments. The diagnostic footage is a silent 640×360, 12 fps copy of the program picture. The normal RTMP receiver is the source for full-quality audio/video assessment.
+For offline analysis, `tools/journey-recording.py review <diagnostics-directory>` reads the original recording directly. The analyst can use `--ffprobe` with an absolute executable path, select `--session` and `--mission`, and optionally export a review MP4 with `--export` and `--ffmpeg`. For a different experiment, use `--distance` to match its requested scale.
 
 ## Acceptance
 

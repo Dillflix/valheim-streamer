@@ -24,6 +24,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
     private readonly Thread worker;
     private readonly System.Threading.Timer watchdog;
     private readonly string directory, executable, version;
+    private readonly long? retentionBytes;
     private volatile Process? process;
     private int processId;
     internal int ProcessId => Volatile.Read(ref processId);
@@ -56,10 +57,13 @@ internal sealed class DiagnosticVideoWriter : IDisposable
         internal Thread? Worker;
     }
 
-    internal DiagnosticVideoWriter(string directory, string executable, string version)
+    internal DiagnosticVideoWriter(string directory, string executable, string version, long? retentionBytes = null)
     {
         this.directory = directory ?? throw new ArgumentNullException(nameof(directory));
         this.executable = executable ?? throw new ArgumentNullException(nameof(executable));
+        if (retentionBytes.HasValue && retentionBytes.Value < MaximumSegmentBytes + 3 * 1024 * 1024)
+            throw new ArgumentOutOfRangeException(nameof(retentionBytes));
+        this.retentionBytes = retentionBytes;
         this.version = version ?? "unknown";
         // A fixed pool bounds CPU memory and avoids allocating a megapixel byte
         // array for every frame. One readback may own a buffer outside the queue.
@@ -111,7 +115,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
                         CloseSegment(frame);
                         map?.WriteLine(new CameraTraceRecord("video-end", 0).Field("complete", true).Field("frames", frame).ToString());
                         map?.Dispose(); map = null;
-                        Directory.CreateDirectory(directory); Prune(directory);
+                        Directory.CreateDirectory(directory); Prune(directory, retentionBytes);
                         string path = Path.Combine(directory, "footage-" + SessionId + "-" + (++segment).ToString("D5", CultureInfo.InvariantCulture));
                         process = Start(executable, path + ".mp4", out sink);
                         Volatile.Write(ref processId, process.Id);
@@ -247,7 +251,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
         sink = null;
     }
 
-    internal static void Prune(string directory)
+    internal static void Prune(string directory, long? retentionBytes = null)
     {
         // Files outside this exact prefix/extensions are never touched.
         string[] files = Directory.GetFiles(directory, "footage-*")
@@ -255,7 +259,7 @@ internal sealed class DiagnosticVideoWriter : IDisposable
         var groups = files.GroupBy(f => Path.Combine(directory, Path.GetFileNameWithoutExtension(f)))
             .OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.ToArray()).ToList();
         long total = files.Sum(f => new FileInfo(f).Length);
-        while (groups.Count >= MaximumSegments || total > MaximumBytes - (MaximumSegmentBytes + 3 * 1024 * 1024))
+        while ((!retentionBytes.HasValue && groups.Count >= MaximumSegments) || total > (retentionBytes ?? MaximumBytes) - (MaximumSegmentBytes + 3 * 1024 * 1024))
         {
             if (groups.Count == 0) break;
             foreach (string file in groups[0]) { total -= new FileInfo(file).Length; File.Delete(file); }
