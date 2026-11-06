@@ -20,7 +20,7 @@ internal sealed partial class JourneyGuideWorld : IJourneyFlightCorridor
 
             // Only observe the loaded prefix. A missing map truncates this hint;
             // it never invalidates body clearance nearby.
-            float extent = 0, requested = Mathf.Min(48f, (float)range);
+            float extent = 0, requested = Mathf.Min(MaxSweep, (float)range);
             for (float at = Mathf.Min(8f, requested); ; at = Mathf.Min(requested, at + 8f))
             {
                 if (!ScenicSurface.TryGroundHeight(start + forward * at, out _)) break;

@@ -1,5 +1,6 @@
 using BepInEx.Configuration;
 using UnityEngine;
+using ValheimBroadcaster.Core;
 using ValheimBroadcaster.Plugin.Streaming;
 
 namespace ValheimBroadcaster.Plugin;
@@ -76,7 +77,7 @@ internal sealed class BroadcastSettings
         LiveTimelapseSeconds = config.Bind("ScenicTimelapse", "DurationSeconds", 90f, Range("Live shot duration for one visual day, returning to current natural time.", 45f, 180f));
         ScenicJourneys = config.Bind("Idle", "ScenicJourneys", true, "Offer continuous camera flights to known scenic destinations. The observer follows the guide as it steers through loaded terrain. Player coverage can interrupt a journey.");
         ScenicJourneyDistance = config.Bind("Idle", "JourneyDistanceMetres", 1000f, Range("Desired itinerary scale when selecting a known scenic destination. The selected route may be shorter or longer. Completion requires observed route progress and a readable destination arrival; a partial attempt is not completed.", 256f, 5000f));
-        ScenicJourneySpeed = config.Bind("Idle", "JourneyCruiseMetresPerSecond", 6f, Range("Independent journey cruise speed. Decorative Camera.ShotMotion does not scale travel. Runtime may be slower if valid frames cannot sustain the requested speed.", 2f, 12f));
+        ScenicJourneySpeed = config.Bind("Idle", "JourneyCruiseMetresPerSecond", 6f, Range("Independent journey cruise speed. Decorative Camera.ShotMotion does not scale travel. Runtime may be slower if valid frames cannot sustain the requested speed.", ScenicJourneyPolicy.MinimumCruiseSpeed, ScenicJourneyPolicy.MaximumCruiseSpeed));
         EnvironmentCycleSeconds = config.Bind("ScenicEnvironment", "DayCycleSeconds", 0f, Range("Optional visual day-cycle duration, 30–86400 real seconds; zero preserves normal time. Requires the companion's fresh empty-server permission. Changes lighting presentation only, never simulation time.", 0f, 86400f));
         EnvironmentWeather = config.Bind("ScenicEnvironment", "Weather", "", "Optional existing Valheim environment name for scenic filming while the companion confirms no ordinary players are connected. Empty preserves normal weather. Owned overrides restore when permission or Scenic coverage ends.");
         CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Seconds of usable creature footage. Wildlife cutaways return to players and also use this as a wall-time limit.", 5f, 300f));

@@ -14,7 +14,9 @@ internal static class JourneyGuideTests
         yield return ("Journey crosses two kilometres with tiles loading around a moving observer", RollingTiles);
         yield return ("Journey escapes a U-shaped enclosure and climbs a steep escarpment", Bluff);
         yield return ("Journey recovers when a raised water surface overtakes its current position", RaisedWater);
-        yield return ("Selected two-kilometre itinerary completes only after measured travel and displayed arrival", ScheduledJourney);
+        yield return ("Selected two-kilometre itinerary completes only after measured travel and displayed arrival", () => ScheduledJourney(12));
+        yield return ("Journey reaches the selected destination with a 24 m/s cruise", () => ScheduledJourney(24));
+        yield return ("24 m/s cruise brakes before the loading frontier", FastCruise);
         yield return ("Journey brakes at an unloaded region and resumes on the same mission", LoadedBoundary);
         yield return ("Journey stays in place when surrounded and proceeds when a corridor opens", Enclosure);
         yield return ("Journey cannot claim arrival at an intermediate steering target", IntermediateTarget);
@@ -233,7 +235,25 @@ internal static class JourneyGuideTests
             $"Rising surface stranded the guide at {guide.Position.X:F1},{guide.Position.Y:F1}: {guide.Status}");
     }
 
-    private static void ScheduledJourney()
+    private static void FastCruise()
+    {
+        const double dt = .05, limit = 24;
+        var world = new Landscape { LoadedThrough = 300 };
+        var goal = Point(600, 7, 0);
+        var guide = new JourneyGuide(Point(0, 7, 0), goal, limit, 8);
+        double atCruise = 0;
+        for (int frame = 0; frame < 600; ++frame)
+        {
+            var previous = guide.Position;
+            guide.Step(dt, goal, world);
+            double speed = guide.Position.Distance(previous) / dt;
+            Check(speed <= limit + .01 && guide.Position.X <= 300, "Exceeded cruise or loaded terrain");
+            if (speed >= 23.99) atCruise += dt;
+        }
+        Check(atCruise >= 3 && guide.Position.X > 280 && guide.Speed < 1, "Failed to sustain cruise and brake at the frontier");
+    }
+
+    private static void ScheduledJourney(double speed)
     {
         var world = new Landscape { Mixed = true, Forest = true, Rolling = true };
         var start = Point(0, world.Surface(Point(0, 0, 0)) + 7, 0);
@@ -247,8 +267,8 @@ internal static class JourneyGuideTests
             "Selection did not reach the observed destination via the recorded catalogue: " + reason);
         var itinerary = choice!;
         var mission = new ScenicJourneyPolicy();
-        mission.Start(71, itinerary, 12);
-        var guide = new JourneyGuide(start, itinerary.Destination.Position, 12, itinerary.ArrivalRadius);
+        mission.Start(71, itinerary, speed);
+        var guide = new JourneyGuide(start, itinerary.Destination.Position, speed, itinerary.ArrivalRadius);
         const double dt = 0.05;
         double heldAt = -1, initialArrival = -1;
         for (int i = 0; i < 7000 && mission.Active; i++)

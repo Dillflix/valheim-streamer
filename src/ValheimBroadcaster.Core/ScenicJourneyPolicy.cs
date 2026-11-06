@@ -30,6 +30,8 @@ namespace ValheimBroadcaster.Core
     {
         public const double WindowMetres = 64;
         public const double MinimumWindowMetres = 8;
+        public const int MinimumCruiseSpeed = 2;
+        public const int MaximumCruiseSpeed = 24;
         public const double PreparationSeconds = 12;
         public const double MaximumStepMetres = .75;
         public const double ObjectiveFraction = .65;
@@ -113,7 +115,7 @@ namespace ValheimBroadcaster.Core
             // Supported cruise may smoothly fall to its declared useful floor
             // when real preparation latency consumes the certified reserve.
             // Keep that legitimate travel inside the finite programme budget.
-            MaximumSeconds = TargetMetres / JourneyRunwayPolicy.MinimumCruise(cruiseSpeed) * 1.5 + 45;
+            MaximumSeconds = TargetMetres / MinimumCruiseSpeed * 1.5 + 45;
             Outcome = ScenicJourneyOutcome.Running; Reason = itinerary.Description;
         }
 
@@ -258,7 +260,7 @@ namespace ValheimBroadcaster.Core
             Outcome = ScenicJourneyOutcome.None; Reason = "No journey requested";
         }
         private static void Speed(double value)
-        { if (!Finite(value) || value < 2 || value > 12) throw new ArgumentOutOfRangeException(nameof(value)); }
+        { if (!Finite(value) || value < MinimumCruiseSpeed || value > MaximumCruiseSpeed) throw new ArgumentOutOfRangeException(nameof(value)); }
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
     }
 }

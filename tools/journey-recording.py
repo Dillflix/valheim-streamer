@@ -50,6 +50,7 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
     session, mission = keys[0]
     rows = missions[keys[0]]
     first, last = rows[0], rows[-1]
+    cruise = first.get("cruise", 12)
     start, end = first["time"], last["time"]
     issues = []
     if first["phase"] != "departure-start":
@@ -129,7 +130,7 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
         if last_pose:
             old_at, old_pos, old_id = last_pose
             step_metres = math.dist(pos, old_pos)
-            if step_metres > (2 if old_id != frame["shot"] else 2 + 12 * (at-old_at)):
+            if step_metres > (2 if old_id != frame["shot"] else 2 + cruise * (at-old_at)):
                 jumps.append({"at": at, "metres": round(step_metres, 2)})
         last_pose = at, pos, frame["shot"]
     for r in rows:

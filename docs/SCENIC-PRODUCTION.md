@@ -24,7 +24,7 @@ Compilation and automated tests do not establish in-game camera quality, graphic
 
 ## Continuous Scenic journeys
 
-A journey selects a **known scenic destination near a requested itinerary scale**, default **1,000 m**, and requests an independent **6 m/s** cruise. The selected route can be shorter or longer than that scale. `Camera.ShotMotion` controls decorative ordinary shots; it does not scale Journey travel. Requested speed is an upper target: each section records a 2–12 m/s authored cap after native turn/gaze checks, and certified distance, safe stopping room and measured successful production can reduce effective speed further. Playback respects the section cap and anticipates braking before a fresh connected queued section with a slower cap. The camera may brake to a complete stop when it cannot safely advance; that is diagnosed as waiting/replanning, not successful travel.
+A journey selects a **known scenic destination near a requested itinerary scale**, default **1,000 m**, and requests an independent **6 m/s** cruise. The selected route can be shorter or longer than that scale. `Camera.ShotMotion` controls decorative ordinary shots; it does not scale Journey travel. The continuous guide accepts cruise speeds from 2 to 24 m/s and reduces its speed according to the loaded, clear distance ahead.
 
 Server discovery supplies landscape/coast regions and available structure/site observations. Selection considers scale, bearing, freshness, retry deadlines and recent destination families. A connected metadata guide is preferred where available, but sparse observations may still identify a real destination by bearing. Metadata does not certify unloaded space: **each local camera section and ending requires loaded terrain/water, corridor, foliage and native-path validation**.
 
@@ -56,7 +56,7 @@ broadcast journey on
 | --- | --- | --- |
 | `Idle.ScenicJourneys` | `true` | Offer automatic journeys |
 | `Idle.JourneyDistanceMetres` | `1000` | Desired known-destination itinerary scale, 256–5,000 m |
-| `Idle.JourneyCruiseMetresPerSecond` | `6` | Independent cruise speed, 2–12 m/s |
+| `Idle.JourneyCruiseMetresPerSecond` | `6` | Independent cruise speed, 2–24 m/s |
 
 **Configuration migration:** preserve the existing configuration file. The old `Idle.ScenicJourneySeconds` and `Idle.ScenicJourneySpeed` entries are no longer read. New keys give existing installations the new defaults instead of silently retaining the previous 1 m/s speed. An old `Camera.ShotMotion` value does not scale admitted journey cruising. Ordinary coverage keeps its existing movement setting while departure is pending; independent Journey cruise is not multiplied by `ShotMotion`. `Camera.DynamicShots=false` still disables moving journeys.
 

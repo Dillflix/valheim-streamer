@@ -38,7 +38,7 @@ public sealed partial class JourneyGuide
 
     public JourneyGuide(AutonomyPosition start, AutonomyPosition destination, double cruise, double arrivalRadius)
     {
-        if (!Finite(cruise) || cruise <= 0 || cruise > 12) throw new ArgumentOutOfRangeException(nameof(cruise));
+        if (!Finite(cruise) || cruise <= 0 || cruise > ScenicJourneyPolicy.MaximumCruiseSpeed) throw new ArgumentOutOfRangeException(nameof(cruise));
         if (!Finite(arrivalRadius) || arrivalRadius <= 0) throw new ArgumentOutOfRangeException(nameof(arrivalRadius));
         Position = start;
         this.destination = destination;
@@ -166,7 +166,7 @@ public sealed partial class JourneyGuide
     {
         // Space for acceleration and braking beyond the next decision. A short
         // loaded prefix is enough to fly at a correspondingly lower speed.
-        double horizon = Clamp(4 + cruise * .8 + cruise * cruise / (2 * Brake), 8, 40);
+        double horizon = Clamp(4 + cruise * .8 + cruise * cruise / (2 * Brake), 8, 64);
         frontier = false;
         lifting = Position.Y < floor + 2;
         if (lifting)

@@ -27,7 +27,7 @@ public sealed partial class JourneyGuide
     {
         corridorSlope = double.NegativeInfinity;
         requiredTerrainLift = 0;
-        double range = Math.Min(Position.HorizontalDistance(destination), Clamp(cruise * 4, 24, 48));
+        double range = Math.Min(Position.HorizontalDistance(destination), Clamp(cruise * 4, 24, 64));
         if (range < 2) return;
         AutonomyPosition heading = Direction(bearing, 0);
         // The terrain can crest between the camera and a low endpoint. Sample

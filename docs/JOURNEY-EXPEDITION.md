@@ -12,6 +12,8 @@ On mountains the guide samples the slope ahead for intervening crests. If its ca
 
 The new client and the existing protocol-3 server companion can be used together. Ordinary Scenic direction, the in-game recorder, and the rolling retention settings remain available.
 
+Set `broadcast journey speed 24` for a 24 m/s requested cruise on the next journey. The supported range is 2–24 m/s and the default is 6 m/s.
+
 ## Capture on the Windows broadcaster
 
 Install the experiment's client into the sandboxed broadcaster profile and keep its main-branch supervisor paused. In an authorized observer session, run the existing Valheim console commands:
