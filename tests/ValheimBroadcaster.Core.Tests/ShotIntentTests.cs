@@ -19,10 +19,11 @@ internal static class ShotIntentTests
         yield return ("Purpose scale and lens ease instead of snapping on activity changes", SmoothScale);
         yield return ("Movement profiles distinguish sprinting from water and vessel motion", MovementProfiles);
         yield return ("A healthy transition source is retained over an unreadable destination", UnreadableDestination);
-        yield return ("Recovery and distinct blocked paths cut to the validated replacement", RecoveryTransitions);
-        yield return ("Obstructed paths toward similar viewpoints hold for in-place repair", JumpCutGuard);
-        yield return ("An obstructed move returns to a readable source instead of cutting forward", ObstructedBlendReturn);
-        yield return ("Transitions distinguish same-scene changes from new scenes and action angles", SceneTransitions);
+        yield return ("Recovery cuts only when the subject is lost behind solid cover", RecoveryTransitions);
+        yield return ("Obstructed transition paths always hold for in-place repair", ObstructedPathHold);
+        yield return ("An obstructed move returns home unless the subject is lost behind solid cover", ObstructedBlendReturn);
+        yield return ("Editorial changes blend while new scenes keep their establishing cut", SceneTransitions);
+        yield return ("A foliage-dirtied but visible subject blends through a purposeful role change", FoliageDirtyBlend);
         yield return ("Doorway handoffs have bounded brief transitions", DoorwayTransition);
         yield return ("Purpose and transition validation reject invalid evidence", InvalidEvidence);
         yield return ("Readable mask prevents timed novelty selecting a hidden actor", ReadableNovelty);
@@ -163,52 +164,62 @@ internal static class ShotIntentTests
             run.MaximumAngularSpeed > boat.MaximumAngularSpeed && boat.MotionScale < run.MotionScale,
             "Locomotion situations all use the same motion response.");
     }
-    private static ShotTransitionDecision Transition(bool sameScene = true, bool source = true, bool destination = true,
-        bool path = true, float angle = 10, float distance = 2, float screen = .05f, float fov = 0,
-        ShotRole from = ShotRole.Establish, ShotRole to = ShotRole.Establish,
+    private static ShotTransitionDecision Transition(bool sameScene = true, bool source = true, float visibility = 1,
+        bool destination = true, bool path = true, float angle = 10, float distance = 2, float screen = .05f,
+        float fov = 0, ShotRole from = ShotRole.Establish, ShotRole to = ShotRole.Establish,
         ShotEnvironment environment = ShotEnvironment.Open, CinematicActivity activity = CinematicActivity.Idle,
         bool recovering = false) =>
-        ShotTransitionPolicy.Decide(sameScene, source, destination, path, angle, distance, screen, fov,
+        ShotTransitionPolicy.Decide(sameScene, source, visibility, destination, path, angle, distance, screen, fov,
             from, to, environment, activity, recovering);
     private static void UnreadableDestination() => Check(Transition(destination: false).Mode == ShotTransitionMode.Hold,
         "An aesthetic transition discarded readable source footage.");
     private static void RecoveryTransitions()
     {
-        Check(Transition(source: false).Mode == ShotTransitionMode.Cut &&
-            Transition(path: false, angle: 40).Mode == ShotTransitionMode.Cut &&
-            Transition(recovering: true).Mode == ShotTransitionMode.Cut,
-            "Recovery blended through a failed or stale picture.");
+        Check(Transition(source: false, visibility: .1f).Mode == ShotTransitionMode.Cut &&
+            Transition(recovering: true, visibility: .1f).Mode == ShotTransitionMode.Cut,
+            "A subject lost behind solid cover did not cut to its validated replacement.");
+        Check(Transition(source: false, visibility: .5f).Mode == ShotTransitionMode.Blend &&
+            Transition(recovering: true, visibility: .5f).Mode == ShotTransitionMode.Blend,
+            "A partially covered subject cut instead of moving to its clear view.");
     }
-    private static void JumpCutGuard()
+    private static void ObstructedPathHold()
     {
-        Check(Transition(path: false).Mode == ShotTransitionMode.Hold,
-            "An obstructed move toward a near-identical viewpoint cut instead of waiting for repair.");
-        Check(Transition(path: false, angle: 40).Mode == ShotTransitionMode.Cut &&
-            Transition(path: false, fov: 15).Mode == ShotTransitionMode.Cut &&
-            Transition(path: false, screen: .3f).Mode == ShotTransitionMode.Cut,
-            "A visually distinct obstructed destination lost its motivated cut.");
+        Check(Transition(path: false).Mode == ShotTransitionMode.Hold &&
+            Transition(path: false, angle: 60).Mode == ShotTransitionMode.Hold &&
+            Transition(path: false, fov: 15).Mode == ShotTransitionMode.Hold &&
+            Transition(path: false, screen: .3f).Mode == ShotTransitionMode.Hold,
+            "An obstructed transition path cut instead of waiting for in-place repair.");
     }
     private static void ObstructedBlendReturn()
     {
-        var glide = ShotTransitionPolicy.DecideObstructedBlend(true, true);
+        var glide = ShotTransitionPolicy.DecideObstructedBlend(true, 1, true);
         Check(glide.Mode == ShotTransitionMode.Return && glide.Seconds > 0 &&
             glide.Seconds <= ShotTransitionPolicy.ReturnSeconds,
             "A readable source did not receive a bounded return glide.");
-        var snap = ShotTransitionPolicy.DecideObstructedBlend(true, false);
+        var snap = ShotTransitionPolicy.DecideObstructedBlend(true, 1, false);
         Check(snap.Mode == ShotTransitionMode.Return && snap.Seconds == 0,
             "An unsupported blended pose lingered through a timed glide.");
-        Check(ShotTransitionPolicy.DecideObstructedBlend(false, true).Mode == ShotTransitionMode.Cut &&
-            ShotTransitionPolicy.DecideObstructedBlend(false, false).Mode == ShotTransitionMode.Cut,
-            "A failed move without a readable return path did not adopt the validated destination.");
+        Check(ShotTransitionPolicy.DecideObstructedBlend(false, .5f, true).Mode == ShotTransitionMode.Return,
+            "A momentarily unreadable but partially covered source did not glide home for repair.");
+        Check(ShotTransitionPolicy.DecideObstructedBlend(false, .1f, true).Mode == ShotTransitionMode.Cut &&
+            ShotTransitionPolicy.DecideObstructedBlend(false, .1f, false).Mode == ShotTransitionMode.Cut,
+            "A subject lost behind solid cover did not adopt the validated destination.");
     }
     private static void SceneTransitions()
     {
         Check(Transition().Mode == ShotTransitionMode.Blend && Transition(sameScene: false).Mode == ShotTransitionMode.Cut,
             "Scene continuity did not affect the transition.");
-        Check(Transition(angle: 40, activity: CinematicActivity.Combat).Mode == ShotTransitionMode.Cut &&
-            Transition(to: ShotRole.Detail, fov: 15).Mode == ShotTransitionMode.Cut,
-            "Meaningful action/scale changes were swept through a generic blend.");
+        var combat = Transition(angle: 40, activity: CinematicActivity.Combat);
+        var role = Transition(to: ShotRole.Detail, fov: 15);
+        var sweep = Transition(angle: 90, distance: 20, screen: .6f);
+        Check(combat.Mode == ShotTransitionMode.Blend && role.Mode == ShotTransitionMode.Blend &&
+            sweep.Mode == ShotTransitionMode.Blend,
+            "An editorial action, scale or viewpoint change cut instead of blending.");
+        Check(combat.Seconds <= .7, "A combat blend exceeded its swift-action bound.");
     }
+    private static void FoliageDirtyBlend() =>
+        Check(Transition(visibility: .9f, to: ShotRole.Detail, fov: 15).Mode == ShotTransitionMode.Blend,
+            "Foreground dirtiness on a visible subject motivated a cut.");
     private static void DoorwayTransition()
     {
         var doorway = Transition(environment: ShotEnvironment.Doorway, angle: 20, distance: 6);
@@ -218,10 +229,14 @@ internal static class ShotIntentTests
     }
     private static void InvalidEvidence()
     {
-        bool sceneRejected = false, transitionRejected = false;
+        bool sceneRejected = false, transitionRejected = false, visibilityRejected = false, blendRejected = false;
         try { Scene(confidence: float.NaN); } catch (ArgumentOutOfRangeException) { sceneRejected = true; }
         try { Transition(angle: float.PositiveInfinity); } catch (ArgumentOutOfRangeException) { transitionRejected = true; }
-        Check(sceneRejected && transitionRejected, "Invalid evidence reached the director.");
+        try { Transition(visibility: 1.5f); } catch (ArgumentOutOfRangeException) { visibilityRejected = true; }
+        try { ShotTransitionPolicy.DecideObstructedBlend(true, float.NaN, true); }
+        catch (ArgumentOutOfRangeException) { blendRejected = true; }
+        Check(sceneRejected && transitionRejected && visibilityRejected && blendRejected,
+            "Invalid evidence reached the director.");
         var policy = new ShotIntentPolicy();
         Run(policy, Scene(companions: 2)); policy.Reset();
         Check(policy.Intent.Role == ShotRole.Establish && policy.Intent.RadiusScale == 1,

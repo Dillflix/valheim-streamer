@@ -513,8 +513,11 @@ internal sealed class CinemachineShotRig : IDisposable
                 PositionSupported(lastPosition, focus, continuous, moveCarrier);
             float screenDelta = new Vector2(endpoint.PrimaryFocusX - sourceView.PrimaryFocusX,
                 endpoint.PrimaryFocusY - sourceView.PrimaryFocusY).magnitude;
+            // Hard-geometry visibility only: PrimarySolidOcclusion is measured
+            // by physical raycasts; foliage dirtiness never motivates a cut.
             var decision = ShotTransitionPolicy.Decide(!bindingChanged || samePlayerScene,
-                sourceReadable, PictureUsable(endpoint), SegmentClear(lastPosition, desired),
+                sourceReadable, Mathf.Clamp01(1f - sourceView.PrimarySolidOcclusion),
+                PictureUsable(endpoint), SegmentClear(lastPosition, desired),
                 ViewpointAngle(lastPosition - lastPoseFocus, desired - focus), Vector3.Distance(lastPosition, desired),
                 screenDelta, Mathf.Abs(desiredFov - lastFov), lastRole, director.Intent.Role,
                 context.DoorwayTransition ? ShotEnvironment.Doorway : context.Environment, context.Activity, resumingPresentation && !sourceReadable);
@@ -632,6 +635,7 @@ internal sealed class CinemachineShotRig : IDisposable
                 var decision = ShotTransitionPolicy.DecideObstructedBlend(
                     sourceReadable: PictureUsable(returnView) &&
                         PositionSupported(sourcePosition, focus, continuous, moveCarrier),
+                    sourceVisibility: Mathf.Clamp01(1f - returnView.PrimarySolidOcclusion),
                     blendedSupported: blendedPresentable);
                 if (decision.Mode == ShotTransitionMode.Return)
                 {
@@ -643,8 +647,8 @@ internal sealed class CinemachineShotRig : IDisposable
                         // Glide home from where the camera actually is. This
                         // frame still presents the moving blended pose; the
                         // return blend is itself live-validated on subsequent
-                        // frames and falls through to a cut if it fails with
-                        // an unreadable source.
+                        // frames and falls through to a cut only if the source
+                        // subject is lost behind solid cover.
                         CameraState returning = blended;
                         returning.RawPosition = blendedPosition; returning.PositionCorrection = Vector3.zero;
                         returning.RawOrientation = blendedRotation; returning.OrientationCorrection = Quaternion.identity;
@@ -704,6 +708,7 @@ internal sealed class CinemachineShotRig : IDisposable
             var groupDecision = ShotTransitionPolicy.DecideObstructedBlend(
                 sourceReadable: PictureUsable(returnView) &&
                     PositionSupported(lastPosition, focus, continuous, moveCarrier),
+                sourceVisibility: Mathf.Clamp01(1f - returnView.PrimarySolidOcclusion),
                 blendedSupported: true);
             if (groupDecision.Mode == ShotTransitionMode.Return)
             {

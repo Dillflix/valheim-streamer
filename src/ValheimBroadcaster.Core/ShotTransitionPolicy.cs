@@ -15,24 +15,32 @@ namespace ValheimBroadcaster.Core
     }
 
     /// <summary>Editorial transition intent after endpoint evaluation. The
-    /// adapter must re-evaluate every interpolated frame and may cut to the
-    /// validated destination if the actual moving path becomes obstructed.</summary>
+    /// adapter must re-evaluate every interpolated frame; a failed moving path
+    /// prefers returning home over cutting forward.</summary>
     public static class ShotTransitionPolicy
     {
         public const double ReturnSeconds = 0.5;
-        // A cut must change shot grammar. Obstructed moves below every one of
-        // these thresholds land on a near-identical viewpoint and would read
-        // as a stutter, so they wait for in-place repair instead.
+        /// <summary>The editorial rule: the only motivated cut is severe hard
+        /// occlusion — the live subject more than 80 percent blocked by solid
+        /// geometry, i.e. hard-geometry visibility below this threshold.
+        /// Editorial changes (beats, combat angles, large viewpoint moves)
+        /// travel as validated blends, obstructed paths hold for in-place
+        /// repair, and foreground foliage never motivates a cut. Scene
+        /// discontinuities keep their establishing cut.</summary>
+        public const float SevereOcclusionVisibility = 0.2f;
+        // Visual-distinctness thresholds. No longer cut criteria: the adapter
+        // uses them to prefer grammatically distinct replacement candidates.
         public const float DistinctAngleDegrees = 30;
         public const float DistinctFovDegrees = 12;
         public const float DistinctScreenDisplacement = .25f;
 
-        public static ShotTransitionDecision Decide(bool sameScene, bool sourceReadable, bool destinationReadable,
-            bool pathClear, float angleDegrees, float distance, float screenDisplacement, float fovDifference,
-            ShotRole fromRole, ShotRole toRole, ShotEnvironment environment, CinematicActivity activity,
-            bool recovering = false)
+        public static ShotTransitionDecision Decide(bool sameScene, bool sourceReadable, float sourceVisibility,
+            bool destinationReadable, bool pathClear, float angleDegrees, float distance, float screenDisplacement,
+            float fovDifference, ShotRole fromRole, ShotRole toRole, ShotEnvironment environment,
+            CinematicActivity activity, bool recovering = false)
         {
-            if (!Finite(angleDegrees) || angleDegrees < 0 || angleDegrees > 180 ||
+            if (!Finite(sourceVisibility) || sourceVisibility < 0 || sourceVisibility > 1 ||
+                !Finite(angleDegrees) || angleDegrees < 0 || angleDegrees > 180 ||
                 !Finite(distance) || distance < 0 || !Finite(screenDisplacement) || screenDisplacement < 0 ||
                 !Finite(fovDifference) || fovDifference < 0 ||
                 (int)fromRole < 0 || (int)fromRole > (int)ShotRole.Landscape ||
@@ -42,45 +50,57 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentOutOfRangeException(nameof(angleDegrees));
             if (!destinationReadable && sourceReadable)
                 return new ShotTransitionDecision(ShotTransitionMode.Hold, 0, "Retaining the readable source while seeking a clear destination");
-            if (!sourceReadable || recovering)
-                return Cut("Visibility recovery uses the validated replacement directly");
             if (!sameScene) return Cut("New scene receives an establishing cut");
-            if (!pathClear)
+            if (!sourceReadable || recovering)
             {
-                // Jump-cut guard: an obstructed move toward a visually similar
-                // viewpoint must not cut; the adapter repairs the live camera.
-                if (angleDegrees < DistinctAngleDegrees && fovDifference < DistinctFovDegrees &&
-                    screenDisplacement < DistinctScreenDisplacement)
-                    return new ShotTransitionDecision(ShotTransitionMode.Hold, 0,
-                        "Obstructed path toward a similar viewpoint waits for in-place repair");
-                return Cut("Transition path is obstructed");
+                // The one motivated cut: the subject disappeared behind solid
+                // cover. A dirty-but-visible subject travels to its clear view.
+                if (sourceVisibility < SevereOcclusionVisibility)
+                    return Cut("Subject lost behind solid cover; cutting to the validated replacement");
+                return Blend(angleDegrees, distance, environment, activity,
+                    "Moving to a clear view of a partially covered subject");
             }
-            if (angleDegrees > 80 || distance > 18 || screenDisplacement > .45f)
-                return Cut("Large viewpoint or screen-direction change");
-            if (activity == CinematicActivity.Combat && (angleDegrees > 25 || distance > 4))
-                return Cut("Readable action angle without a sweeping transition");
-            if (fromRole != toRole && (angleDegrees > 35 || fovDifference > 10))
-                return Cut("Purposeful shot or scale change");
+            if (!pathClear)
+                return new ShotTransitionDecision(ShotTransitionMode.Hold, 0,
+                    "Obstructed transition path waits for in-place repair");
+            string reason = angleDegrees > 80 || distance > 18 || screenDisplacement > .45f
+                    ? "Large viewpoint change carried by a moving blend"
+                : activity == CinematicActivity.Combat && (angleDegrees > 25 || distance > 4)
+                    ? "Action angle reached with a swift blend"
+                : fromRole != toRole && (angleDegrees > 35 || fovDifference > 10)
+                    ? "Purposeful shot change carried by a moving blend"
+                : environment == ShotEnvironment.Doorway ? "Brief validated doorway handoff"
+                : "Continuous adjustment within the same scene";
+            return Blend(angleDegrees, distance, environment, activity, reason);
+        }
+        /// <summary>Mid-move validation failed. Glide back to the source
+        /// whenever its subject is not severely blocked by solid geometry —
+        /// even a momentarily unreadable source goes home and lets in-place
+        /// repair work. Cutting forward to the validated destination is
+        /// reserved for a subject lost behind solid cover. A physically
+        /// unsupported blended pose may not linger through a glide, so the
+        /// return happens immediately (zero seconds) instead of over
+        /// ReturnSeconds.</summary>
+        public static ShotTransitionDecision DecideObstructedBlend(bool sourceReadable, float sourceVisibility,
+            bool blendedSupported)
+        {
+            if (!Finite(sourceVisibility) || sourceVisibility < 0 || sourceVisibility > 1)
+                throw new ArgumentOutOfRangeException(nameof(sourceVisibility));
+            if (sourceVisibility >= SevereOcclusionVisibility)
+                return new ShotTransitionDecision(ShotTransitionMode.Return, blendedSupported ? ReturnSeconds : 0,
+                    sourceReadable ? "Returning to the validated source after an obstructed move"
+                        : "Returning to a partially covered source for in-place repair");
+            return Cut("Subject lost behind solid cover; adopting the validated destination");
+        }
+        private static ShotTransitionDecision Blend(float angleDegrees, float distance,
+            ShotEnvironment environment, CinematicActivity activity, string reason)
+        {
             double duration = .45 + Math.Min(.8, distance * .045) + Math.Min(.45, angleDegrees * .0075);
             if (environment == ShotEnvironment.Doorway) duration = Math.Min(.65, duration);
             else if (activity == CinematicActivity.Combat) duration = Math.Min(.7, duration);
             else if (environment == ShotEnvironment.Room || environment == ShotEnvironment.Dungeon)
                 duration = Math.Min(1.0, duration);
-            return new ShotTransitionDecision(ShotTransitionMode.Blend, duration,
-                environment == ShotEnvironment.Doorway ? "Brief validated doorway handoff" : "Continuous adjustment within the same scene");
-        }
-        /// <summary>Mid-move validation failed. Prefer gliding back to the
-        /// validated source over cutting forward; cutting adopts the validated
-        /// destination only when no readable return path exists. A physically
-        /// unsupported blended pose may not linger through a glide, so the
-        /// return happens immediately (zero seconds) instead of over
-        /// ReturnSeconds.</summary>
-        public static ShotTransitionDecision DecideObstructedBlend(bool sourceReadable, bool blendedSupported)
-        {
-            if (sourceReadable)
-                return new ShotTransitionDecision(ShotTransitionMode.Return, blendedSupported ? ReturnSeconds : 0,
-                    "Returning to the validated source after an obstructed move");
-            return Cut("No readable return path; adopting the validated destination");
+            return new ShotTransitionDecision(ShotTransitionMode.Blend, duration, reason);
         }
         private static ShotTransitionDecision Cut(string reason) => new ShotTransitionDecision(ShotTransitionMode.Cut, 0, reason);
         private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
