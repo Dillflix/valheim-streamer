@@ -155,6 +155,7 @@ internal sealed partial class ScenicProduction
                     .Field("connectedMetadata", itinerary?.UsesConnectedObservations ?? false));
             if (!selected || itinerary == null) return false;
         }
+        guideWorld.ResetDiagnostics();
         journey.Start(++nextId, itinerary, settings.ScenicJourneySpeed.Value);
         guide = new JourneyGuide(ToCore(position), itinerary.Destination.Position, journey.CruiseSpeed, itinerary.ArrivalRadius);
         Vector3 departureBearing = Vector3.ProjectOnPlane(FromCore(itinerary.SteeringGoal(ToCore(position))) - position, Vector3.up);
@@ -304,6 +305,8 @@ internal sealed partial class ScenicProduction
             .Field("shownSeconds", journey.ShownSeconds).Field("arrivalShownSeconds", journey.ArrivalShownSeconds)
             .Field("effectiveCruise", guide.Speed).Field("cruise", journey.CruiseSpeed).Field("noProgressSeconds", noAdvance)
             .Field("biomeAtRenderedPosition", biome).Field("surfaceAtRenderedPosition", surface)
-            .Field("reason", journeyStatus).Field("awaitingRender", MissingGuideRender).Field("guideStatus", guide.Status));
+            .Field("reason", journeyStatus).Field("awaitingRender", MissingGuideRender).Field("guideStatus", guide.Status)
+            .Field("lastSweepRejection", guideWorld.LastRejection).Field("sweepCounts", guideWorld.SweepSummary)
+            .Field("lastSweepScan", guideWorld.LastScan).Field("lastSweepScan2", guideWorld.LastScanTail));
     }
 }

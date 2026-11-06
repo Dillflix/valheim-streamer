@@ -15,7 +15,7 @@ public interface IJourneyGuideWorld
 
 /// <summary>Flies one continuous camera guide. Each local decision has a short
 /// lifetime; losing a corridor preserves the mission, destination and current pose.</summary>
-public sealed class JourneyGuide
+public sealed partial class JourneyGuide
 {
     private const double Brake = 6, Margin = .2;
     private const double ScanInterval = .30;
@@ -57,6 +57,19 @@ public sealed class JourneyGuide
         if (!Finite(deltaSeconds) || deltaSeconds < 0) throw new ArgumentOutOfRangeException(nameof(deltaSeconds));
         if (Arrived || deltaSeconds == 0) return;
         double dt = Math.Min(deltaSeconds, .15);
+        if (withdrawing)
+        {
+            FollowWithdrawal(dt, world);
+            return;
+        }
+        TrackEscapeProgress(dt);
+        if (escapeTarget.HasValue)
+        {
+            if (Position.HorizontalDistance(escapeTarget.Value) < 1.5)
+                escapeTarget = null;
+            else
+                steeringTarget = escapeTarget.Value;
+        }
         withoutProgress += dt;
         scanIn -= dt;
         sideMemory = Math.Max(0, sideMemory - dt);
@@ -79,7 +92,13 @@ public sealed class JourneyGuide
                 initialized = true;
             }
             UpdateEscapeHeight(world, steeringTarget, bearing);
+            ObserveFlightCorridor(world, bearing);
             SelectCourse(world, floor, bearing);
+            if (TryBeginWithdrawal(world, steeringTarget))
+            {
+                FollowWithdrawal(dt, world);
+                return;
+            }
         }
         if (speedLimit <= 0) return;
 
@@ -105,6 +124,7 @@ public sealed class JourneyGuide
             Speed = 0;
             return;
         }
+        RememberTravel(Position, next);
         Position = next;
         Travelled += requested;
         CheckArrival();
@@ -146,6 +166,7 @@ public sealed class JourneyGuide
         // Space for acceleration and braking beyond the next decision. A short
         // loaded prefix is enough to fly at a correspondingly lower speed.
         double horizon = Clamp(4 + cruise * .8 + cruise * cruise / (2 * Brake), 8, 40);
+        frontier = false;
         lifting = Position.Y < floor + 2;
         if (lifting)
         {
@@ -160,6 +181,7 @@ public sealed class JourneyGuide
             return;
         }
         Candidate direct = Probe(world, bearing, 0, horizon, 0);
+        frontier = direct.Frontier;
         Candidate best = direct;
         if (extraHeight > 0 && !direct.Frontier &&
             direct.Clear < horizon * .55 && Position.Y + 1 < floor + altitude + extraHeight)
@@ -231,7 +253,7 @@ public sealed class JourneyGuide
             span *= .5;
             if (span < .25) return new Candidate(candidateYaw, 0, 0, side: 0, score: 0, frontier: true);
         }
-        double desiredSlope = (floor + altitude + extraHeight - Position.Y) / span;
+        double desiredSlope = Math.Max((floor + altitude + extraHeight - Position.Y) / span, FlightSlope(offset, span));
         double candidatePitch = Math.Max(minimumPitch == 0 ? -20 : minimumPitch,
             Clamp(Math.Atan(desiredSlope) * 180 / Math.PI, -20, 52));
         var end = Along(Position, Direction(candidateYaw, candidatePitch), span);

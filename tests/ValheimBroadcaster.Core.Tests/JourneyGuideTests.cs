@@ -7,6 +7,9 @@ internal static class JourneyGuideTests
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
         yield return ("Journey steers two kilometres across a simulated coast, ridge and obstructed forest at travel pace", MixedTerrain);
+        yield return ("Journey withdraws through a covered blind passage and takes another approach", JourneyRetreatTests.CoveredPassageWithdrawal);
+        yield return ("Journey resumes through a reopened approach when its return path closes", JourneyRetreatTests.ReopenedPassage);
+        yield return ("Journey seeks the rear opening when departure has no breadcrumb history", JourneyRetreatTests.DepartureFacingBlindEnd);
         yield return ("Journey traverses offset stands of trees without losing progress", ForestPass);
         yield return ("Journey crosses two kilometres with tiles loading around a moving observer", RollingTiles);
         yield return ("Journey escapes a U-shaped enclosure and climbs a steep escarpment", Bluff);

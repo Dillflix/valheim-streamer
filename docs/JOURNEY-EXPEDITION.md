@@ -6,6 +6,8 @@ The milestone is one fully recorded, independently reviewable trip of at least 2
 
 Journey selects an actual place from discovery and steers the camera toward it through the loaded world. The guide checks the space ahead, adjusts its heading and speed around obstructions, and can brake when loading or clearance limits its view ahead. The observer tracks the on-air camera through the same loading mechanism used by Player Follow. The travel shot can continue across regions under one shot identity. Inspect actual captured camera positions to measure travel and distinguish a moving picture from a stationary guide.
 
+The guide uses observed solid obstacles ahead to begin climbs earlier. When it stalls in a dead end it can retrace recently travelled positions, checking each reverse movement against the current world, and take a different approach. The existing capture includes the latest physical rejection, sweep counts and sampled bearings for investigating movement stalls.
+
 The new client and the existing protocol-3 server companion can be used together. Ordinary Scenic direction, the in-game recorder, and the rolling retention settings remain available.
 
 ## Capture on the Windows broadcaster

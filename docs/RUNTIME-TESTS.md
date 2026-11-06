@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.58 Experimental movement recovery
+
+In the 0.8.57 game recording, Journey 10 selected a Meadows destination 1,987.1 m away. It travelled 66.15 m through the Black Forest, advancing 54.47 m along the itinerary. The final 120 sampled frames held identical camera coordinates while the guide reported that it could find no clear path. The operator stopped the trip. The trace did not identify the collider or the bearings the guide had ruled out. The recorded 2 km milestone remains open.
+
+Using identical simulated geometry for both versions, 0.8.57 completed two of eight 2,030 m forest courses with dense tree clusters, rocks, overhead slabs and covered dead ends. The updated guide completed all eight. Each simulated displacement was checked against the course geometry. At 12 m/s the four courses took 174.5–176.0 seconds. In a separate covered passage with no viable climb, 0.8.57 remained at the closed end for the rest of the 120-second test. The new guide followed its recorded path back through the entrance and reached the original destination. These fixtures exercise specific failure mechanisms. They do not recreate the collider arrangement from the Valheim recording.
+
 ## 0.8.57 Experimental continuous Journey
 
 The 0.8.56 capture selected a Black Forest destination 2,025.6 m away and spent 90 seconds preparing a departure. The initial 34 m candidate arrived at 41 seconds. No Journey motion was rendered. The new client uses continuous local steering. In-game terrain streaming, effective speed, shot quality, and arrival require a recording from the new implementation. The acceptance target is one uninterrupted trip of at least 2,000 measured metres through mixed terrain to the selected destination. [Runbook](JOURNEY-EXPEDITION.md)
