@@ -26,7 +26,7 @@ internal sealed partial class ScenicProduction
     }
     private readonly JourneyRunwayPolicy journeyRunway = new JourneyRunwayPolicy();
     private bool journeyRepairing, journeyRetainsPicture;
-    private float journeyRepairMissingSeconds;
+    private float journeyRepairMissingSeconds, journeyRepairStartedAt;
     private long journeyAuthorityWorld;
     private bool journeyAuthorized, journeyWatching, journeyHeld;
     private ScenicShotPlan? journeyRepairSeed;
@@ -290,6 +290,7 @@ internal sealed partial class ScenicProduction
             journeyQueue.Add(new JourneySection(journeyPendingSection, journeyEndingPlanner.Ready,
                 journeyEndingPlanner.Epoch, Math.Min(journeyPlanner.ValidatedAt, journeyPlanner.OnwardValidatedAt), journeyEndingPlanner.ValidatedAt,
                 journeyEndingPlanner.ArrivalFramed, moveCarrier));
+            TraceJourney("section-prepared", journeyPendingSection.Id);
             journeyRunway.ObservePreparation(journeyPendingSection.TravelMetres, journeyPreparationStarted, Time.unscaledTime);
             journeyPreparationFailures = 0; journeyRetryAt = 0;
             ResetJourneyPreparation();
@@ -475,7 +476,8 @@ internal sealed partial class ScenicProduction
             journey.SteeringGoal(seam), arrival?.Center, departureCut: independent && first,
             arrivalCenter: arrival == null ? (AutonomyPosition?)null : journey.Itinerary!.Destination.Position,
             arrivalRadius: journey.Itinerary!.ArrivalRadius, nativeSplineOverride: settings.NativeSplineDolly.Value,
-            planningCarrier: new AutonomyPosition(Player.m_localPlayer.transform.position.x, Player.m_localPlayer.transform.position.y, Player.m_localPlayer.transform.position.z));
+            planningCarrier: new AutonomyPosition(Player.m_localPlayer.transform.position.x, Player.m_localPlayer.transform.position.y, Player.m_localPlayer.transform.position.z),
+            missionTrail: journey.Trail.Snapshot(), repairFromRenderedPose: independent && journeyRepairing);
         journeyPlanning = true; journeyPreparationStarted = Time.unscaledTime;
     }
 
@@ -493,6 +495,7 @@ internal sealed partial class ScenicProduction
         journeyPredecessor = section.Plan.Id; journeyBraking = false; journeyRepairing = journeyRetainsPicture = false; journeyRepairMissingSeconds = 0;
         origin = FromCore(section.Plan.Sample(0).CameraPosition);
         journeyStatus = "Travelling to " + journey.Itinerary!.Destination.Name;
+        TraceJourney("section-admitted");
         return true;
     }
 
@@ -521,7 +524,18 @@ internal sealed partial class ScenicProduction
     {
         journeyTravel.AcknowledgeLocalReplan();
         if (journeyRepairing) return;
-        RetireJourneyQueue(); journeyRepairSeed = SnapshotTravelOrigin(Plan);
+        RetireJourneyQueue();
+        ScenicShotPlan? source = journeyPlayback.Current;
+        if (source != null && source.Feature != null)
+        {
+            ScenicShotSample sample = source.Sample(journeyPlayback.Progress);
+            AutonomyPosition last = journey.LastRenderedPosition ?? sample.CameraPosition;
+            Vector3 view = FromCore(sample.AimPosition) - FromCore(sample.CameraPosition) + FromCore(last);
+            journeyRepairSeed = ScenicJourneyDeparture.Snapshot(source, last,
+                new AutonomyPosition(view.x, view.y, view.z), source.FieldOfView);
+        }
+        else journeyRepairSeed = null;
+        journeyRepairStartedAt = Time.unscaledTime;
         journeyRepairing = true; journeyRetainsPicture = journeyPlayback.Current != null; journeyRepairMissingSeconds = 0;
         journeyExitId = 0; journeyBraking = false; journeyEndingReason = null;
         // Preserve the live accepted route pose while repair prepares. Ordinary
@@ -546,12 +560,14 @@ internal sealed partial class ScenicProduction
         if (journeyRetainsPicture)
         {
             journeyRepairMissingSeconds = HasUsablePicture ? 0 : journeyRepairMissingSeconds + Mathf.Min(.1f, Time.unscaledDeltaTime);
-            if (journeyRepairMissingSeconds >= 2) journeyRetainsPicture = false;
+            if (journeyRepairMissingSeconds >= 2 || Time.unscaledTime - journeyRepairStartedAt >= 2) journeyRetainsPicture = false;
         }
-        journeyRepairSeed ??= SnapshotTravelOrigin(current);
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
         if (!WithinDepartureHorizon(journeyRepairSeed, Player.m_localPlayer.transform.position))
-        { RetireJourneyQueue(); journeyRepairSeed = SnapshotTravelOrigin(current); }
+        {
+            journeyStatus = "Waiting for the last rendered Journey position to be locally available";
+            return JourneyOwnsPicture;
+        }
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
         // An ordinary fallback can cut far enough to unload the pending
         // search's forward observations while its old origin is still nearby.
@@ -563,9 +579,8 @@ internal sealed partial class ScenicProduction
                 !journeyEndingPlanner.WithinLoadingHorizon(Player.m_localPlayer.transform.position))))
         {
             RetireJourneyQueue(); journeyPlanner.ForgetSearchEpisode();
-            journeyRepairSeed = SnapshotTravelOrigin(Plan);
             journeyRetryAt = 0;
-            TraceJourney("local-replan-horizon-rebased");
+            TraceJourney("local-replan-horizon-invalidated");
         }
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
         StepJourneyPreparation(moveCarrier); RefreshJourneyQueue(moveCarrier);
@@ -575,18 +590,6 @@ internal sealed partial class ScenicProduction
             journeyQueue.RemoveAt(0); journeyRepairSeed = null; journey.BreakPresentation();
             TraceJourney("local-replan-resumed"); changed = true; return true;
         }
-        // A moving fallback may develop away from the stopped travel pose.
-        // Rebase between completed search batches, using actual presentation,
-        // rather than cancelling useful work on every ordinary camera cut.
-        if (!journeyRetainsPicture && !journeyPlanning && journeyQueue.Count == 0 &&
-            HasFreshJourneyFallbackCapture() &&
-            journeyRepairSeed.Sample(0).CameraPosition.Distance(journeyExitCapture.GetValueOrDefault().Position) > 8)
-        {
-            journeyRepairSeed = SnapshotTravelOrigin(Plan);
-            journeyRetryAt = 0;
-            TraceJourney("local-replan-rebased");
-        }
-        if (journeyRepairSeed == null) return JourneyOwnsPicture;
         PrepareJourneyTail(settings, journeyRepairSeed, 0, moveCarrier, true);
         journeyStatus = "Replanning the same Journey: " + journeyPlanner.Reason;
         if (Time.unscaledTime >= nextJourneyTrace) { TraceJourney("local-replan-progress"); nextJourneyTrace = Time.unscaledTime + 1; }
@@ -753,12 +756,24 @@ internal sealed partial class ScenicProduction
         journeyPlayback.Reset(); journeyRepairing = journeyRetainsPicture = false; journeyRepairMissingSeconds = 0; journeyRepairSeed = null;
     }
 
-    private void TraceJourney(string phase)
+    private void TraceJourney(string phase, long prepared = 0)
     {
         if (!ScenicTrace.Enabled) return;
         double ahead = Plan?.IsJourney == true ? Plan.TravelMetres * (1 - Plan.MotionFraction(journeyPlayback.Progress)) : 0;
         foreach (JourneySection section in journeyQueue) ahead += section.Plan.TravelMetres;
-        ScenicTrace.Record(ScenicTrace.Row("journey").Field("phase", phase).Field("journey", journey.Id)
+        string biome = "unknown", surface = "unknown";
+        if (JourneyOwnsPicture && journey.LastRenderedPosition.HasValue && WorldGenerator.instance != null &&
+            CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Observation, out var observation))
+        using (observation)
+        {
+            Vector3 point = FromCore(journey.LastRenderedPosition.Value);
+            biome = WorldGenerator.instance.GetBiome(point).ToString();
+            if (ScenicSurface.TryGroundHeight(point, out float ground) &&
+                ScenicSurface.TryWaterHeight(point, out bool water, out float level, stableEnvelope: true))
+                surface = water && level > ground ? "water" : "land";
+        }
+        ScenicTrace.Record(ScenicTrace.Row("journey").Field("phase", phase)
+            .Field("biomeAtRenderedPosition", biome).Field("surfaceAtRenderedPosition", surface).Field("journey", journey.Id)
             .Field("owned", journeyOwned).Field("departureState", journeyTravel.State.ToString()).Field("missionCause", journeyTravel.Cause.ToString()).Field("ownsTravel", JourneyOwnsTravel).Field("plan", Plan?.Id ?? 0)
             .Field("requested", requestedJourney || manualJourney).Field("requestRemaining", Math.Max(0, journeyRequestExpiresAt - Time.unscaledTime))
             .Field("seed", journeyDepartureSeed?.Id ?? 0).Field("catalogueRegions", journeyRegions.Count)
@@ -779,6 +794,9 @@ internal sealed partial class ScenicProduction
             .Field("localRepair", journeyRepairing).Field("missionTravelSeconds", journeyTravel.TravelElapsedSeconds)
             .Field("missionDepartureSeconds", journeyTravel.DepartureElapsedSeconds)
             .Field("noProgressSeconds", journeyTravel.NoProgressSeconds).Field("replanRequested", journeyTravel.LocalReplanRequested)
+            .Field("preparedSection", prepared).Field("arrivalEnding", journeyEndingArrival ? journeyExitId : 0)
+            .Field("trailCells", journey.Trail.Count).Field("journeyOwnsPicture", JourneyOwnsPicture)
+            .Field("travelSection", journeyPlayback.Current?.IsJourney == true).Field("section", journeyPlayback.Current?.Id ?? 0).Field("producerMetresPerSecond", journeyRunway.ProductionMetresPerSecond)
             .Field("openingCandidates", journeyPlanner.OpeningCandidates).Field("rejectedOpenings", journeyPlanner.RejectedOpenings)
             .Field("planningFailure", journeyPlanner.FailureKind.ToString()).Field("activeOrigins", journeyPlanner.ActiveOriginCount)
             .Field("activeOrigin", journeyPlanner.ActiveOrigin).Field("originServiceSlices", journeyPlanner.OriginServiceSlices)

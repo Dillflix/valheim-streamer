@@ -29,6 +29,9 @@ internal sealed class ScenicJourneyPlanner : IDisposable
     private AutonomyPosition? planningCarrier;
     private long planningEpoch;
     private float searchWindowLength;
+    private JourneyTrailSnapshot? missionTrail;
+    private bool repairFromRenderedPose;
+    private AutonomyPosition? boundRepairOrigin;
     private int candidateOption;
     private readonly JourneyNavigationPlanner continuation = new JourneyNavigationPlanner("journey-continuation", false);
     private readonly JourneyOpeningSchedule schedule = new JourneyOpeningSchedule(8, 4);
@@ -96,9 +99,14 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         float cameraAspect, float cameraNearClip, bool moveObserver, bool finalWindow = false,
         AutonomyPosition? objectiveGoal = null, AutonomyPosition? observedArrivalFocus = null, bool departureCut = false,
         AutonomyPosition? arrivalCenter = null, double arrivalRadius = 0, bool? nativeSplineOverride = null,
-        AutonomyPosition? planningCarrier = null)
+        AutonomyPosition? planningCarrier = null, JourneyTrailSnapshot? missionTrail = null, bool repairFromRenderedPose = false)
     {
-        Reset(); previous = predecessor; nextId = id; journeyId = journey;
+        AutonomyPosition? nextRepairOrigin = repairFromRenderedPose ? predecessor.Sample(1).CameraPosition : (AutonomyPosition?)null;
+        if (boundRepairOrigin.HasValue != nextRepairOrigin.HasValue ||
+            boundRepairOrigin.HasValue && boundRepairOrigin.Value.Distance(nextRepairOrigin.GetValueOrDefault()) > .001)
+            ForgetSearchEpisode();
+        boundRepairOrigin = nextRepairOrigin;
+        Reset(); this.missionTrail = missionTrail; this.repairFromRenderedPose = repairFromRenderedPose; previous = predecessor; nextId = id; journeyId = journey;
         // Existing spatial routes support <=80m/16 knots. The programme owns
         // kilometres by joining local certificates, not by bypassing that bound.
         length = Mathf.Clamp(metres, 1, 64); speed = selectedSpeed = metresPerSecond; aspect = cameraAspect; nearClip = cameraNearClip;
@@ -303,7 +311,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         try
         {
             navigation.Begin(journeyId, planningEpoch, nextId, first, incoming, entryAim, destination, carrier,
-                length, speed, previous.FieldOfView, aspect, nearClip);
+                length, speed, previous.FieldOfView, aspect, nearClip, missionTrail);
             navigationBound = true; return true;
         }
         catch (ArgumentException error)
@@ -440,14 +448,16 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         try
         {
             AutonomyPosition destination = goal ?? P(V(seed.CameraPosition) + V(ObjectiveHeading(previous)) * 100);
-            proposal = JourneyDepartureSpace.Propose(id, seed.CameraPosition, destination, speed);
+            proposal = JourneyDepartureSpace.Propose(id, seed.CameraPosition, destination, speed, repairFromRenderedPose);
         }
         catch (ArgumentException)
         { CompleteOpening(id, false, "Departure origin or bearing lies outside supported world coordinates"); return; }
-        Vector3 position = pendingRaisedOpening ?? V(proposal.Position); openingPosition = position;
+        Vector3 position = repairFromRenderedPose ? V(seed.CameraPosition) : pendingRaisedOpening ?? V(proposal.Position); openingPosition = position;
         if (!WorldPoint(position) || !MeasureFloor(position, out float floor))
         { DeferOpening(id, "Departure origin terrain/water is not observed"); return; }
-        position.y = Mathf.Max(position.y, floor + .75f);
+        if (repairFromRenderedPose && position.y < floor)
+        { CompleteOpening(id, false, "Last rendered Journey position no longer clears the surface"); return; }
+        if (!repairFromRenderedPose) position.y = Mathf.Max(position.y, floor + .75f);
         Vector3 focus;
         try { focus = V(proposal.AimAt(P(position))); }
         catch (ArgumentException)
@@ -469,7 +479,7 @@ internal sealed class ScenicJourneyPlanner : IDisposable
         { DeferOpening(id, openingViews.Reason, true); return; }
         bool readable = ScenicPoseValidation.Check(pose, probe, openingView, aspect, nearClip, false, moveCarrier,
             out float quality, out ScenicRejectionKind kind, out string reason);
-        if (!readable && !pendingRaisedOpening.HasValue && kind == ScenicRejectionKind.InsideVegetation &&
+        if (!readable && !repairFromRenderedPose && !pendingRaisedOpening.HasValue && kind == ScenicRejectionKind.InsideVegetation &&
             openingView.TryCanopyLift(position, out float canopyLift))
         {
             Vector3 raised = position + Vector3.up * canopyLift;

@@ -9,6 +9,7 @@ internal static class JourneyNavigationSearchTests
     {
         yield return ("Shrinking runway can offer an explored short passage only with onward proof", ShrinkingRunway);
         yield return ("A guide for native preflight preserves historic node ages and renews its exact onward edge", NativeGuideRenewal);
+        yield return ("Two retreating sections can take an observed passage without repeating an oriented trail", MissionDetour);
         yield return ("Connected Journey search develops production-scale clear routes without exhausting node breadth", ClearLongRoutes);
         yield return ("Connected Journey search goes around a measured obstacle with an exact entry seam", SingleObstacle);
         yield return ("Connected Journey search composes opposite turns through offset trees instead of a fixed route fan", AlternatingDogleg);
@@ -178,6 +179,27 @@ internal static class JourneyNavigationSearchTests
         search.Step(1, scene.Now, 3, probe => new JourneyNavigationObservation(
             JourneyNavigationEvidence.Blocked, default, 0, 3, scene.Now));
         Check(search.Result == null, "Guide was returned despite blocked onward renewal");
+    }
+
+    private static void MissionDetour()
+    {
+        var scene = new Scene { MinimumX = -80, MaximumX = 0, MaxZ = 0 };
+        var memory = new JourneyTrail();
+        JourneyNavigationPose from = new(P(0), P(-12)), entry = new(P(-2), P(-14));
+        for (int section = 0; section < 2; section++)
+        {
+            var request = new JourneyNavigationRequest(7, 3, from, entry, P(100), from.Position,
+                targetMetres: 12, maximumMetres: 24, trail: memory.Snapshot());
+            var path = Ready(Run(scene, request), scene, request);
+            Check(path.GoalProgress < 0, "The constrained passage did not require retreat");
+            foreach (var pose in path.Poses) memory.Observe(pose.Position, true);
+            from = path.Poses[path.Poses.Count - 1];
+            entry = path.OnwardPose!.Value;
+        }
+        Check(memory.Snapshot().Repeats(from.Position, P(-1)) &&
+            !memory.Snapshot().Repeats(from.Position, P(1)), "Backtracking was conflated with repeating a circuit");
+        memory.Reset();
+        Check(memory.Count == 0, "Another mission inherited previous travel");
     }
 
     private static void ClearLongRoutes()

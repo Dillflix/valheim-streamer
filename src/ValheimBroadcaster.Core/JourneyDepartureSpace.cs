@@ -41,7 +41,7 @@ public sealed class JourneyDepartureSpace
     public int Rejected { get; private set; }
     public int Deferred { get; private set; }
 
-    public static JourneyOpeningProposal Propose(int id, AutonomyPosition seed, AutonomyPosition destination, double speed)
+    public static JourneyOpeningProposal Propose(int id, AutonomyPosition seed, AutonomyPosition destination, double speed, bool turnInPlace = false)
     {
         if (id < 0 || id >= CandidateCount) throw new ArgumentOutOfRangeException(nameof(id));
         double range = JourneyRunwayPolicy.GazeReach(speed);
@@ -57,6 +57,13 @@ public sealed class JourneyDepartureSpace
         double angle = (bearing == 1 ? 24 : bearing == 2 ? -24 : 0) * Math.PI / 180;
         var position = new AutonomyPosition((float)(seed.X + x * offset.Ahead + z * offset.Side),
             seed.Y + level * 8, (float)(seed.Z + z * offset.Ahead - x * offset.Side));
+        if (turnInPlace)
+        {
+            // Interleave both sides before testing the reverse bearing.
+            int sector = id % 8;
+            angle = ((sector + 1) / 2) * (sector % 2 == 0 ? -1 : 1) * Math.PI / 4;
+            position = seed;
+        }
         var heading = new AutonomyPosition((float)(x * Math.Cos(angle) + z * Math.Sin(angle)), 0,
             (float)(z * Math.Cos(angle) - x * Math.Sin(angle)));
         return new JourneyOpeningProposal(id, position, heading, range);

@@ -334,7 +334,8 @@ internal sealed partial class ScenicProduction
                     ? remaining + JourneyRunwayPolicy.StopMarginMetres
                     : JourneyRunwayMetres();
                 double speed = journeyRunway.StepSpeed(journey.CruiseSpeed, runway, step, held,
-                    sectionCruiseLimit: sectionCruise, nextSectionCruiseLimit: nextCruise, remainingSectionMetres: remaining);
+                    sectionCruiseLimit: sectionCruise, nextSectionCruiseLimit: nextCruise, remainingSectionMetres: remaining,
+                    producerLeadSeconds: journeyPlanning && journeyQueue.Count == 0 ? journeyRunway.PreparationSeconds : 0);
                 // The final centimetres are still part of the validated route.
                 // Complete that exact seam before admitting its arrival pan.
                 if (journeyBraking && Plan != null && runway - JourneyRunwayPolicy.StopMarginMetres <= .05)

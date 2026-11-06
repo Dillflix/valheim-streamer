@@ -1,5 +1,9 @@
 # Validation and runtime test record
 
+## 0.8.55 Experimental expedition branch
+
+[Runbook and acceptance](JOURNEY-EXPEDITION.md). The next milestone requires a full in-game recording of departure, at least 2 km of measured travel through mixed terrain and presented arrival at the original destination. No successful run has been recorded here. Core regression coverage includes two successive sections retreating along an observed passage, directional travel memory, and speed reduction under slow replenishment. The capture reviewer can reject incomplete or failed attempts and does not grade cinematography.
+
 ## 0.8.54 Live Journey retries and Scenic fallback
 
 The supplied 0.8.53 run reached 72.3 m of a 1,995.8 m itinerary. Plan 18 occupied 73.6 seconds of diagnostic footage. Retained motion records show 1,011 pairs of triangle-pending/resumed events on plans 18 and 31. The repair interval froze measured distance near 67 m for roughly 49 seconds. Ordinary coverage admitted three different rock establishing shots and a rock traverse during that repair.

@@ -65,6 +65,8 @@ namespace ValheimBroadcaster.Core
         public bool BudgetExpired => TargetMetres > 0 && (ShownSeconds >= MaximumSeconds || Windows >= 1024 || TravelMetres >= TargetMetres * 1.5 + MinimumWindowMetres);
         public bool CanContinue => Active && !TargetReached && !BudgetExpired;
         public double AchievedMetresPerSecond => ShownSeconds > 0 ? TravelMetres / ShownSeconds : 0;
+        public JourneyTrail Trail { get; } = new JourneyTrail();
+        public AutonomyPosition? LastRenderedPosition { get; private set; }
         private long observedPlan;
         private double observedProgress, observedAt = -1, creditedAdvanceMetres;
         private double previousRouteProgress, creditedRouteProgress, arrivalObservedAt = -1;
@@ -188,6 +190,8 @@ namespace ValheimBroadcaster.Core
                     creditedRouteProgress += Itinerary.ProjectProgress(position) - previousRouteProgress;
                 ShownSeconds += gap;
             }
+            Trail.Observe(position, previousLive && gap <= .25);
+            LastRenderedPosition = position;
             if (observedPlan != plan.Id) { observedPlan = plan.Id; Windows++; }
             observedProgress = progress;
             previousPosition = position; previousLive = true;
@@ -221,6 +225,7 @@ namespace ValheimBroadcaster.Core
 
         public void Reset()
         {
+            Trail.Reset(); LastRenderedPosition = null;
             Id = observedPlan = 0; ShownSeconds = TravelMetres = DisplacementMetres = ObjectiveAdvanceMetres = MaximumSeconds = TargetMetres = CruiseSpeed = observedProgress = creditedAdvanceMetres = 0;
             observedAt = -1; Windows = 0; previousLive = false; previousPosition = ObjectiveOrigin = ObjectiveGoal = Heading = default;
             Itinerary = null; RouteProgressMetres = ArrivalShownSeconds = previousRouteProgress = creditedRouteProgress = 0;

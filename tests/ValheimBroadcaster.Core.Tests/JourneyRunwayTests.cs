@@ -6,6 +6,7 @@ internal static class JourneyRunwayTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
+        yield return ("Slow production reduces cruise ahead of the physical braking boundary", AnticipateSupply);
         yield return ("One certified Journey route with a safe ending launches on physical reserve rather than a fixed section count", StartupReserve);
         yield return ("Journey proposal windows include inherited gaze and the observed loading horizon", LoadingFootprint);
         yield return ("Successful Journey producer observations measure metres per second without duplicate completion credit", MeasuredProduction);
@@ -33,6 +34,21 @@ internal static class JourneyRunwayTests
             new[] { P(start), P(start + length / 2), P(start + length) },
             new[] { P(start + 21), P(start + length / 2 + 21), P(start + length + 21) }, 65);
         return previous == 0 ? plan.AsJourneyDeparture(7, length / 6d) : plan.AsJourney(7, previous, length / 6d);
+    }
+
+    private static void AnticipateSupply()
+    {
+        var ordinary = new JourneyRunwayPolicy();
+        var waiting = new JourneyRunwayPolicy();
+        ordinary.TryStart(1, 64, 6, out _);
+        waiting.TryStart(1, 64, 6, out _);
+        for (int i = 0; i < 60; i++)
+        {
+            ordinary.StepSpeed(6, 36, .02);
+            waiting.StepSpeed(6, 36, .02, producerLeadSeconds: 20);
+        }
+        Check(waiting.EffectiveCruise < ordinary.EffectiveCruise - 1,
+            "Playback waited until the stopping boundary to respond to slow replenishment");
     }
 
     private static void StartupReserve()
