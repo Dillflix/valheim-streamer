@@ -15,6 +15,11 @@ internal sealed class IdleShots
     private readonly ScenicProduction scenic = new ScenicProduction();
     private float radius = 50;
     private Vector3 creatureOrigin;
+    internal long JourneyGuideId => scenic.JourneyGuideId;
+    internal float JourneyGuideProgress => scenic.JourneyGuideProgress;
+    internal bool JourneyGuideActive => scenic.JourneyActive;
+    internal bool TryGetJourneyGuidePose(float dt, bool held, out Vector3 position, out Vector3 focus) =>
+        scenic.TryGetJourneyGuidePose(dt, held, out position, out focus);
     internal bool JourneyActive => scenic.JourneyActive;
     internal bool JourneyOwnsTravel => scenic.JourneyOwnsTravel;
     internal void UpdateJourneyAuthority(long worldId, bool authorized, bool watching, bool held, bool preempted) =>
@@ -53,14 +58,14 @@ internal sealed class IdleShots
     internal void SetDestinationSubject(WorldInterestSite? site) => scenic.SetDestinationSubject(site);
     internal ScenicVisibility Visibility => scenic.Visibility;
     internal ScenicShotPlan? Plan => scenic.Plan;
-    internal long PlanId => Plan?.Id ?? 0;
+    internal long PlanId => JourneyActive ? JourneyGuideId : Plan?.Id ?? 0;
     internal Vector3 ScenicOffset => scenic.Offset;
     internal int RejectedViews => scenic.RejectedViews;
     internal string ViewReason => scenic.Reason;
     internal string ScenicSearchStatus => scenic.SearchStatus;
     internal string Diagnostics => scenic.Diagnostics + "; loaded creatures " + creatures.Count;
     internal bool HasRegion => scenic.HasRegion;
-    internal bool HasScenicPath => Plan != null;
+    internal bool HasScenicPath => JourneyActive || Plan != null;
     internal bool CanContinue => scenic.CanContinue;
     internal bool SceneReady => scenic.SceneReady;
 

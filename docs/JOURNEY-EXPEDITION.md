@@ -4,9 +4,9 @@ The milestone is one fully recorded, independently reviewable trip of at least 2
 
 ## What changed
 
-The mission records the positions and headings actually rendered. Local search may propose useful sideways and retreating sections into new space. Reversing through a passage and repeating it in the same direction are different decisions. This bounded local search still needs actual loaded observations, a swept camera path, a fresh onward seam and a valid ending. It cannot guarantee a route through every maze.
+Journey selects an actual place from discovery and steers the camera toward it through the loaded world. The guide checks the space ahead, adjusts its heading and speed around obstructions, and can brake when loading or clearance limits its view ahead. The observer tracks the on-air camera through the same loading mechanism used by Player Follow. The travel shot can continue across regions under one shot identity. Inspect actual captured camera positions to measure travel and distinguish a moving picture from a stationary guide.
 
-Speed control uses measured preparation time when a successor is being built and the queue is empty. It reduces speed while there is still braking room. If travel does stall, ordinary direction gets control during repair after a short hold. Repair starts at the last rendered travel position and can search multiple bearings there. A fallback shot in a different place cannot provide a shortcut. An unavailable repair position may still prevent completion.
+The new client and the existing protocol-3 server companion can be used together. Ordinary Scenic direction, the in-game recorder, and the rolling retention settings remain available.
 
 ## Capture on the Windows broadcaster
 
@@ -17,7 +17,7 @@ broadcast journey off
 broadcast mode scenic
 broadcast capture on
 broadcast journey distance 2000
-broadcast journey speed 6
+broadcast journey speed 12
 broadcast journey start
 ```
 
@@ -29,6 +29,6 @@ For offline analysis, `tools/journey-recording.py review <diagnostics-directory>
 
 ## Acceptance
 
-The report checks the original request and destination, actual measured travel, presented arrival, multiple sections, trace completeness, video coverage and decoded frame counts. It reports motion gaps, mission states, generated biome and sampled land/water context. A reviewer must still watch the whole trip and evaluate terrain variation, smooth movement, section handoffs, fallback cuts, arrival framing and any operator interference. Check successive travel sections before and after each cut. Geometrically different routes in one biome can qualify as mixed terrain if the footage supports it. A successful report can only mark footage **ready for review**. Gameplay success requires that review.
+The report checks the original request and destination, actual measured travel, presented arrival, continuous travel in the recorded camera frames, trace completeness, video coverage and decoded frame counts. It reports motion gaps, mission states, generated biome and sampled land/water context. A reviewer must still watch the whole trip and evaluate terrain variation, travel speed, stationary periods, route continuity, arrival framing and any operator interference. A candidate that spends most of the recording stationary, teleports, or cuts to ordinary Scenic footage during the trip fails the milestone. Geometrically different routes in one biome can qualify as mixed terrain if the footage supports it. A successful report can only mark footage **ready for review**. Gameplay success requires that review.
 
 Run an independent Scenic session with automatic Journey off to inspect shot variety and readability. Release validation also needs other lengths, higher speeds, obstacle layouts and repeated unattended runs. One successful recorded trip is the first milestone, not the general reliability claim.

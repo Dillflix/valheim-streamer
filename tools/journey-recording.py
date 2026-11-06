@@ -70,7 +70,12 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
     if any(start <= r["time"] <= end for r in info["travel"]):
         issues.append("Observer relocation recorded during mission")
     route_ids = {r["section"] for r in rows if r.get("owned") and r.get("journeyOwnsPicture") and r.get("travelSection", False) and r.get("section", 0) > 0}
-    if len(route_ids) < 2:
+    guide = first.get("journeyEngine") == "guide"
+    if guide and any(r.get("journeyEngine") != "guide" for r in rows):
+        issues.append("Guide trace changed engine")
+    if guide and len(route_ids) != 1:
+        issues.append("Continuous guide shot identity missing or changed")
+    if not guide and len(route_ids) < 2:
         issues.append("Fewer than two owned travel sections recorded")
 
     terrain = {r.get("biomeAtRenderedPosition", "unknown") for r in rows} - {"unknown"}
@@ -123,9 +128,9 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
         longest_stationary = max(longest_stationary, at-stationary_anchor[0])
         if last_pose:
             old_at, old_pos, old_id = last_pose
-            distance = math.dist(pos, old_pos)
-            if distance > (2 if old_id != frame["shot"] else 2 + 12 * (at-old_at)):
-                jumps.append({"at": at, "metres": round(distance, 2)})
+            step_metres = math.dist(pos, old_pos)
+            if step_metres > (2 if old_id != frame["shot"] else 2 + 12 * (at-old_at)):
+                jumps.append({"at": at, "metres": round(step_metres, 2)})
         last_pose = at, pos, frame["shot"]
     for r in rows:
         if r.get("noProgressSeconds", 0) > 0:
@@ -133,18 +138,33 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
     if abs(sampled_metres - last["measuredMetres"]) > max(2, last["measuredMetres"] * .02):
         issues.append("Independent footage-camera distance differs from mission counter")
     live_ids = {r["shot"] for r in samples if r["shot"] in route_ids and r["presentation"] == "Live" and r["usable"]}
-    if len(live_ids) < 2:
+    if guide:
+        if len(live_ids) != 1:
+            issues.append("Continuous live guide footage missing")
+        live_times = [r["time"] for r in samples if r["shot"] in route_ids and
+                      r["presentation"] == "Live" and r["usable"]]
+        if any(b - a > .25 for a, b in zip(live_times, live_times[1:])):
+            issues.append("Guide picture interrupted during travel")
+    if not guide and len(live_ids) < 2:
         issues.append("Footage does not show two live travel sections")
     arrival_ids = {r.get("arrivalEnding") for r in rows if r.get("arrivalEnding", 0) > 0}
-    arrival_frames = sum(r["shot"] in arrival_ids and r["presentation"] == "Live" and r["usable"] for r in samples)
+    arrival_at = next((r["time"] for r in rows if r["phase"] == "arrival-start"), None)
+    if guide and arrival_at is None:
+        issues.append("Rendered guide arrival time missing")
+    if guide:
+        arrival_ids = route_ids
+    arrival_samples = [r for r in samples if r["shot"] in arrival_ids and r["presentation"] == "Live"
+                       and r["usable"] and (not guide or arrival_at is not None and arrival_at <= r["time"] <= end)]
+    arrival_frames = len(arrival_samples)
     if first.get("arrivalRadius", 0) <= 0 or "destinationX" not in first or "destinationZ" not in first:
         issues.append("Original arrival coordinates missing")
     else:
         destination_xz = (first["destinationX"], first["destinationZ"])
         if any(math.dist((r["cameraX"], r["cameraZ"]), destination_xz) > first["arrivalRadius"]
-               for r in samples if r.get("shot") in arrival_ids and r["presentation"] == "Live" and r["usable"]):
+               for r in arrival_samples):
             issues.append("Arrival footage outside the original destination radius")
-    if arrival_frames < 34:
+    sampled_arrival = arrival_samples[-1]["time"] - arrival_samples[0]["time"] if arrival_samples else 0
+    if arrival_frames < 34 or guide and sampled_arrival < 2.75:
         issues.append("Missing mapped footage of the arrival ending")
     if jumps:
         issues.append("Discontinuous travel poses require review")
@@ -198,7 +218,7 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
                     "seconds": round(group[-1]["time"] - group[0]["time"], 1)}
                    for key, items in itertools.groupby(rows, lambda r: (r["departureState"], r["missionCause"]))
                    if (group := list(items))]
-    return {"session": session, "mission": mission, "destination": destination, "targetMetres": last["targetMetres"],
+    return {"engine": "guide" if guide else "sections", "session": session, "mission": mission, "destination": destination, "targetMetres": last["targetMetres"],
             "measuredMetres": last["measuredMetres"], "durationSeconds": end-start, "arrivalSeconds": last["arrivalShownSeconds"],
             "travelSections": sorted(route_ids), "footageCameraMetres": round(sampled_metres, 2),
             "longestNearlyStationaryTravelShotSeconds": round(longest_stationary, 2), "videoSegments": len(files), "videoSamples": len(samples),

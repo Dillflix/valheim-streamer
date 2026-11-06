@@ -22,6 +22,8 @@ internal static class ScenicJourneyItineraryTests
         yield return ("Arriving at a known place needs measured travel and actual readable ending footage", ActualArrival);
         yield return ("A hidden relocation cannot turn a partial Journey into a completed arrival", HiddenArrival);
         yield return ("Held or unreadable arrival footage cannot complete a Journey", UnusableArrival);
+        yield return ("A continuous guide cannot claim a teleport across missing render samples", HiddenGuideArrival);
+        yield return ("Continuous flight measures a slower rendering cadence and requires shown arrival", GuidedArrival);
         yield return ("Journey catalogue and route construction retain explicit bounded inputs", Bounds);
     }
 
@@ -53,6 +55,36 @@ internal static class ScenicJourneyItineraryTests
         Check(route.Waypoints.Count > 2 && route.WaypointIds[route.WaypointIds.Count - 1] == "headland", "Lost observed route provenance");
         Check(route.Description.Contains("coast"), "Lost landscape intent");
     }
+    private static void HiddenGuideArrival()
+    {
+        var route = Select(Line());
+        var policy = new ScenicJourneyPolicy();
+        policy.Start(4, route, 12);
+        policy.ObserveGuide(0, true, false, P(0));
+        policy.ObserveGuide(.1, true, false, P(1));
+        policy.BreakPresentation();
+        policy.ObserveGuide(60, true, false, route.Destination.Position);
+        Check(policy.Outcome == ScenicJourneyOutcome.Interrupted && !policy.TargetReached, "Unseen relocation counted as travel");
+    }
+
+    private static void GuidedArrival()
+    {
+        var route = Select(Line());
+        var policy = new ScenicJourneyPolicy();
+        policy.Start(7, route, 12);
+        for (int i = 0; i <= 255; i++)
+            policy.ObserveGuide(i * .1, true, false, P(i * 1.2f));
+        Check(policy.AtArrival && !policy.TargetReached, "Travel alone counted an arrival");
+        Near(policy.TravelMetres, 306, .1);
+        for (int i = 1; i <= 34; i++)
+        {
+            double t = 25.5 + i * .1;
+            policy.ObserveGuide(t, true, false, P(306));
+            policy.ObserveArrival(t, true, false, P(306), true);
+        }
+        Check(policy.TargetReached, "Rendered arrival could not finish");
+    }
+
     private static void NoInventedDestination()
     {
         foreach (var regions in new IReadOnlyList<ScenicRegion>[] { Array.Empty<ScenicRegion>(),

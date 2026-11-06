@@ -16,18 +16,23 @@ internal sealed class CameraRig
     private readonly PlayerComplementaryCamera complementary = new PlayerComplementaryCamera();
     private readonly ScenicCameraRig scenicCamera = new ScenicCameraRig();
     private bool proceduralActive, scenicActive, creatureActive, complementaryActive, presentationConfirmed, editorialHold;
+    private long guideMission;
+    private float guideYaw, guidePitch, guideFov, guideProgress;
+    private Vector3 guideFocus;
+    private RenderedPictureContext guidePicture;
+    private long guidePictureEpoch = 2000000000;
     internal bool ComplementaryActive => complementaryActive;
     internal bool StoryContinuityReady { get; private set; }
-    internal bool DisplayedPlayerUsable => !scenicActive && !creatureActive && !complementaryActive && LastPictureUsable;
-    internal string PerspectiveDescription => complementaryActive ? complementary.Description : scenicActive ? "Scenic" : creatureActive ? "Creature" : "Player primary";
+    internal bool DisplayedPlayerUsable => guideMission == 0 && !scenicActive && !creatureActive && !complementaryActive && LastPictureUsable;
+    internal string PerspectiveDescription => guideMission > 0 ? "Journey" : complementaryActive ? complementary.Description : scenicActive ? "Scenic" : creatureActive ? "Creature" : "Player primary";
     internal long PresentedActorShotId => proceduralActive && !scenicActive ? ActorCamera.PresentedShotId : -1;
     private CinemachineShotRig ActorCamera => complementaryActive ? complementary.Rig : creatureActive ? creatureCamera : shotCamera;
     private string? presentationNotice;
     private string legacyMode = "awaiting coverage";
     internal string Diagnostics => presentationNotice != null ? "Camera: " + presentationNotice :
-        scenicActive ? scenicCamera.Diagnostics : proceduralActive ? (complementaryActive ? complementary.Description + "; " : "") + ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
+        guideMission > 0 ? "Journey guide: continuous travel" : scenicActive ? scenicCamera.Diagnostics : proceduralActive ? (complementaryActive ? complementary.Description + "; " : "") + ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
     internal bool LastPictureUsable { get; private set; }
-    internal bool IsProcedural => proceduralActive;
+    internal bool IsProcedural => guideMission > 0 || proceduralActive;
     internal string PictureReason => scenicActive ? scenicCamera.LastFailure : proceduralActive ? ActorCamera.PictureReason : LastFailure;
     internal string EncounterCoverageDescription => proceduralActive && !scenicActive ? ActorCamera.EncounterCoverageDescription : "";
     internal int FramedParticipantCount => proceduralActive && !scenicActive ? ActorCamera.FramedParticipantCount : 0;
@@ -45,14 +50,15 @@ internal sealed class CameraRig
     internal bool PresentationConfirmed { set { presentationConfirmed = value; } }
     internal bool EditorialHold { set { editorialHold = value; shotCamera.EditorialHold = value; creatureCamera.EditorialHold = value; } }
     internal RenderedPictureMonitor? PictureMonitor { set { shotCamera.PictureMonitor = value; creatureCamera.PictureMonitor = value; complementary.Rig.PictureMonitor = value; scenicCamera.PictureMonitor = value; } }
-    internal RenderedPictureContext? PictureContext => scenicActive && LastPictureUsable ? scenicCamera.PictureContext :
+    internal RenderedPictureContext? PictureContext => guideMission > 0 && LastPictureUsable && guidePicture.Frame == Time.frameCount ? guidePicture :
+        scenicActive && LastPictureUsable ? scenicCamera.PictureContext :
         proceduralActive && LastPictureUsable ? ActorCamera.BuildPictureContext() : null;
-    internal bool ScenicMovementAccepted => scenicActive && scenicCamera.MovementAccepted;
-    internal float ScenicPresentedProgress => scenicActive ? scenicCamera.PresentedProgress : 0;
-    internal long ScenicPresentedPlanId => scenicActive ? scenicCamera.PresentedPlanId : 0;
+    internal bool ScenicMovementAccepted => guideMission > 0 ? LastPictureUsable : scenicActive && scenicCamera.MovementAccepted;
+    internal float ScenicPresentedProgress => guideMission > 0 ? guideProgress : scenicActive ? scenicCamera.PresentedProgress : 0;
+    internal long ScenicPresentedPlanId => guideMission > 0 ? guideMission : scenicActive ? scenicCamera.PresentedPlanId : 0;
     internal bool ScenicPictureConcern => scenicActive && scenicCamera.PictureConcern;
     internal string ScenicPictureConcernReason => scenicActive ? scenicCamera.PictureConcernReason : "";
-    internal Vector3? ScenicPresentedFocus => scenicActive && LastPictureUsable ? scenicCamera.PresentedFocus : null;
+    internal Vector3? ScenicPresentedFocus => guideMission > 0 && LastPictureUsable ? guideFocus : scenicActive && LastPictureUsable ? scenicCamera.PresentedFocus : null;
     internal ScenicRejectionKind ScenicFailureKind => scenicActive ? scenicCamera.FailureKind : ScenicRejectionKind.None;
     internal string ScenicRejectionReason => scenicActive ? scenicCamera.LastFailure : "Scenic camera inactive";
     private Camera? camera;
@@ -96,11 +102,8 @@ internal sealed class CameraRig
             0, false, moveCarrier, out _, out _, out _) && creatureCamera.LastPictureUsable;
     }
 
-    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false, Character? creatureTarget = null, ScenicShotPlan? scenicPlan = null, float scenicProgress = 0, ScenicVisibility? scenicVisibility = null)
+    private Camera BindOutput(GameCamera gameCamera)
     {
-        presentationNotice = null; LastPictureUsable = StoryContinuityReady = false;
-        AcceptedRenderPose = default;
-        obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         Camera next = gameCamera.GetComponent<Camera>();
         if (!next) next = gameCamera.GetComponentInChildren<Camera>();
         if (!next) throw new InvalidOperationException("GameCamera has no Camera component.");
@@ -119,6 +122,72 @@ internal sealed class CameraRig
             skyCamera = nextSky;
             if (skyCamera) savedSkyFov = skyCamera.fieldOfView;
         }
+        return next;
+    }
+
+    // Steering supplies the position and a desired look direction. The rig owns
+    // the lens and rotation, and never smooths a cleared position through geometry.
+    internal bool ApplyJourney(GameCamera gameCamera, long missionId, Vector3 position, Vector3 focus, float progress, float dt)
+    {
+        Camera output = BindOutput(gameCamera);
+        CameraRenderPose prior = AcceptedRenderPose;
+        bool priorUsable = LastPictureUsable && prior.Valid;
+        AcceptedRenderPose = default;
+        if (missionId <= 0 || !TargetRoster.Finite(position) || !TargetRoster.Finite(focus) ||
+            float.IsNaN(progress) || float.IsInfinity(progress))
+            return Unready("Invalid Journey camera pose");
+
+        Vector3 direction = focus - position;
+        if (direction.sqrMagnitude < .0001f) return Unready("Journey camera has no look direction");
+        direction.Normalize();
+        float horizontal = Mathf.Sqrt(direction.x * direction.x + direction.z * direction.z);
+        float pitch = Mathf.Clamp(Mathf.Atan2(direction.y, horizontal) * Mathf.Rad2Deg, -65f, 45f);
+        if (guideMission != missionId)
+        {
+            ResetPose();
+            guideMission = missionId;
+            guidePictureEpoch++;
+            // Start from the previous broadcast picture when available. The
+            // game's ordinary camera may have written its own rotation this frame.
+            Vector3 forward = priorUsable
+                ? new Quaternion((float)prior.Qx, (float)prior.Qy, (float)prior.Qz, (float)prior.Qw) * Vector3.forward
+                : direction;
+            // An outgoing shot facing back down the route would spend several
+            // seconds receding from the destination during a 180-degree pan.
+            // Cut to travel direction in that case; blend compatible departures.
+            bool matchOutgoing = priorUsable && Vector3.Dot(forward, direction) > .5f;
+            if (!matchOutgoing) forward = direction;
+            guideYaw = Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg;
+            guidePitch = Mathf.Clamp(Mathf.Asin(Mathf.Clamp(forward.y, -1f, 1f)) * Mathf.Rad2Deg, -65f, 45f);
+            guideFov = matchOutgoing && prior.Fov >= 48 && prior.Fov <= 78 ? (float)prior.Fov : 65f;
+        }
+        float yaw = horizontal > .001f ? Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg : guideYaw;
+        float step = float.IsNaN(dt) || float.IsInfinity(dt) ? 0 : Mathf.Clamp(dt, 0f, .1f);
+        float ease = 1f - Mathf.Exp(-2.8f * step);
+        guideYaw += Mathf.Clamp(Mathf.DeltaAngle(guideYaw, yaw) * ease, -42f * step, 42f * step);
+        guidePitch += Mathf.Clamp((pitch - guidePitch) * ease, -25f * step, 25f * step);
+        Quaternion orientation = Quaternion.Euler(-guidePitch, guideYaw, 0f);
+        output.transform.SetPositionAndRotation(position, orientation);
+        output.fieldOfView = guideFov;
+        if (skyCamera) skyCamera.fieldOfView = guideFov;
+        AcceptedRenderPose = CameraPoseSampler.Sample(output, position, orientation, guideFov);
+        guideFocus = position + orientation * Vector3.forward * Vector3.Distance(position, focus);
+        guideProgress = Mathf.Clamp01(progress);
+        guidePicture = new RenderedPictureContext(new RenderedPictureKey(guidePictureEpoch, missionId, 0),
+            default, false, Time.frameCount, Time.unscaledTime);
+        LastPictureUsable = true;
+        LastFailure = "none";
+        presentationNotice = null;
+        return true;
+    }
+
+    internal bool Apply(GameCamera gameCamera, Vector3 focus, float azimuth, BroadcastSettings settings, long selectionRevision, float dt, Vector3? scenicOffset = null, bool continuousPlayer = false, TargetRoster.Target? playerTarget = null, bool moveCarrier = false, Character? creatureTarget = null, ScenicShotPlan? scenicPlan = null, float scenicProgress = 0, ScenicVisibility? scenicVisibility = null)
+    {
+        presentationNotice = null; LastPictureUsable = StoryContinuityReady = false;
+        AcceptedRenderPose = default;
+        obstructionMask ??= LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        guideMission = 0;
+        Camera camera = BindOutput(gameCamera);
         CinematicShotInput? input = playerTarget != null ? CinematicShotInput.ForPlayer(playerTarget, selectionRevision) :
             creatureTarget ? CinematicShotInput.ForCreature(creatureTarget!, selectionRevision) :
             scenicPlan != null ? CinematicShotInput.ForScenic(scenicPlan, scenicProgress, selectionRevision, scenicVisibility) : (CinematicShotInput?)null;
@@ -237,7 +306,7 @@ internal sealed class CameraRig
     }
 
     internal void ResetPose()
-    { hasPose = false; complementary.Reset(); complementaryActive = StoryContinuityReady = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
+    { guideMission = 0; hasPose = false; complementary.Reset(); complementaryActive = StoryContinuityReady = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
 
     internal void Restore()
     {
@@ -249,6 +318,7 @@ internal sealed class CameraRig
 
     private void RestoreCamera()
     {
+        guideMission = 0; AcceptedRenderPose = default;
         complementary.Dispose(); complementaryActive = StoryContinuityReady = false;
         shotCamera.Dispose(); creatureCamera.Dispose(); scenicCamera.Dispose(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "inactive";
         if (camera)

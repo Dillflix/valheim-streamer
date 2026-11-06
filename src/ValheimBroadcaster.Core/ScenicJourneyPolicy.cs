@@ -46,10 +46,12 @@ namespace ValheimBroadcaster.Core
         public ScenicJourneyItinerary? Itinerary { get; private set; }
         public double RouteProgressMetres { get; private set; }
         public double ArrivalShownSeconds { get; private set; }
+        private bool continuousGuide;
         public bool AtArrival => Itinerary != null && previousLive &&
             previousPosition.HorizontalDistance(Itinerary.Destination.Position) <= Itinerary.ArrivalRadius &&
-            TravelMetres >= Math.Max(0, TargetMetres - Itinerary.ArrivalRadius * 2) * .9 &&
-            creditedRouteProgress >= TargetMetres - Itinerary.ArrivalRadius * 2;
+            (continuousGuide ? LastRenderedPosition.HasValue && TravelMetres > 0 :
+                TravelMetres >= Math.Max(0, TargetMetres - Itinerary.ArrivalRadius * 2) * .9 &&
+                creditedRouteProgress >= TargetMetres - Itinerary.ArrivalRadius * 2);
         public int Windows { get; private set; }
         public AutonomyPosition ObjectiveOrigin { get; private set; }
         public AutonomyPosition ObjectiveGoal { get; private set; }
@@ -166,20 +168,43 @@ namespace ValheimBroadcaster.Core
         public void Observe(ScenicShotPlan plan, double at, double progress, bool liveReadable, bool held,
             AutonomyPosition? actualPosition = null)
         {
-            if (plan == null || !Finite(at) || at < 0 || !Finite(progress) || progress < 0 || progress > 1)
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            if (plan.JourneyId != Id) return;
+            ObservePose(plan.Id, at, progress, liveReadable, held, actualPosition, guided: false);
+        }
+
+        public void ObserveGuide(double at, bool liveReadable, bool held, AutonomyPosition actualPosition)
+        {
+            // The guide advances only one physical step per confirmed render.
+            // Completion uses the actual destination radius; a metadata route
+            // can curve or detour and is not a distance-credit requirement.
+            continuousGuide = true;
+            if (Active && liveReadable && at > observedAt &&
+                actualPosition.Distance(LastRenderedPosition ?? ObjectiveOrigin) > CruiseSpeed * .15 + .2)
+            {
+                Finish(ScenicJourneyOutcome.Interrupted, "Rendered guide moved beyond a single physical step");
+                return;
+            }
+            ObservePose(Id, at, 0, liveReadable, held, actualPosition, guided: true);
+        }
+
+        private void ObservePose(long shotId, double at, double progress, bool liveReadable, bool held,
+            AutonomyPosition? actualPosition, bool guided)
+        {
+            if (!Finite(at) || at < 0 || !Finite(progress) || progress < 0 || progress > 1)
                 throw new ArgumentOutOfRangeException(nameof(progress));
-            if (!Active || plan.JourneyId != Id || at <= observedAt) return;
+            if (!Active || at <= observedAt) return;
             double gap = observedAt < 0 ? 0 : at - observedAt;
             observedAt = at;
             if (!liveReadable || held || !actualPosition.HasValue)
             { previousLive = false; return; }
-            if (observedPlan == plan.Id && progress + .000001 < observedProgress)
+            if (observedPlan == shotId && progress + .000001 < observedProgress)
             { previousLive = false; return; }
             AutonomyPosition position = actualPosition.Value;
             if (previousLive && gap <= .25)
             {
                 double step = position.Distance(previousPosition);
-                if (step > MaximumStepMetres + .05)
+                if (step > (guided ? CruiseSpeed * gap + .2 : MaximumStepMetres + .05))
                 { Finish(ScenicJourneyOutcome.Interrupted, "Camera position jumped beyond the validated journey step"); return; }
                 TravelMetres += step;
                 // A relocation hidden by held/missing footage cannot fulfill
@@ -192,7 +217,7 @@ namespace ValheimBroadcaster.Core
             }
             Trail.Observe(position, previousLive && gap <= .25);
             LastRenderedPosition = position;
-            if (observedPlan != plan.Id) { observedPlan = plan.Id; Windows++; }
+            if (observedPlan != shotId) { observedPlan = shotId; Windows++; }
             observedProgress = progress;
             previousPosition = position; previousLive = true;
             if (Itinerary != null)
@@ -225,7 +250,7 @@ namespace ValheimBroadcaster.Core
 
         public void Reset()
         {
-            Trail.Reset(); LastRenderedPosition = null;
+            Trail.Reset(); LastRenderedPosition = null; continuousGuide = false;
             Id = observedPlan = 0; ShownSeconds = TravelMetres = DisplacementMetres = ObjectiveAdvanceMetres = MaximumSeconds = TargetMetres = CruiseSpeed = observedProgress = creditedAdvanceMetres = 0;
             observedAt = -1; Windows = 0; previousLive = false; previousPosition = ObjectiveOrigin = ObjectiveGoal = Heading = default;
             Itinerary = null; RouteProgressMetres = ArrivalShownSeconds = previousRouteProgress = creditedRouteProgress = 0;

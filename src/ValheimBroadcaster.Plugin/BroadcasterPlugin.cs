@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.56";
+    public const string PluginVersion = "0.8.57";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -297,7 +297,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     recentPicture && frameHold.HasRecentLiveFrame,
                     recentPicture ? rig.PictureReason : frameHold.LastFailure, presentedIdleUsable,
                     presentedScenicPlan, presentedScenicProgress, presentedScenicBlocked, director.IsHolding, presentedScenicFocus, CapturedScenicSample(), presentedScenicFailure);
-            if (!probe.Active && !director.IsHolding && coverage.Mode == CoverageMode.Scenic &&
+            if (!probe.Active && !idle.JourneyGuideActive && !director.IsHolding && coverage.Mode == CoverageMode.Scenic &&
                 presentedMode == CoverageMode.Scenic && presentedRevision == coverage.Revision &&
                 recentPicture && frameHold.HasRecentLiveFrame && presentedIdleUsable &&
                 presentedScenicPlan == rig.ScenicPresentedPlanId)
@@ -828,6 +828,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             float scenicProgress = 0;
             bool continuousPlayer = false;
             bool continuousScenic = false;
+            bool guidePose = false;
+            Vector3 guidePosition = default;
             string? presentationFailure = null;
             float azimuth = plugin.settings.Azimuth.Value;
             plugin.observerVisuals.Apply(Player.m_localPlayer, !plugin.selfTest, plugin.observer.Active);
@@ -859,6 +861,18 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     focus = actor.transform.position + Vector3.up * Mathf.Clamp(actor.GetHeight() * 0.6f, 0.2f, 14f);
                 }
             }
+            else if (plugin.coverage.Mode == CoverageMode.Scenic && plugin.idle.JourneyGuideActive)
+            {
+                guidePose = plugin.idle.TryGetJourneyGuidePose(Time.unscaledDeltaTime, plugin.director.IsHolding,
+                    out guidePosition, out Vector3 guideFocus);
+                if (guidePose)
+                {
+                    focus = guideFocus;
+                    scenicProgress = plugin.idle.JourneyGuideProgress;
+                    continuousScenic = plugin.presentedScenicPlan == plugin.idle.JourneyGuideId &&
+                        plugin.presentedFrame >= Time.frameCount - 1 && plugin.frameHold.HasRecentLiveFrame;
+                }
+            }
             else if (plugin.coverage.Mode == CoverageMode.Scenic && plugin.idle.SceneReady && plugin.idle.HasScenicPath)
             {
                 scenicProgress = plugin.idle.ProposeScenic(Time.unscaledDeltaTime, plugin.settings, plugin.director.IsHolding);
@@ -875,8 +889,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 plugin.presentedRevision == plugin.coverage.Revision &&
                 (plugin.coverage.Mode == CoverageMode.Player ? (plugin.presentedPlayerUsable || plugin.presentedRelatedPlayerView) &&
                     plugin.presentedPlayerId == plugin.coverage.SubjectId : plugin.presentedIdleUsable &&
-                    (plugin.coverage.Mode != CoverageMode.Scenic || plugin.presentedScenicPlan == scenicPlan?.Id));
-            plugin.cameraReady = focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
+                    (plugin.coverage.Mode != CoverageMode.Scenic || plugin.presentedScenicPlan == (guidePose ? plugin.idle.JourneyGuideId : scenicPlan?.Id)));
+            plugin.cameraReady = guidePose && focus.HasValue
+                ? plugin.rig.ApplyJourney(__instance, plugin.idle.JourneyGuideId, guidePosition, focus.Value, scenicProgress, __0)
+                : focus.HasValue && plugin.rig.Apply(__instance, focus.Value, azimuth,
                 plugin.settings, plugin.coverage.Revision, __0, scenic ? plugin.idle.ScenicOffset : (Vector3?)null, continuousShot, playerTarget, plugin.observer.Active, creatureTarget, scenicPlan, scenicProgress, scenic ? plugin.idle.Visibility : null);
             if (scenic && !plugin.rig.IsProcedural && plugin.cameraReady && plugin.rig.Position.HasValue &&
                 !plugin.idle.ViewClear(plugin.rig.Position.Value, focus!.Value, plugin.rig.FieldOfView))
@@ -890,9 +906,12 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     plugin.presentedFrame >= Time.frameCount - 1 && plugin.frameHold.HasRecentLiveFrame;
                 Camera camera = __instance.GetComponent<Camera>() ?? __instance.GetComponentInChildren<Camera>();
                 Vector3 carrier = camera ? camera.transform.position + Vector3.down * 2f : Vector3.zero;
+                // A guide supplies a local physical pose. Losing one rendered frame does
+                // not turn the next step into distant actor/whole-region acquisition.
+                bool localCamera = continuousShot || guidePose;
                 bool reachable = camera && Player.m_localPlayer && TargetRoster.Finite(carrier) &&
-                    Vector3.Distance(Player.m_localPlayer.transform.position, carrier) < 95f && PlayerShotReadiness.PositionReady(carrier, continuousShot);
-                plugin.cameraReady = reachable && plugin.observer.FollowCamera(camera!.transform.position, continuousShot,
+                    Vector3.Distance(Player.m_localPlayer.transform.position, carrier) < 95f && PlayerShotReadiness.PositionReady(carrier, localCamera);
+                plugin.cameraReady = reachable && plugin.observer.FollowCamera(camera!.transform.position, localCamera,
                     scenic && !plugin.director.IsHolding ? plugin.idle.JourneyLoadingPoint : null);
                 if (!reachable)
                 { plugin.rig.ResetPose(); presentationFailure = continuousShot ? "Camera carrier destination is out of range or has no loaded geometry" : "Acquiring camera carrier destination: out of range or awaiting area objects"; }
@@ -915,10 +934,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             plugin.presentedRelatedPlayerView = plugin.presentedPlayerId != null && relatedView;
             plugin.presentedMode = plugin.coverage.Mode;
             plugin.presentedRevision = plugin.coverage.Revision;
-            plugin.presentedScenicPlan = scenicPlan != null && plugin.rig.IsProcedural
+            plugin.presentedScenicPlan = guidePose ? plugin.idle.JourneyGuideId : scenicPlan != null && plugin.rig.IsProcedural
                 ? plugin.rig.ScenicPresentedPlanId : scenicPlan?.Id ?? -1;
             plugin.presentedScenicProgress = plugin.rig.IsProcedural ? plugin.rig.ScenicPresentedProgress : scenicProgress;
-            plugin.presentedScenicFocus = scenicPlan != null && plugin.cameraReady
+            plugin.presentedScenicFocus = guidePose ? plugin.rig.ScenicPresentedFocus : scenicPlan != null && plugin.cameraReady
                 ? plugin.rig.IsProcedural ? plugin.rig.ScenicPresentedFocus : focus : null;
             plugin.presentedScenicBlocked = scenicPlan != null && plugin.rig.IsProcedural && !plugin.rig.ScenicMovementAccepted;
             plugin.presentedScenicFailure = scenicPlan != null && plugin.rig.IsProcedural
@@ -972,7 +991,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         string journeyPicture = scenic ? idle.JourneyPictureLabel : "";
         string scenicMotion = journeyPicture.Length > 0 ? journeyPicture :
             idle.Plan?.IsPictureOnly == true ? "settled picture" : "camera route";
-        string intent = scenic ? idle.Plan?.Id == shot ?
+        string intent = scenic && idle.JourneyGuideActive && shot == idle.JourneyGuideId
+            ? "Journey / " + journeyPicture
+            : scenic ? idle.Plan?.Id == shot ?
             idle.Plan.FeatureKind + " / " + idle.Plan.Role + " / " + scenicMotion :
             "Retained previous scenic view" : rig.CurrentPlayerScene?.ActionPhase.Phase.ToString() ?? "";
         CameraSceneFrame? encounterScene = scenic ? null : rig.CurrentPlayerScene;

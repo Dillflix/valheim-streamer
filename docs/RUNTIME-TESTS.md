@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.57 Experimental continuous Journey
+
+The 0.8.56 capture selected a Black Forest destination 2,025.6 m away and spent 90 seconds preparing a departure. The initial 34 m candidate arrived at 41 seconds. No Journey motion was rendered. The new client uses continuous local steering. In-game terrain streaming, effective speed, shot quality, and arrival require a recording from the new implementation. The acceptance target is one uninterrupted trip of at least 2,000 measured metres through mixed terrain to the selected destination. [Runbook](JOURNEY-EXPEDITION.md)
+
+Offline validation used the actual guide in deterministic fixtures. The mixed coast, ridge and forest fixture travelled 2,025.2 m in 171.0 seconds at a requested 12 m/s. A fixture that streams simulated tiles around the moving observer travelled 2,029.8 m in 234.7 seconds. The itinerary fixture includes an operator hold and a measured arrival dwell. The client compiled against the pinned Valheim, Jötunn and BepInEx assemblies with warnings treated as errors. The core and native camera math suites, two coverage replay fixtures and the footage reviewer passed. The fixtures supply controlled world observations. Live streaming, Unity collision queries and rendered Valheim footage require separate validation.
+
 ## 0.8.56 In-client capture retention
 
 The existing automatic trace and diagnostic video writers now use independent, configurable rolling disk budgets. Defaults are 2 GiB each. The existing capture commands, synchronized mappings, normal output locations and separate RTMP encoder apply to all modes. Retention regression cases exercise more than eight segments, oldest-first expiry and preservation of paired videos and mappings. The external collection step has been removed from the expedition workflow. The 2 km in-game milestone remains open.
