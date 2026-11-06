@@ -8,6 +8,8 @@ Journey selects an actual place from discovery and steers the camera toward it t
 
 The guide uses observed solid obstacles ahead to begin climbs earlier. When it stalls in a dead end it can retrace recently travelled positions, checking each reverse movement against the current world, and take a different approach. The existing capture includes the latest physical rejection, sweep counts and sampled bearings for investigating movement stalls.
 
+On mountains the guide samples the slope ahead for intervening crests. If its camera envelope is already touching a verified Valheim heightmap, it reads the local terrain triangles across the footprint and checks whether a strictly vertical rise is available. The rise still sweeps other solid objects. Automatic diagnostics include the measured terrain heights and tile information.
+
 The new client and the existing protocol-3 server companion can be used together. Ordinary Scenic direction, the in-game recorder, and the rolling retention settings remain available.
 
 ## Capture on the Windows broadcaster

@@ -235,6 +235,7 @@ internal sealed partial class ScenicProduction
             capture.Value.Position.Distance(guide.Position) > .10)
         { journey.BreakPresentation(); return; }
         JourneyPresentationSample actual = capture.Value;
+        guideWorld.PresentedTerrainPose(actual.Audit.CaptureFrame, actual.Position);
         RememberDepartureCapture(actual);
         lastGuideCaptureTime = actual.Time;
         pendingPose = false;
@@ -307,6 +308,7 @@ internal sealed partial class ScenicProduction
             .Field("biomeAtRenderedPosition", biome).Field("surfaceAtRenderedPosition", surface)
             .Field("reason", journeyStatus).Field("awaitingRender", MissingGuideRender).Field("guideStatus", guide.Status)
             .Field("lastSweepRejection", guideWorld.LastRejection).Field("sweepCounts", guideWorld.SweepSummary)
+            .Field("terrainContact", guideWorld.LastTerrainContact)
             .Field("lastSweepScan", guideWorld.LastScan).Field("lastSweepScan2", guideWorld.LastScanTail));
     }
 }

@@ -17,7 +17,7 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
     private readonly Dictionary<Vector3, float> surfaces = new Dictionary<Vector3, float>(128);
     private readonly Dictionary<Vector3, float> guideHeights = new Dictionary<Vector3, float>(16);
     private ZNetScene? scene;
-    private int frame = -1, mask;
+    private int frame = -1, mask, terrainMask;
     private float radius;
     private int leavingCount;
     private readonly Collider[] leaving = new Collider[128];
@@ -59,7 +59,9 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
     }
     internal void ResetDiagnostics()
     {
+        terrainHistory.Reset();
         Array.Clear(rejected, 0, rejected.Length); sweepCount = outwardCount = 0;
+        terrainReason = "none"; terrainFrame = -1;
         lastReject = Rejection.None; rejectedSolid = null; scanFrame = -1; scanCount = 0; surfaceMisses = 0;
     }
     internal string LastRejection
@@ -148,18 +150,21 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
             if (!Surface(start, out float initialSurface))
             { Rejected(Rejection.MissingSurface, start, end, start); return 0; }
             Vector3 direction = delta / length;
-            if (!CanLeaveStart(start, end, direction)) return 0;
+            if (!CanLeaveStart(start, end, direction, out bool terrainRise)) return 0;
             float previousGap = start.y - initialSurface;
             bool risingOutOfWave = previousGap < radius + ContactSkin;
             if (risingOutOfWave)
             {
-                // A crest can reach a formerly clear stationary camera. Permit
-                // a near-vertical rise away from it, still sweeping all solids.
-                // Never apply this exception to missing terrain or burial.
+                // Rising out of a crest and rising out of heightfield contact
+                // both require improving clearance at every measured step.
                 if (delta.y <= 0 || delta.x * delta.x + delta.z * delta.z > .01f * delta.y * delta.y ||
-                    !ScenicSurface.TryGroundHeight(start, out float ground) ||
-                    start.y < ground + radius + ContactSkin)
+                    !ScenicSurface.TryGroundHeight(start, out float ground))
                 { Rejected(Rejection.SurfaceClearance, start, end, start); return 0; }
+                if (start.y < ground + radius + ContactSkin)
+                {
+                    terrainRise = AllowsTerrainRise(start, end);
+                    if (!terrainRise) { Rejected(Rejection.SurfaceClearance, start, end, start); return 0; }
+                }
             }
             float limit = Mathf.Min(length, MaxSweep);
             int count = Physics.SphereCastNonAlloc(start, radius, direction, hits, limit, mask, QueryTriggerInteraction.Ignore);
@@ -177,6 +182,15 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
             {
                 Collider solid = hits[i].collider;
                 if (!Solid(solid) || IsLeaving(solid)) continue;
+                // Sweep and overlap queries have different contact tolerances.
+                // A vertical sweep can report zero at the release boundary even
+                // when the initial overlap query no longer returns this tile.
+                if (solid is MeshCollider && solid.GetComponent<Heightmap>() &&
+                    (terrainRise || AllowsTerrainRise(start, end)) && ProvedTile(solid))
+                {
+                    terrainRise = true;
+                    continue;
+                }
                 float hitLimit = Mathf.Max(0, hits[i].distance - ContactSkin);
                 if (hitLimit <= limit)
                 {
@@ -200,9 +214,8 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
                 float gap = point.y - surface;
                 if (gap < radius + ContactSkin)
                 {
-                    if (!risingOutOfWave || gap <= previousGap ||
-                        !ScenicSurface.TryGroundHeight(point, out float ground) ||
-                        point.y < ground + radius + ContactSkin)
+                    if (!risingOutOfWave || gap <= previousGap || !terrainRise &&
+                        (!ScenicSurface.TryGroundHeight(point, out float ground) || point.y < ground + radius + ContactSkin))
                     { Rejected(Rejection.SurfaceClearance, start, end, point); return verified; }
                 }
                 else risingOutOfWave = false;
@@ -210,6 +223,8 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
                 verified = travelled;
             }
             // Preserve the caller's exact double length for an unobstructed sweep.
+            if (clearToEnd && !terrainRise && previousGap >= radius + ContactSkin)
+                terrainHistory.RecordSweptEnd(Time.frameCount, new AutonomyPosition(end.x, end.y, end.z));
             if (leavingCount > 0 && verified > 0) outwardCount++;
             return clearToEnd ? requested : verified;
         }
@@ -219,11 +234,16 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
     {
         if (!ZNetScene.instance || !ZNet.instance) return false;
         if (scene == ZNetScene.instance && frame == Time.frameCount) return radius > 0 && mask != 0;
+        if (scene != ZNetScene.instance) terrainFrame = -1;
         scene = ZNetScene.instance;
         frame = Time.frameCount;
         surfaces.Clear();
         guideHeights.Clear();
-        if (mask == 0) mask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        if (mask == 0)
+        {
+            terrainMask = LayerMask.GetMask("terrain");
+            mask = LayerMask.GetMask("Default", "static_solid", "piece") | terrainMask;
+        }
         Camera camera = Camera.main;
         radius = 0;
         if (!camera || camera.nearClipPlane <= 0 || camera.aspect <= 0 ||
@@ -248,8 +268,9 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
         return known;
     }
 
-    private bool CanLeaveStart(Vector3 start, Vector3 end, Vector3 direction)
+    private bool CanLeaveStart(Vector3 start, Vector3 end, Vector3 direction, out bool terrainRise)
     {
+        terrainRise = false;
         leavingCount = 0;
         int count = Physics.OverlapSphereNonAlloc(start, radius, overlaps, mask, QueryTriggerInteraction.Ignore);
         if (count == overlaps.Length && overlaps.Length < 128)
@@ -266,6 +287,15 @@ internal sealed partial class JourneyGuideWorld : IJourneyGuideWorld
             if (!(solid is BoxCollider || solid is SphereCollider || solid is CapsuleCollider ||
                   solid is MeshCollider mesh && mesh.convex))
             {
+                // Only a straight rise over the entire verified Heightmap footprint
+                // may disregard contacts with its surface. Other solids are swept.
+                if (solid is MeshCollider && solid.GetComponent<Heightmap>() &&
+                    AllowsTerrainRise(start, end) && ProvedTile(solid))
+                {
+                    terrainRise = true;
+                    leaving[leavingCount++] = solid;
+                    continue;
+                }
                 // For a concave mesh there is no single closest-point supporting
                 // plane. Escape is provable if *every* point in its world bounds
                 // is behind the movement plane at the camera centre.

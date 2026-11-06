@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "sourceVersion": "0.8.58",
+  "mission": 17,
+  "coordinateBasis": "Translated the recorded terrain collider centre to the origin. Extents, radius and angles retain the trace precision.",
+  "limitation": "The loaded terrain triangles and their elevations were not recorded. The slope, seams, roof and further route in the test are reconstructed.",
+  "collider": "Terrain/MeshCollider",
+  "layer": 11,
+  "captureRadius": 0.82,
+  "tileExtents": [32.00, 24.60, 32.00],
+  "stationaryCamera": [-2.3604736328125, -2.16419860839844, -24.6051635742188],
+  "measuredMetres": 185.51804083627846,
+  "rejections": 920,
+  "motionFields": ["azimuthDegrees", "pitchDegrees", "requestedMetres", "clearMetres"],
+  "rejectedScans": [
+    {
+      "frame": 45236,
+      "reason": "UnsupportedOverlap",
+      "from": [-2.37, -2.24, -24.59],
+      "motions": [[0, 90, 4.0, 0.0]]
+    },
+    {
+      "frame": 46123,
+      "reason": "UnsupportedOverlap",
+      "from": [-2.36, -2.16, -24.61],
+      "motions": [[3, 0, 8.0, 0.0], [-91, 0, 16.4, 0.0], [97, 14, 16.9, 0.0], [-117, 0, 16.4, 0.0], [123, 0, 16.4, 0.0]]
+    }
+  ]
+}

@@ -57,6 +57,7 @@ public sealed partial class JourneyGuide
         if (!Finite(deltaSeconds) || deltaSeconds < 0) throw new ArgumentOutOfRangeException(nameof(deltaSeconds));
         if (Arrived || deltaSeconds == 0) return;
         double dt = Math.Min(deltaSeconds, .15);
+        if (TryLiftOutOfTerrain(world, dt)) return;
         if (withdrawing)
         {
             FollowWithdrawal(dt, world);
@@ -92,7 +93,7 @@ public sealed partial class JourneyGuide
                 initialized = true;
             }
             UpdateEscapeHeight(world, steeringTarget, bearing);
-            ObserveFlightCorridor(world, bearing);
+            ObserveFlightCorridor(world, bearing, floor);
             SelectCourse(world, floor, bearing);
             if (TryBeginWithdrawal(world, steeringTarget))
             {
@@ -182,6 +183,7 @@ public sealed partial class JourneyGuide
         }
         Candidate direct = Probe(world, bearing, 0, horizon, 0);
         frontier = direct.Frontier;
+        if (TryClimbTerrain(world, direct, horizon)) return;
         Candidate best = direct;
         if (extraHeight > 0 && !direct.Frontier &&
             direct.Clear < horizon * .55 && Position.Y + 1 < floor + altitude + extraHeight)

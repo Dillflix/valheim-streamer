@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.59 Mountain movement
+
+The 0.8.58 capture recorded one attempt to reach the Black Forest, 1,992.61 m away. The guide travelled 185.52 m. On the mountain, frame 45,236 requested a 4 m vertical rise at (-1730.37, 139.73, -792.59). The radius was 0.82 m. The starting overlap named the local terrain mesh. The old check rejected the sweep using the bounds of the 64 m tile, then repeated the same rejection for escape and return probes. It counted 920 unsupported overlaps and zero missing height queries. The operator ended the attempt. The capture supplies the terrain collider identity, tile bounds and movements. It does not contain that hillside's triangle vertices.
+
+The [native terrain lab](../tests/Journey.NativeTerrain/README.md) exercises the production guide against NVIDIA PhysX sphere/triangle queries on a reconstructed slope. The original tile-box veto held the guide at 0 m for 34.02 s. With local terrain clearance, it rose 0.233 m out of contact in 0.333 s, travelled 2,183.67 m in 184.30 s, and arrived within 15.99 m of the goal. The lab also verified clearance across a tile seam and a solid roof that limited the same 4 m rise. The core tests separately cover an unanticipated terrain update at a recently rendered, previously clear position and deny the same deep-terrain exception at an unverified start. This is an offline collision and navigation test. The recorded Valheim trip is still outstanding.
+
 ## 0.8.58 Experimental movement recovery
 
 In the 0.8.57 game recording, Journey 10 selected a Meadows destination 1,987.1 m away. It travelled 66.15 m through the Black Forest, advancing 54.47 m along the itinerary. The final 120 sampled frames held identical camera coordinates while the guide reported that it could find no clear path. The operator stopped the trip. The trace did not identify the collider or the bearings the guide had ruled out. The recorded 2 km milestone remains open.
