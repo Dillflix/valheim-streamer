@@ -101,6 +101,8 @@ internal sealed class JourneyNavigationPlanner
         return status;
     }
 
+    internal void LimitGuide(double metres) => search.LimitGuide(metres);
+
     internal void RejectCandidate()
     {
         search.RejectCandidate(); pending.Clear(); views.Reset(); ClearOnward();

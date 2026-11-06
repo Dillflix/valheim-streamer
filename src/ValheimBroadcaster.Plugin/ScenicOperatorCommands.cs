@@ -24,7 +24,6 @@ public sealed partial class BroadcasterPlugin
                 selfTest || probe.Active || remote.Isolated && !remote.Approved)
             { context?.AddString("Select Auto or Scenic mode on a protected observer before requesting a journey; a recovery slate does not prevent departure planning."); return; }
             StopLiveTimelapse("Operator requested a journey");
-            settings.ScenicJourneys.Value = true;
             SetHolding(false);
             context?.AddString(idle.RequestJourney());
             return;

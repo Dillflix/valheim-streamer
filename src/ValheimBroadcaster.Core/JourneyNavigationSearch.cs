@@ -183,10 +183,29 @@ public sealed class JourneyNavigationSearch
         { Node = node; Path = path; Onward = onward; OnwardObservedAt = at; }
     }
 
+    private double targetMetres;
+
+    // As usable runway runs low, let already discovered connected prefixes
+    // compete for onward proof without throwing away the search frontier.
+    public void LimitGuide(double metres)
+    {
+        if (double.IsNaN(metres) || double.IsInfinity(metres) || metres < ScenicJourneyPolicy.MinimumWindowMetres)
+            throw new ArgumentOutOfRangeException(nameof(metres));
+        if (request == null || Terminal || metres >= targetMetres) return;
+        double previous = targetMetres;
+        targetMetres = metres;
+        for (int i = 0; i < nodes.Count; i++)
+        {
+            Node node = nodes[i];
+            if (node.Length >= previous || node.OnwardTested || !Eligible(node) || i == activeNode || open.Contains(i)) continue;
+            open.Add(i);
+        }
+    }
+
     public void Begin(JourneyNavigationRequest query, double now)
     {
         if (query == null) throw new ArgumentNullException(nameof(query));
-        Time(now); Reset(); request = query; lastNow = now;
+        Time(now); Reset(); request = query; targetMetres = query.TargetMetres; lastNow = now;
         initialGoalDistance = query.Start.Position.Distance(query.Goal);
         Status = JourneyNavigationStatus.Searching;
         seedProbe = Probe(query.Start, query.Start.Position, Direction(query.Start.Position, query.Entry.Position), query.Start.Aim, true, false, false);
@@ -471,7 +490,7 @@ public sealed class JourneyNavigationSearch
     // the exact next seam must still be observed before this prefix is offered.
     private bool Eligible(Node node) => !node.CandidateRejected && node.Depth >= 3 &&
         node.Length >= ScenicJourneyPolicy.MinimumWindowMetres &&
-        (node.Length >= request!.TargetMetres || node.Depth == MaximumWaypoints) &&
+        (node.Length >= targetMetres || node.Depth == MaximumWaypoints) &&
         node.Length <= request!.MaximumMetres &&
         initialGoalDistance - node.Pose.Position.Distance(request.Goal) >= Math.Min(8, node.Length * .25);
     private bool AtGoal(Node node) => node.Depth >= 3 && node.Length >= ScenicJourneyPolicy.MinimumWindowMetres &&

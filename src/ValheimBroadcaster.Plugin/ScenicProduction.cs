@@ -311,6 +311,8 @@ internal sealed partial class ScenicProduction
         if (JourneyOwnsPicture)
         {
             if (journeyRepairing) return proposed = (float)journeyPlayback.Progress;
+            if (journeyPlayback.TryRetryObservation(journeyTravel, CameraSpatialScene.Shared.Epoch, held, out double pending))
+                return proposed = (float)pending;
             double step = Mathf.Max(0, dt);
             if (journeyExitId == 0 && Plan?.IsJourney == true)
             {

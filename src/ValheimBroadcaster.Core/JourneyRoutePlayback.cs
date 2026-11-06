@@ -70,6 +70,19 @@ public sealed class JourneyRoutePlayback
         return Propose(step * actualCruise / authored, canMove);
     }
 
+    public bool TryRetryObservation(JourneyTravelController mission, long epoch, bool held, out double preview)
+    {
+        preview = Progress;
+        if (held || mission.Held || PhysicalBlocked || Current == null || !HasPresented ||
+            !mission.Active || mission.SceneEpoch != epoch || mission.AcceptedRouteId != Current.Id ||
+            mission.Cause != JourneyTravelCause.ObservationPending || proposedCeiling <= Progress)
+            return false;
+        // Only retry the pose already proposed under this route. Rendering
+        // must still validate it, and only a matching capture commits progress.
+        preview = proposedCeiling;
+        return true;
+    }
+
     /// <summary>A physical validation failure pauses this section without
     /// requesting an unrelated Scenic shot. Resume only after fresh validation.
     /// Missing output alone must never be reported as a physical obstruction.</summary>

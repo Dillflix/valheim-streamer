@@ -7,6 +7,7 @@ internal static class JourneyNavigationSearchTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
+        yield return ("Shrinking runway can offer an explored short passage only with onward proof", ShrinkingRunway);
         yield return ("A guide for native preflight preserves historic node ages and renews its exact onward edge", NativeGuideRenewal);
         yield return ("Connected Journey search develops production-scale clear routes without exhausting node breadth", ClearLongRoutes);
         yield return ("Connected Journey search goes around a measured obstacle with an exact entry seam", SingleObstacle);
@@ -130,6 +131,27 @@ internal static class JourneyNavigationSearchTests
         Check(path.Epoch == request.Epoch && scene.Now - path.OldestEvidence <= JourneyNavigationSearch.MaximumEvidenceAge + .00001,
             "Returned path reused stale physical scene evidence");
         return path;
+    }
+
+    private static void ShrinkingRunway()
+    {
+        var scene = new Scene { MaximumX = 22, MaxZ = 0, MinimumX = 0 };
+        var search = new JourneyNavigationSearch();
+        search.Begin(Request(target: 56), 0);
+        for (int i = 0; i < 4000 && search.Nodes < 5 && search.Status == JourneyNavigationStatus.Searching; i++)
+        {
+            scene.Now += .01;
+            search.Step(1, scene.Now, 3, scene.Observe);
+        }
+        Check(search.Nodes >= 5, "Fixture did not develop a measured prefix");
+        search.LimitGuide(12);
+        for (int i = 0; i < 4000 && search.Status != JourneyNavigationStatus.Ready; i++)
+        {
+            scene.Now += .01;
+            search.Step(4, scene.Now, 3, scene.Observe);
+        }
+        Check(search.Result != null && search.Result.Length >= 12 && search.Result.Length <= 22
+            && search.Result.OnwardPose.HasValue, "Measured prefix did not get a verified onward edge");
     }
 
     private static void NativeGuideRenewal()

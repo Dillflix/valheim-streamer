@@ -1,5 +1,13 @@
 # Validation and runtime test record
 
+## 0.8.54 Live Journey retries and Scenic fallback
+
+The supplied 0.8.53 run reached 72.3 m of a 1,995.8 m itinerary. Plan 18 occupied 73.6 seconds of diagnostic footage. Retained motion records show 1,011 pairs of triangle-pending/resumed events on plans 18 and 31. The repair interval froze measured distance near 67 m for roughly 49 seconds. Ordinary coverage admitted three different rock establishing shots and a rock traverse during that repair.
+
+The mission's observation wait previously passed a movement veto to playback, cancelling the exact preview that needed another validation frame. The adapter now retries only the pending preview of the admitted route in the current scene. A shrinking on-air runway can invite a shorter connected guide from existing explored nodes. Native path, ending and onward checks still govern admission. Same-world repair preserves Scenic's shown-shot history when retiring stale camera plans. Nearby rock establishing shots are ranked using the width of the previous composition, so a different rock ID alone does not restore their novelty. A manual Journey request preserves the operator's automatic Journey setting.
+
+Regression cases exercise the real mission observation wait, preview commit, hold, scene identity, short connected prefixes and local/world memory lifetimes. In-game throughput, fallback variety and successful long travel require runtime confirmation.
+
 ## 0.8.53 Journey departure preparation
 
 Two 0.8.52 departures in the supplied session expired after 90 seconds with zero certified runway. In the retained tail of Journey 1069, plan 1085 proposed a 58 m route with onward evidence about 10.2 seconds before expiry. Three origins were already evaluating native curves; one reached sample 0.922. The complete Journey 1131 interval contains 462 clear edges and 32 blocked edges for plan 1132, repeated selected-route refresh and nine origin retirements as their required viewing horizons left local range. Opening 4 rechecked the same seven positions from 45.8 to 52.7 seconds and again from 54.6 to 61.8 seconds. Both sweeps exceeded the five-second evidence window. The graph never handed that guide to native preflight.

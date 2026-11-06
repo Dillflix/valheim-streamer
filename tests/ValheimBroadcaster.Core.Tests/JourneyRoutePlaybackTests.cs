@@ -6,6 +6,7 @@ internal static class JourneyRoutePlaybackTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
+        yield return ("Pending mission observation retries the original uncommitted pose through the real authority transition", MissionObservationRetry);
         yield return ("Journey execution previews cannot advance until the matching first live frame", FirstPresentation);
         yield return ("Journey execution commits only matching fresh proposed captured progress", CaptureIdentity);
         yield return ("Missing or unreadable Journey output pauses the same route without a short-shot deadline", RecoverableOutputLoss);
@@ -38,6 +39,31 @@ internal static class JourneyRoutePlaybackTests
         var playback = new JourneyRoutePlayback(); playback.Accept(section, at);
         playback.Observe(section.Id, at, 0, true, true, false);
         return playback;
+    }
+
+    private static void MissionObservationRetry()
+    {
+        var playback = Start();
+        var mission = new JourneyTravelController();
+        mission.Begin(7, 1, 5, 0, 90, 900);
+        mission.Observe(new JourneyTravelObservation(0, 1, 5));
+        var route = new JourneyRouteEvidence(playback.Current!.Id, 5, 48);
+        Check(mission.TryAcceptRoute(route, 0, out _), "Route was not admitted");
+        double wanted = playback.Propose(.02);
+        for (int frame = 1; frame <= 12; frame++)
+        {
+            double at = frame * .02;
+            mission.Observe(new JourneyTravelObservation(at, 1, 5,
+                navigation: JourneyTravelNavigation.WaitingForObservation, route: route));
+            playback.Observe(route.RouteId, at, 0, true, true, false);
+            Check(!mission.CanAdvance && playback.TryRetryObservation(mission, 5, false, out double retry)
+                && retry == wanted && playback.Progress == 0, "Rechecking the old pose erased pending movement");
+        }
+        Check(!playback.TryRetryObservation(mission, 6, false, out _) &&
+            !playback.TryRetryObservation(mission, 5, true, out _), "Changed scene or operator hold reused pending movement");
+        playback.Observe(route.RouteId, .26, wanted, true, true, false);
+        Near(playback.Progress, wanted);
+        Check(!playback.TryRetryObservation(mission, 5, false, out _), "Consumed preview was issued again");
     }
 
     private static void SelectedCruiseClock()
