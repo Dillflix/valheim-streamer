@@ -11,11 +11,11 @@ Speed control uses measured preparation time when a successor is being built and
 ## Capture on the Windows broadcaster
 
 1. Install the branch client in the sandboxed broadcaster profile. Keep the main-branch supervisor paused for this experiment. Use a world with generated scenery and an authorized read-only observer.
-2. On the host, start the collector **before requesting Journey**. Use a new archive directory outside the sandbox. The collector copies the existing rotating JSONL/MP4 streams and stops with an error at its storage limit. It does not delete old evidence. With the sandbox game path previously supplied, a PowerShell example is:
+2. On the host, start the collector **before requesting Journey**. Use a new archive directory outside the sandbox. The collector copies the existing rotating JSONL/MP4 streams and stops with an error at its storage limit. It does not delete old evidence. Use PowerShell on the host and supply the diagnostics directory used by your broadcaster client:
 
 ```powershell
-$diag = 'C:\Sandbox\jason\ValheimBroadcastClean\drive\C\ValheimBroadcastSteam\steamapps\common\Valheim\BepInEx\diagnostics\ValheimBroadcaster'
-$archive = "C:\ValheimEvidence\Journey-$(Get-Date -Format yyyyMMdd-HHmmss)"
+$diag = Read-Host 'Full host path to the broadcaster BepInEx\diagnostics\ValheimBroadcaster directory'
+$archive = Join-Path $env:USERPROFILE ("Videos\ValheimEvidence\Journey-" + (Get-Date -Format yyyyMMdd-HHmmss))
 py -3 .\journey-recording.py collect "$diag" "$archive"
 ```
 
