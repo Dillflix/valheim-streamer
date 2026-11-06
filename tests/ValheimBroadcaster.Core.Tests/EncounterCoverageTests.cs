@@ -114,9 +114,9 @@ internal static class EncounterCoverageTests
         var selection = new ProceduralShotPolicy(); var eligible = new[] { true, true }; var readable = new[] { true, true };
         selection.Select(0, new[] { .9f, .3f }, eligible, readable);
         int result = 0;
-        for (int i = 1; i < 20; i++) result = selection.Select(i * .1, new[] { .25f, .85f }, eligible, readable);
+        for (int i = 1; i < 50; i++) result = selection.Select(i * .1, new[] { .25f, .85f }, eligible, readable);
         Check(result == 0, "An editorial purpose improvement bypassed readable-shot minimum dwell.");
-        Check(selection.Select(2.1, new[] { .25f, .85f }, eligible, readable) == 1, "Sustained fulfilled alternative never became eligible.");
+        Check(selection.Select(5.01, new[] { .25f, .85f }, eligible, readable) == 1, "Sustained fulfilled alternative never became eligible.");
     }
     private static void UnreadablePurpose()
     {

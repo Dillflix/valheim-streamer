@@ -19,7 +19,9 @@ internal static class ShotIntentTests
         yield return ("Purpose scale and lens ease instead of snapping on activity changes", SmoothScale);
         yield return ("Movement profiles distinguish sprinting from water and vessel motion", MovementProfiles);
         yield return ("A healthy transition source is retained over an unreadable destination", UnreadableDestination);
-        yield return ("Recovery and blocked paths cut to the validated replacement", RecoveryTransitions);
+        yield return ("Recovery and distinct blocked paths cut to the validated replacement", RecoveryTransitions);
+        yield return ("Obstructed paths toward similar viewpoints hold for in-place repair", JumpCutGuard);
+        yield return ("An obstructed move returns to a readable source instead of cutting forward", ObstructedBlendReturn);
         yield return ("Transitions distinguish same-scene changes from new scenes and action angles", SceneTransitions);
         yield return ("Doorway handoffs have bounded brief transitions", DoorwayTransition);
         yield return ("Purpose and transition validation reject invalid evidence", InvalidEvidence);
@@ -173,9 +175,31 @@ internal static class ShotIntentTests
     private static void RecoveryTransitions()
     {
         Check(Transition(source: false).Mode == ShotTransitionMode.Cut &&
-            Transition(path: false).Mode == ShotTransitionMode.Cut &&
+            Transition(path: false, angle: 40).Mode == ShotTransitionMode.Cut &&
             Transition(recovering: true).Mode == ShotTransitionMode.Cut,
             "Recovery blended through a failed or stale picture.");
+    }
+    private static void JumpCutGuard()
+    {
+        Check(Transition(path: false).Mode == ShotTransitionMode.Hold,
+            "An obstructed move toward a near-identical viewpoint cut instead of waiting for repair.");
+        Check(Transition(path: false, angle: 40).Mode == ShotTransitionMode.Cut &&
+            Transition(path: false, fov: 15).Mode == ShotTransitionMode.Cut &&
+            Transition(path: false, screen: .3f).Mode == ShotTransitionMode.Cut,
+            "A visually distinct obstructed destination lost its motivated cut.");
+    }
+    private static void ObstructedBlendReturn()
+    {
+        var glide = ShotTransitionPolicy.DecideObstructedBlend(true, true);
+        Check(glide.Mode == ShotTransitionMode.Return && glide.Seconds > 0 &&
+            glide.Seconds <= ShotTransitionPolicy.ReturnSeconds,
+            "A readable source did not receive a bounded return glide.");
+        var snap = ShotTransitionPolicy.DecideObstructedBlend(true, false);
+        Check(snap.Mode == ShotTransitionMode.Return && snap.Seconds == 0,
+            "An unsupported blended pose lingered through a timed glide.");
+        Check(ShotTransitionPolicy.DecideObstructedBlend(false, true).Mode == ShotTransitionMode.Cut &&
+            ShotTransitionPolicy.DecideObstructedBlend(false, false).Mode == ShotTransitionMode.Cut,
+            "A failed move without a readable return path did not adopt the validated destination.");
     }
     private static void SceneTransitions()
     {
@@ -217,7 +241,13 @@ internal static class ShotIntentTests
         director.Select(0, .1, new[] { .9f, .66f }, eligible, CinematicActivity.Idle, 0, false, 1, true, new[] { true, true });
         Check(director.Select(.1, .1, new[] { .57f, .66f }, eligible, CinematicActivity.Idle, 0, false, 1, false,
             new[] { false, true }) == 0, "Recovery skipped obstruction persistence.");
+        // The streak-qualified readable challenger still waits for the live
+        // camera's in-place repair window before recovery may switch.
         Check(director.Select(.6, .1, new[] { .57f, .66f }, eligible, CinematicActivity.Idle, 0, false, 1, false,
+            new[] { false, true }) == 0, "Recovery switched during the in-place repair window.");
+        Check(director.Select(1.2, .1, new[] { .57f, .66f }, eligible, CinematicActivity.Idle, 0, false, 1, false,
+            new[] { false, true }) == 0, "Recovery switched during the in-place repair window.");
+        Check(director.Select(1.61, .1, new[] { .57f, .66f }, eligible, CinematicActivity.Idle, 0, false, 1, false,
             new[] { false, true }) == 1, "Fixed improvement margin trapped an unreadable shot.");
         Check(director.ShotAge == 0 && director.RecentCorrections > 0, "Recovery was counted as shown footage or missed settling.");
     }
