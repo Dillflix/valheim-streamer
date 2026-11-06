@@ -157,13 +157,24 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
     # Keep stationary live frames visible in the report. Presentation=Live
     # alone does not establish that the camera moved.
     last_pose = None
+    previous_live = None
+    sampled_metres = 0
+    stationary_anchor = None
+    longest_stationary = 0
     stops = []
     jumps = []
     for frame in samples:
-        if frame.get("shot") not in route_ids or frame.get("presentation") != "Live":
+        if frame.get("shot") not in route_ids or frame.get("presentation") != "Live" or not frame.get("usable"):
+            previous_live = stationary_anchor = None
             continue
         pos = tuple(frame["camera" + axis] for axis in "XYZ")
         at = frame["time"]
+        if previous_live and previous_live[2] == frame["shot"] and at-previous_live[0] <= .25:
+            sampled_metres += math.dist(pos, previous_live[1])
+        previous_live = at, pos, frame["shot"]
+        if stationary_anchor is None or stationary_anchor[2] != frame["shot"] or math.dist(pos, stationary_anchor[1]) > .25:
+            stationary_anchor = previous_live
+        longest_stationary = max(longest_stationary, at-stationary_anchor[0])
         if last_pose:
             old_at, old_pos, old_id = last_pose
             distance = math.dist(pos, old_pos)
@@ -173,6 +184,8 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
     for r in rows:
         if r.get("noProgressSeconds", 0) > 0:
             stops.append(r["noProgressSeconds"])
+    if abs(sampled_metres - last["measuredMetres"]) > max(2, last["measuredMetres"] * .02):
+        issues.append("Independent footage-camera distance differs from mission counter")
     live_ids = {r["shot"] for r in samples if r["shot"] in route_ids and r["presentation"] == "Live" and r["usable"]}
     if len(live_ids) < 2:
         issues.append("Footage does not show two live travel sections")
@@ -222,7 +235,8 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
                    if (group := list(items))]
     return {"session": session, "mission": mission, "destination": destination, "targetMetres": last["targetMetres"],
             "measuredMetres": last["measuredMetres"], "durationSeconds": end-start, "arrivalSeconds": last["arrivalShownSeconds"],
-            "travelSections": sorted(route_ids), "videoSegments": len(files), "videoSamples": len(samples),
+            "travelSections": sorted(route_ids), "footageCameraMetres": round(sampled_metres, 2),
+            "longestNearlyStationaryTravelShotSeconds": round(longest_stationary, 2), "videoSegments": len(files), "videoSamples": len(samples),
             "longestVideoGap": maximum_gap, "longestNoProgress": max(stops, default=0),
             "biomes": sorted(terrain), "surfaces": sorted(surfaces), "travelPoseJumps": jumps,
             "stateIntervals": transitions, "footageCuts": cuts, "handoffs": handoffs, "issues": issues,
