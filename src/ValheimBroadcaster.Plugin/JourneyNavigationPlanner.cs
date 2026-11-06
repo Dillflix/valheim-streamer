@@ -111,12 +111,13 @@ internal sealed class JourneyNavigationPlanner
     {
         if (!active || epoch != CameraSpatialScene.Shared.Epoch || search.Result == null)
         { OnwardReason = "The selected navigation context no longer matches the loaded scene"; return JourneyNavigationEvidence.Blocked; }
-        if (!search.Result.OnwardPose.HasValue)
+        // A graph can finish at a local steering waypoint within a much
+        // longer itinerary. Only an explicit arrival plan ends travel. The
+        // fitted terminal seam must therefore be checked at local goals too.
+        if (!search.Result.OnwardPose.HasValue && !search.Result.AtGoal)
         {
-            if (!search.Result.AtGoal)
-            { OnwardReason = "A continuing route has no measured onward seam"; return JourneyNavigationEvidence.Blocked; }
-            OnwardValidatedAt = Time.unscaledTime; OnwardReason = "The local goal needs no onward continuation";
-            return JourneyNavigationEvidence.Clear;
+            OnwardReason = "A continuing route has no measured onward seam";
+            return JourneyNavigationEvidence.Blocked;
         }
         // Renew the seam the final native plan will actually hand to the next
         // planner. Fitting may change its terminal tangent, so the graph's
