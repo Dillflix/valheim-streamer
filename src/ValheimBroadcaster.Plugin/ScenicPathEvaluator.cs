@@ -130,8 +130,9 @@ internal static class ScenicPoseValidation
             // environment. The synthetic aim encodes orientation, not a named
             // feature whose arbitrary world point must have a clear sightline.
             // Named arrivals keep the subject-framing contract below.
+            bool shotIsLiveStill = plan.IsPictureOnly && CameraWorkBudget.Shared.WithinLive;
             ScenicVisibility.JourneyViewObservation observed = visibility.EvaluateJourney(pose.Position, pose.Rotation,
-                pose.FieldOfView, aspect, nearClip);
+                pose.FieldOfView, aspect, nearClip, shotIsLiveStill, continuous);
             score = (float)observed.View.Score;
             if (observed.InsideVegetation) return Reject(ScenicRejectionKind.InsideVegetation, observed.View.Reason, out kind, out reason);
             if (!observed.CameraClear) return Reject(ScenicRejectionKind.CameraCollision, observed.View.Reason, out kind, out reason);

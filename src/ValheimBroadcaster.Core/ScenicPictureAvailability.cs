@@ -63,8 +63,10 @@ namespace ValheimBroadcaster.Core
             bool readable = Current != null && Current.Id == planId && usableLive && !held;
             bool settled = readable || retainedRoutePicture && usableLive && !held;
             double delta = lastObservation >= 0 ? now - lastObservation : 0;
-            if (settled && previousSettled && delta <= .25) TotalPictureSeconds += delta;
-            if (readable && previousReadable && delta <= .25)
+            // The preceding presentation occupied the interval that just ended.
+            // A missing next frame cannot erase time the previous frame was on air.
+            if (previousSettled && delta <= .25) TotalPictureSeconds += delta;
+            if (previousReadable && delta <= .25)
             {
                 ShownSeconds += delta;
                 if (!remembered && ShownSeconds >= 2)

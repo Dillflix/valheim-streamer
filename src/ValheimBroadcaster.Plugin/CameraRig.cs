@@ -125,6 +125,15 @@ internal sealed class CameraRig
         return next;
     }
 
+    internal void HoldOperatorPose(Camera output, CameraRenderPose pose)
+    {
+        if (output != camera) return;
+        output.transform.SetPositionAndRotation(new Vector3((float)pose.X, (float)pose.Y, (float)pose.Z),
+            new Quaternion((float)pose.Qx, (float)pose.Qy, (float)pose.Qz, (float)pose.Qw));
+        output.fieldOfView = (float)pose.Fov;
+        if (skyCamera) skyCamera.fieldOfView = output.fieldOfView;
+    }
+
     // Steering supplies the position and a desired look direction. The rig owns
     // the lens and rotation, and never smooths a cleared position through geometry.
     internal bool ApplyJourney(GameCamera gameCamera, long missionId, Vector3 position, Vector3 focus, float progress, float dt)

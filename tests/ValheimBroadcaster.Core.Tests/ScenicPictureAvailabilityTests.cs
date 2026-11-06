@@ -11,6 +11,7 @@ internal static class ScenicPictureAvailabilityTests
         yield return ("Independent pictures require current scene and fresh observation evidence", FreshEvidence);
         yield return ("Point discovery cannot interrupt a readable developing cinematic route", ProtectMotion);
         yield return ("Independent picture dwell counts matching live footage only", PresentationClock);
+        yield return ("Alternating live and held exit frames yield after four displayed seconds", AlternatingExit);
         yield return ("A settled first picture gets minimum dwell before a prepared route", SettledHandoff);
         yield return ("Unreadable first picture yields promptly to a ready replacement", FailedPictureHandoff);
         yield return ("Background graph discovery cannot cause picture flicker or repeated viewpoint cuts", StableNovelPictures);
@@ -100,6 +101,15 @@ internal static class ScenicPictureAvailabilityTests
         p.Observe(1, 10, true, false);
         Check(Math.Abs(p.ShownSeconds - 1) < .0001, "A long frame gap counted as unseen footage");
     }
+    private static void AlternatingExit()
+    {
+        var p = New();
+        for (int frame = 0; frame <= 510; frame++)
+            p.Observe(1, frame / 60.0, frame % 2 == 0, false);
+        Check(Math.Abs(p.ShownSeconds - 4.25) < .0001 && p.CanYield(8.5),
+            "Interleaved held frames pinned the replacement or earned live dwell");
+    }
+
     private static void SettledHandoff()
     {
         var p = New(); Show(p, 0, 3);

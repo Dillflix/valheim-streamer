@@ -51,6 +51,7 @@ internal sealed partial class ScenicVisibility
         // invalidation, not a no-op that crowds useful diagnostics out of retention.
         if (foliage.Updating || !float.IsNegativeInfinity(refreshedAt) || activeCount > 0)
             ScenicTrace.Event(owner, "Survey reset", QueryId);
+        stationaryLeaves = null;
         foliage.Reset(); refreshedAt = float.NegativeInfinity; coveredRadius = 0; activeCount = 0;
     }
 

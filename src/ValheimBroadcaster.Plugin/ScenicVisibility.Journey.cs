@@ -8,6 +8,14 @@ internal sealed partial class ScenicVisibility
     private readonly JourneyViewSample[] journeySamples = new JourneyViewSample[JourneyViewPolicy.SampleCount];
     private readonly Vector3[] journeyDirections = new Vector3[JourneyViewPolicy.SampleCount];
 
+    // Only a stationary, already admitted picture may reuse foliage evidence
+    // while its next triangle query runs. Solid and scene checks still run live.
+    private FoliageProjection.JourneyObservation? stationaryLeaves;
+    private Vector3 stationaryCamera;
+    private Quaternion stationaryRotation;
+    private float stationaryFov, stationaryAspect, stationaryNear, stationaryAt;
+    private long stationaryPlan, stationaryEpoch;
+
     internal readonly struct JourneyViewObservation
     {
         internal readonly JourneyViewPolicy.Result View;
@@ -23,7 +31,7 @@ internal sealed partial class ScenicVisibility
     // renewal. The caller owns the camera-work scope. This bounded 15-cell
     // query observes picture depth; it does not certify the body corridor.
     internal JourneyViewObservation EvaluateJourney(Vector3 camera, Quaternion rotation, float fov,
-        float aspect, float nearClip)
+        float aspect, float nearClip, bool stationaryPicture = false, bool continuing = false)
     {
         float magnitude = rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z + rotation.w * rotation.w;
         if (!TargetRoster.Finite(camera) || !Finite(magnitude) || magnitude < .0001f ||
@@ -47,6 +55,12 @@ internal sealed partial class ScenicVisibility
         }
         bool sceneReady = PlayerShotReadiness.PositionReady(camera, true);
         bool solidCameraClear = cameraClear;
+        bool retainedLeaves = false;
+        long epoch = CameraSpatialScene.Shared.Epoch;
+        if (stationaryPicture && (!cameraClear || !complete || !sceneReady || stationaryPlan != QueryId ||
+            stationaryEpoch != epoch || !stationaryCamera.Equals(camera) || !stationaryRotation.Equals(rotation) ||
+            stationaryFov != fov || stationaryAspect != aspect || stationaryNear != nearClip))
+            stationaryLeaves = null;
         FoliageProjection.JourneyObservation? leaves = null;
         if (cameraClear && complete)
         {
@@ -60,6 +74,19 @@ internal sealed partial class ScenicVisibility
                     (forward + right * (x * vertical * aspect) + up * (y * vertical)).normalized;
             }
             leaves = foliage.ObserveJourney(camera, rotation, fov, aspect, nearClip, journeyDirections, QueryId, QueryStage);
+            if (stationaryPicture && sceneReady && leaves.Complete && !leaves.Intersects)
+            {
+                stationaryLeaves = leaves; stationaryAt = Time.unscaledTime;
+                stationaryCamera = camera; stationaryRotation = rotation;
+                stationaryFov = fov; stationaryAspect = aspect; stationaryNear = nearClip;
+                stationaryPlan = QueryId; stationaryEpoch = epoch;
+            }
+            else if (stationaryPicture && leaves.Intersects) stationaryLeaves = null;
+            else if (stationaryPicture && continuing && !leaves.Complete && stationaryLeaves != null && Time.unscaledTime - stationaryAt <= .20f)
+            {
+                leaves = stationaryLeaves;
+                retainedLeaves = true;
+            }
             inside = leaves.Complete && leaves.BodyIntersection;
             cameraClear &= !leaves.Complete || !leaves.NearPlaneIntersection;
             if (leaves.Complete && !inside && cameraClear)
@@ -90,7 +117,7 @@ internal sealed partial class ScenicVisibility
                 .Field("solidCameraClear", solidCameraClear).Field("nearPlaneFoliage", leaves?.NearPlaneIntersection ?? false)
                 .Field("surveyComplete", complete).Field("sceneReady", sceneReady).Field("nearOcclusion", view.NearOcclusion)
                 .Field("foliageCoverage", view.FoliageCoverage).Field("meanDepth", view.MeanDepth)
-                .Field("foliageUncertainty", view.FoliageUncertainty).Field("triangleComplete", leaves?.Complete ?? false)
+                .Field("foliageUncertainty", view.FoliageUncertainty).Field("triangleComplete", leaves?.Complete == true && !retainedLeaves).Field("retainedTriangleResult", retainedLeaves)
                 .Field("containingBroadBounds", leaves?.ContainingBounds ?? 0).Field("exactRenderers", leaves?.ExactRenderers ?? 0)
                 .Field("unsupportedRenderers", leaves?.UnsupportedRenderers ?? 0)
                 .Field("usefulColumns", view.UsefulColumns).Field("score", view.Score).Field("reason", view.Reason);

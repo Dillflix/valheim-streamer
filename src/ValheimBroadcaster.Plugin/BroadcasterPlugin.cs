@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.62";
+    public const string PluginVersion = "0.8.63";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -957,6 +957,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     plugin.presentedMode == CoverageMode.Scenic ? plugin.presentedScenicPlan : plugin.rig.PresentedActorShotId,
                     plugin.presentedRevision, picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1,
                     plugin.presentedMode == CoverageMode.Scenic ? plugin.presentedScenicProgress : double.NaN);
+            }
+            else if (!plugin.cameraReady && outputCamera && plugin.frameHold.TryGetHeldPose(outputCamera, out CameraRenderPose heldPose))
+            {
+                plugin.rig.HoldOperatorPose(outputCamera, heldPose);
             }
             plugin.rig.HideHud(plugin.settings.HideHud.Value);
         }

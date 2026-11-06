@@ -77,6 +77,19 @@ internal sealed class FrameHold
         appliedScenicProgress = scenicProgress;
     }
 
+    // GameCamera has already written the operator camera this update. When the
+    // compositor holds, keep that same captured viewpoint on the Unity camera.
+    internal bool TryGetHeldPose(Camera output, out CameraRenderPose pose)
+    {
+        SynchronizeBoundary();
+        pose = LastRenderAudit.Captured;
+        return active() && !hardFailure() && output && output == camera &&
+            renderer && renderer.isActiveAndEnabled && frame && frame.IsCreated() && !captureFailed &&
+            LastRenderAudit.ProjectionMatches && LastRenderAudit.Generation == program.Generation &&
+            LastRenderAudit.CameraId == output.GetInstanceID() && LastRenderAudit.CaptureFrame == sourceFrame &&
+            continuity.Select(Time.unscaledTime, false, false) == FramePresentation.Hold;
+    }
+
     internal void BeforeRender(FrameHoldRenderer source)
     {
         if (!ReferenceEquals(source, renderer) || !camera || !active() || hardFailure()) return;
