@@ -26,7 +26,7 @@ internal sealed partial class ScenicProduction
     }
     private readonly JourneyRunwayPolicy journeyRunway = new JourneyRunwayPolicy();
     private bool journeyRepairing, journeyRetainsPicture;
-    private float journeyRepairMissingSeconds, journeyRepairStartedAt;
+    private float journeyRepairMissingSeconds, journeyRepairUnheldSeconds;
     private long journeyAuthorityWorld;
     private bool journeyAuthorized, journeyWatching, journeyHeld;
     private ScenicShotPlan? journeyRepairSeed;
@@ -535,7 +535,7 @@ internal sealed partial class ScenicProduction
                 new AutonomyPosition(view.x, view.y, view.z), source.FieldOfView);
         }
         else journeyRepairSeed = null;
-        journeyRepairStartedAt = Time.unscaledTime;
+        journeyRepairUnheldSeconds = 0;
         journeyRepairing = true; journeyRetainsPicture = journeyPlayback.Current != null; journeyRepairMissingSeconds = 0;
         journeyExitId = 0; journeyBraking = false; journeyEndingReason = null;
         // Preserve the live accepted route pose while repair prepares. Ordinary
@@ -560,7 +560,8 @@ internal sealed partial class ScenicProduction
         if (journeyRetainsPicture)
         {
             journeyRepairMissingSeconds = HasUsablePicture ? 0 : journeyRepairMissingSeconds + Mathf.Min(.1f, Time.unscaledDeltaTime);
-            if (journeyRepairMissingSeconds >= 2 || Time.unscaledTime - journeyRepairStartedAt >= 2) journeyRetainsPicture = false;
+            if (!journeyHeld) journeyRepairUnheldSeconds += Mathf.Min(.1f, Time.unscaledDeltaTime);
+            if (!journeyHeld && (journeyRepairMissingSeconds >= 2 || journeyRepairUnheldSeconds >= 2)) journeyRetainsPicture = false;
         }
         if (journeyRepairSeed == null) return JourneyOwnsPicture;
         if (!WithinDepartureHorizon(journeyRepairSeed, Player.m_localPlayer.transform.position))
@@ -794,6 +795,9 @@ internal sealed partial class ScenicProduction
             .Field("localRepair", journeyRepairing).Field("missionTravelSeconds", journeyTravel.TravelElapsedSeconds)
             .Field("missionDepartureSeconds", journeyTravel.DepartureElapsedSeconds)
             .Field("noProgressSeconds", journeyTravel.NoProgressSeconds).Field("replanRequested", journeyTravel.LocalReplanRequested)
+            .Field("destinationX", journey.Itinerary?.Destination.Position.X ?? 0)
+            .Field("destinationZ", journey.Itinerary?.Destination.Position.Z ?? 0)
+            .Field("arrivalRadius", journey.Itinerary?.ArrivalRadius ?? 0)
             .Field("preparedSection", prepared).Field("arrivalEnding", journeyEndingArrival ? journeyExitId : 0)
             .Field("trailCells", journey.Trail.Count).Field("journeyOwnsPicture", JourneyOwnsPicture)
             .Field("travelSection", journeyPlayback.Current?.IsJourney == true).Field("section", journeyPlayback.Current?.Id ?? 0).Field("producerMetresPerSecond", journeyRunway.ProductionMetresPerSecond)

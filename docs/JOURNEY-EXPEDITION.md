@@ -37,7 +37,7 @@ broadcast journey start
 py -3 .\journey-recording.py review "$archive" --ffprobe 'C:\Tools\ffmpeg\bin\ffprobe.exe'
 ```
 
-If multiple missions are present, the tool lists their session and mission IDs. Select one with `--session <id> --mission <number>`. To export a single review MP4 for a mechanically complete attempt, add `--export "$archive\Journey.mp4" --ffmpeg 'C:\Tools\ffmpeg\bin\ffmpeg.exe'`. Export retains the full first and last video segments. The diagnostic footage is a silent 640×360, 12 fps copy of the program picture. The normal RTMP receiver is the source for full-quality audio/video assessment.
+For a different experiment, pass the actual requested scale with `--distance <metres>`. The milestone uses the 2,000 m default. If multiple missions are present, the tool lists their session and mission IDs. Select one with `--session <id> --mission <number>`. To export a single review MP4 for a mechanically complete attempt, add `--export "$archive\Journey.mp4" --ffmpeg 'C:\Tools\ffmpeg\bin\ffmpeg.exe'`. Export retains the full first and last video segments. The diagnostic footage is a silent 640×360, 12 fps copy of the program picture. The normal RTMP receiver is the source for full-quality audio/video assessment.
 
 ## Acceptance
 

@@ -96,7 +96,7 @@ def scan(directory):
     return missions, sessions
 
 
-def summarize(directory, session=None, mission=None, export=None, probe="ffprobe", encoder="ffmpeg"):
+def summarize(directory, session=None, mission=None, export=None, probe="ffprobe", encoder="ffmpeg", distance=2000):
     missions, sessions = scan(directory)
     keys = [k for k in missions if (session is None or session == k[0]) and (mission is None or mission == k[1])]
     if len(keys) != 1:
@@ -115,10 +115,10 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
         issues.append("Destination changed")
     info = sessions[session]
     selection = next((r for r in reversed(info["selection"]) if r["seq"] < first["seq"] and r.get("selected")), {})
-    if selection.get("destination") != destination or selection.get("requestedMetres") != 2000:
-        issues.append("Selection for a 2,000 m request missing")
-    if last["measuredMetres"] < 2000:
-        issues.append("Less than 2,000 m of measured camera travel")
+    if selection.get("destination") != destination or selection.get("requestedMetres") != distance:
+        issues.append(f"Selection for a {distance:,} m request missing")
+    if last["measuredMetres"] < distance:
+        issues.append(f"Less than {distance:,} m of measured camera travel")
     if any(a < last["seq"] and b > first["seq"] for a, b in info["gaps"]):
         issues.append("Missing trace records in mission interval")
     if any(start <= r["time"] <= end for r in info["travel"]):
@@ -191,6 +191,13 @@ def summarize(directory, session=None, mission=None, export=None, probe="ffprobe
         issues.append("Footage does not show two live travel sections")
     arrival_ids = {r.get("arrivalEnding") for r in rows if r.get("arrivalEnding", 0) > 0}
     arrival_frames = sum(r["shot"] in arrival_ids and r["presentation"] == "Live" and r["usable"] for r in samples)
+    if first.get("arrivalRadius", 0) <= 0 or "destinationX" not in first or "destinationZ" not in first:
+        issues.append("Original arrival coordinates missing")
+    else:
+        destination_xz = (first["destinationX"], first["destinationZ"])
+        if any(math.dist((r["cameraX"], r["cameraZ"]), destination_xz) > first["arrivalRadius"]
+               for r in samples if r.get("shot") in arrival_ids and r["presentation"] == "Live" and r["usable"]):
+            issues.append("Arrival footage outside the original destination radius")
     if arrival_frames < 34:
         issues.append("Missing mapped footage of the arrival ending")
     if jumps:
@@ -253,6 +260,7 @@ def main():
     watch.add_argument("--limit-gib", type=int, default=4)
     check = sub.add_parser("review")
     check.add_argument("archive", type=Path)
+    check.add_argument("--distance", type=int, default=2000)
     check.add_argument("--session")
     check.add_argument("--mission", type=int)
     check.add_argument("--export", type=Path)
@@ -265,7 +273,9 @@ def main():
                 raise ValueError("Archive limit must be positive")
             collect(args.source, args.archive, args.limit_gib * 1024**3)
         else:
-            result = summarize(args.archive, args.session, args.mission, args.export, args.ffprobe, args.ffmpeg)
+            if not 256 <= args.distance <= 5000:
+                raise ValueError("Expected request distance must be between 256 and 5,000 metres")
+            result = summarize(args.archive, args.session, args.mission, args.export, args.ffprobe, args.ffmpeg, args.distance)
             print(json.dumps(result, indent=2))
             return int(bool(result["issues"]))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
