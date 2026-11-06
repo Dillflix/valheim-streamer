@@ -30,6 +30,7 @@ internal static class ShotIntentTests
         yield return ("Readable replacement beats fixed improvement margin after persistence", ReadableRecovery);
         yield return ("Locomotion profiles bound vertical and vessel trajectory acceleration", TrajectoryProfiles);
         yield return ("Rejected camera proposals retain displayed shot age and motion history", RejectedProposal);
+        yield return ("A held transition backs off its challenger and keeps the live selection tracking", HeldTransitionBackoff);
         yield return ("Same-frame camera reselection can roll back to the displayed source", RejectedProposalChain);
         yield return ("A reset director can adopt the validated displayed pose after a denied proposal", AdoptAfterReset);
     }
@@ -294,6 +295,36 @@ internal static class ShotIntentTests
         Check(!director.RejectSelection(0), "The same proposal was rolled back twice.");
         Check(director.Select(10.8, .1, new[] { .9f, .2f, .1f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0 &&
             director.ShotAge > 10, "The following frame advanced the rejected candidate instead of the displayed source.");
+    }
+    private static void HeldTransitionBackoff()
+    {
+        // The adapter holds an obstructed transition: the proposal is rejected,
+        // the live shot keeps its selection identity (no stranded pending
+        // challenger), and the challenger's invalidated evidence forces it to
+        // rebuild a sustained-clear streak before it may be nominated again,
+        // so plain tracking resumes between attempts instead of a frozen loop.
+        var director = new CinematicShotDirector();
+        var all = new[] { true, true, true };
+        for (int i = 0; i <= 100; i++)
+            director.Select(i * .1, .1, new[] { .9f, .7f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
+        director.Select(10.1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
+        Check(director.Select(10.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 1,
+            "The test did not propose a challenger.");
+        Check(director.RejectSelection(0) && director.SelectedIndex == 0 && director.ShotAge > 10 &&
+            director.PendingIndex == -1,
+            "A held transition stranded the live selection identity or kept a stale pending challenger.");
+        // The adapter invalidated the obstructed challenger's evidence: for one
+        // observation it is neither eligible nor readable, breaking its streak.
+        var backoff = new[] { true, false, true };
+        Check(director.Select(10.8, .1, new[] { .7f, 0f, .6f }, backoff, CinematicActivity.Idle, 0, false, 1, true, backoff) == 0,
+            "Invalidated challenger evidence did not retain the live shot.");
+        // Clear again: the challenger must prove a fresh sustained streak, so
+        // the live shot keeps tracking normally during the backoff window.
+        for (int i = 109; i <= 116; i++)
+            Check(director.Select(i * .1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0,
+                "A blocked challenger was renominated before rebuilding its sustained-clear streak.");
+        Check(director.Select(11.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 1,
+            "Selection pressure never returned after the hold backoff.");
     }
     private static void RejectedProposalChain()
     {

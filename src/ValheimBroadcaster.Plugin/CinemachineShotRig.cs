@@ -524,31 +524,68 @@ internal sealed class CinemachineShotRig : IDisposable
             transition = decision.Reason;
             if (decision.Mode == ShotTransitionMode.Hold && sourceReadable)
             {
-                // Keep a freshly evaluated live view. Foliage alone must never
-                // enter the loading/slate/travel path or credit a rejected camera.
-                position = lastPosition; rotation = sourceRotation; fov = lastFov;
-                actualView = sourceView; retainedReadablePose = true;
+                // A Hold stays with the live candidate and keeps following the
+                // subject; it never freezes the presented pose beyond a single
+                // guard frame. Foliage alone must never enter the loading/
+                // slate/travel path or credit a rejected camera.
                 transitionElapsed = 2; transitionSeconds = 0;
-                if (previousChoice >= 0)
+                bool trackingRetained = false;
+                if (previousChoice >= 0 && choice != previousChoice)
                 {
-                    if (choice != previousChoice)
+                    if (DirectedActorSelection(settings))
                     {
-                        if (DirectedActorSelection(settings))
-                        {
-                            if (!director.RejectSelection(previousChoice)) director.AdoptValidatedSelection(now, previousChoice);
-                        }
-                        else if (!stableSelection.RejectSelection(previousChoice))
-                            stableSelection.AdoptValidatedSelection(now, previousChoice);
+                        if (!director.RejectSelection(previousChoice)) director.AdoptValidatedSelection(now, previousChoice);
                     }
+                    else if (!stableSelection.RejectSelection(previousChoice))
+                        stableSelection.AdoptValidatedSelection(now, previousChoice);
+                    // The challenger whose path or picture blocked this move
+                    // must rebuild its sustained-clear streak before it can be
+                    // nominated again. Without this backoff selection proposes
+                    // the same obstructed move every tick and the broadcast
+                    // never returns to plain tracking between attempts.
+                    InvalidateCandidateEvidence(choice);
                     choice = previousChoice; candidate = candidates[choice]; evaluatedSubjects = candidate.Subjects;
-                    candidate.TrackingPoint.position = lastPresentedAnchor;
-                    candidate.AnchorVelocity = Vector3.zero;
-                    if (!IsScenic && !candidate.Observational && !candidate.PassBy)
+                    // Present the retained candidate's freshly solved pose so
+                    // the camera keeps moving with its subject. The pose passes
+                    // the same support, swept-path and admissibility gates as
+                    // ordinary tracking before it reaches the game camera.
+                    CameraState retainedState = candidate.Camera.State;
+                    Vector3 retainedPosition = retainedState.GetFinalPosition();
+                    Quaternion retainedRotation = Upright(retainedState.GetFinalOrientation());
+                    var retainedView = EvaluateView(retainedPosition, retainedRotation, evaluatedSubjects,
+                        retainedState.Lens.FieldOfView, focus);
+                    if (retainedView.CameraClear && PositionSupported(retainedPosition, focus, continuous, moveCarrier) &&
+                        SegmentClear(lastPosition, retainedPosition) &&
+                        ShotCandidateRanking.Admissible(SceneKind, true, PictureUsable(retainedView)))
                     {
-                        SynchronizeActorTrajectory(candidate, lastPresentedAnchor, candidate.PresentedSpatialOffset);
+                        position = retainedPosition; rotation = retainedRotation; fov = retainedState.Lens.FieldOfView;
+                        chosen = retainedState; actualView = retainedView; trackingRetained = true;
+                        candidate.TrajectoryReason = "holding the live shot; tracking continues";
                     }
-                    candidate.Camera.ForceCameraPosition(position, rotation);
-                    candidate.TrajectoryReason = "retaining a readable live viewpoint";
+                    else
+                    {
+                        // Single-frame guard: the retained camera has no
+                        // validated pose this frame, so present the revalidated
+                        // source once and re-seed the candidate on it. The next
+                        // frame solves and follows from here; this pin must not
+                        // repeat every frame or the broadcast freezes.
+                        candidate.TrackingPoint.position = lastPresentedAnchor;
+                        candidate.AnchorVelocity = Vector3.zero;
+                        if (!IsScenic && !candidate.Observational && !candidate.PassBy)
+                            SynchronizeActorTrajectory(candidate, lastPresentedAnchor, candidate.PresentedSpatialOffset);
+                        candidate.Camera.ForceCameraPosition(lastPosition, sourceRotation);
+                        candidate.TrajectoryReason = "retaining a readable live viewpoint";
+                    }
+                }
+                if (!trackingRetained)
+                {
+                    // Guard this frame with the revalidated readable source.
+                    // The live candidate's anchor is deliberately left alone so
+                    // it keeps following the subject; subsequent frames blend
+                    // to its tracked pose, or cut once the subject is truly
+                    // lost behind solid cover.
+                    position = lastPosition; rotation = sourceRotation; fov = lastFov;
+                    actualView = sourceView; retainedReadablePose = true;
                 }
                 // Keep the normal 5 Hz standby survey. Repeatedly rejecting an
                 // obscured destination must not turn all cameras into 60 Hz work.
