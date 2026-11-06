@@ -21,12 +21,15 @@ public sealed partial class JourneyGuide
     private double contactScanIn;
     private bool inTerrainContact;
     private double requiredTerrainLift;
+    public double LocalSurfaceHeight { get; private set; }
+    public double HighestSurfaceAhead { get; private set; }
     private double corridorSlope = double.NegativeInfinity;
 
     private void ObserveFlightCorridor(IJourneyGuideWorld world, double bearing, double currentFloor)
     {
         corridorSlope = double.NegativeInfinity;
         requiredTerrainLift = 0;
+        LocalSurfaceHeight = HighestSurfaceAhead = currentFloor;
         double range = Math.Min(Position.HorizontalDistance(destination), Clamp(cruise * 4, 24, 64));
         if (range < 2) return;
         AutonomyPosition heading = Direction(bearing, 0);
@@ -43,6 +46,7 @@ public sealed partial class JourneyGuide
             // A sample can fall on either side of the actual crest. Reserve
             // half the observed rise across this interval while choosing pitch;
             // body clearance is still established by a fresh swept test.
+            HighestSurfaceAhead = Math.Max(HighestSurfaceAhead, floor);
             double crestAllowance = Math.Abs(floor - previousFloor) * .5;
             double rise = floor + crestAllowance + altitude + extraHeight - Position.Y;
             previousFloor = floor;
@@ -57,17 +61,26 @@ public sealed partial class JourneyGuide
             corridorSlope = Math.Max(corridorSlope, Clamp(solidSlope, -.36, .95));
     }
 
-    private bool TryClimbTerrain(IJourneyGuideWorld world, Candidate direct, double horizon)
+    private bool TryClimbTerrain(IJourneyGuideWorld world, Candidate direct, double horizon, double floor)
     {
         if (requiredTerrainLift < 1 || direct.Frontier || direct.Clear >= horizon - Margin) return false;
 
         // A loaded rise is too steep for the ordinary 52° approach. Where
         // space allows, keep moving toward it on a steeper line. If a cliff
         // face blocks even that line, gain altitude on a checked vertical.
-        double climb = Math.Min(horizon, Math.Max(5, requiredTerrainLift + 3));
+        // A remote height sample can sit far above the local slope. Seek a
+        // pass around it instead of repeatedly spending a full horizon going
+        // straight up in the same column. The allowance follows the ground as
+        // we cross a real mountainside; it is not a limit on world elevation.
+        double liftRoom = floor + altitude + 36 - Position.Y;
+        if (requiredTerrainLift > Math.Max(0, liftRoom) && !escapeTarget.HasValue &&
+            TrySkirtRidge(world, direct.Yaw, horizon, floor)) return true;
+        if (liftRoom <= Margin) return false;
+        double climb = Math.Min(Math.Min(horizon, liftRoom), Math.Max(5, requiredTerrainLift + 3));
         const double steepPitch = 72;
         double clear = SafeClearance(world, Position, Along(Position, Direction(direct.Yaw, steepPitch), climb));
-        lifting = clear < climb - Margin;
+        // A usable partial diagonal already advances along the itinerary.
+        lifting = clear < Math.Min(climb - Margin, Math.Max(3, Speed * ScanInterval + Margin));
         if (lifting)
         {
             clear = SafeClearance(world, Position, Along(Position, new AutonomyPosition(0, 1, 0), climb));
@@ -77,6 +90,28 @@ public sealed partial class JourneyGuide
         speedLimit = Math.Min(cruise, Math.Sqrt(2 * Brake * Math.Max(0, clear - Margin)));
         Status = "Climbing ahead of a steep ridge";
         return true;
+    }
+
+    private bool TrySkirtRidge(IJourneyGuideWorld world, double bearing, double horizon, double floor)
+    {
+        int firstSide = detourSide == 0 ? 1 : detourSide;
+        foreach (int angle in DetourAngles)
+        {
+            double yawToExit = bearing + angle * firstSide;
+            var exit = Along(Position, Direction(yawToExit, 0), horizon);
+            if (!world.TryGetSurface(exit, out double height) || !Finite(height) || height > floor + altitude) continue;
+            exit = new AutonomyPosition(exit.X, (float)Math.Max(Position.Y, height + altitude), exit.Z);
+            double length = Position.Distance(exit);
+            if (SafeClearance(world, Position, exit) < length - .01) continue;
+            escapeTarget = exit;
+            double exitPitch = Math.Atan2(exit.Y - Position.Y, Position.HorizontalDistance(exit)) * 180 / Math.PI;
+            selected = new Candidate(yawToExit, exitPitch, length, Math.Sign(angle * firstSide), length);
+            lifting = false;
+            speedLimit = Math.Min(cruise, Math.Sqrt(2 * Brake * (length - Margin)));
+            Status = "Taking a clear passage around a steep ridge";
+            return true;
+        }
+        return false;
     }
 
     private bool TryLiftOutOfTerrain(IJourneyGuideWorld world, double dt)

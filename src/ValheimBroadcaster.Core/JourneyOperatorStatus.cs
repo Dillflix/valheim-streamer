@@ -28,9 +28,9 @@ public readonly struct JourneyOperatorStatus
             phase == JourneyTravelState.None || phase == JourneyTravelState.Departure ? "Preparing departure" :
             phase == JourneyTravelState.Arriving ? "Arrival" : advancing ? "Travelling" : "Stationary";
         Summary = targetMetres <= 0 ? state + " | selecting destination" : state + " to " + Text(destination, "selected destination", 48) +
-            " | " + Number(measuredMetres) + "/" + Number(targetMetres) + " m" +
+            (continuousGuide ? " | route " : " | ") + Number(measuredMetres) + "/" + Number(targetMetres) + " m" +
             " | cruise " + Number(effectiveCruise) + "/" + Number(requestedCruise) + " m/s" +
-            " | no advance " + Number(noProgressSeconds) + "s";
+            (continuousGuide ? " | no horizontal movement " : " | no advance ") + Number(noProgressSeconds) + "s";
         Work = Text(work, "Awaiting navigation evidence", 150) + (continuousGuide ? "" :
             " | certified " + Number(freshRunwayMetres) + "m; route " + Math.Max(0, routeId).ToString(CultureInfo.InvariantCulture) +
             "; queued " + Math.Max(0, queuedSections).ToString(CultureInfo.InvariantCulture));

@@ -18,7 +18,7 @@ internal sealed partial class ScenicProduction
     private long journeyWorld, authorityWorld;
     private float nextJourneyAt, requestDeadline, catalogueTime = float.NegativeInfinity, nextSelection, nextTrace;
     private float noAdvance, authorityWait, nextArrivalAim;
-    private double observedMetres;
+    private AutonomyPosition lastHorizontalMotion;
     private double lastGuideCaptureTime;
     private bool MissingGuideRender => Time.unscaledTimeAsDouble - lastGuideCaptureTime > .5;
     private string GuideWork => heldJourney ? "Operator hold" : MissingGuideRender ?
@@ -85,10 +85,11 @@ internal sealed partial class ScenicProduction
         authorityWait = canWatch && Player.m_localPlayer ? 0 : authorityWait + elapsed;
         if (authorityWait >= 30) { FinishJourney("Observer remained unavailable for 30 seconds", ScenicJourneyOutcome.Blocked); return; }
         if (authorityWait > 0) return;
-        if (journey.TravelMetres - observedMetres >= .25) { observedMetres = journey.TravelMetres; noAdvance = 0; }
+        if (journey.LastRenderedPosition is AutonomyPosition actual && actual.HorizontalDistance(lastHorizontalMotion) >= .25)
+        { lastHorizontalMotion = actual; noAdvance = 0; }
         else noAdvance += elapsed;
         if (noAdvance >= 35)
-            FinishJourney("No rendered travel progress for 35s: " + GuideWork, ScenicJourneyOutcome.Blocked);
+            FinishJourney("No horizontal camera movement for 35s: " + GuideWork, ScenicJourneyOutcome.Blocked);
     }
 
     private bool TickJourney(BroadcastSettings settings, bool moveCarrier, bool held, bool allowActivate, out bool changed)
@@ -163,7 +164,7 @@ internal sealed partial class ScenicProduction
         gaze = (departureBearing.normalized + Vector3.down * .075f).normalized;
         arrivalAim = FromCore(itinerary.ArrivalFocus);
         arrivalSubject.Set(itinerary.Site); arrivalSurvey.Reset(); arrivalSurveyStarted = arrivalStarted = false;
-        nextArrivalAim = noAdvance = authorityWait = 0; observedMetres = 0; lastGuideFrame = -1;
+        nextArrivalAim = noAdvance = authorityWait = 0; lastHorizontalMotion = ToCore(position); lastGuideFrame = -1;
         lastGuideCaptureTime = Time.unscaledTimeAsDouble;
         pendingPose = true; requestedJourney = false; JourneyArrivedDestination = null; JourneyArrivedSite = null;
         journeyStatus = "Continuous guide starting toward " + itinerary.Destination.Name;
@@ -307,6 +308,7 @@ internal sealed partial class ScenicProduction
             .Field("effectiveCruise", guide.Speed).Field("cruise", journey.CruiseSpeed).Field("noProgressSeconds", noAdvance)
             .Field("biomeAtRenderedPosition", biome).Field("surfaceAtRenderedPosition", surface)
             .Field("reason", journeyStatus).Field("awaitingRender", MissingGuideRender).Field("guideStatus", guide.Status)
+            .Field("localSurfaceY", guide.LocalSurfaceHeight).Field("highestSurfaceAheadY", guide.HighestSurfaceAhead)
             .Field("lastSweepRejection", guideWorld.LastRejection).Field("sweepCounts", guideWorld.SweepSummary)
             .Field("terrainContact", guideWorld.LastTerrainContact)
             .Field("lastSweepScan", guideWorld.LastScan).Field("lastSweepScan2", guideWorld.LastScanTail));

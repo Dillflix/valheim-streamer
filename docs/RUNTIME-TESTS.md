@@ -1,5 +1,11 @@
 # Validation and runtime test record
 
+## 0.8.61 Skyward climb
+
+In the supplied 0.8.59 run, Journey 99 stayed at the same horizontal position for 58.7 seconds. Y rose from 136.9 to 841.8 while route progress stayed at 246.7 m. The guide kept rejecting partially clear rising approaches and flew straight up. Its travel counter treated that ascent as progress. The recorded scan does not identify the surface height ahead. On a reconstructed high face with a lateral passage, the previous guide reached Y=1644.9. The updated guide went around the face at 12 and 24 m/s. The operator display now gives itinerary progress and measures horizontal stalls from the rendered camera.
+
+The same run contains a completed 0.8.59 Journey to Meadows. The footage reviewer found 2,078.73 m of live camera movement in one guide shot, destination arrival, Mountain/Black Forest/Meadows and land/water coverage, and no missing footage under its sampling rules. This is real in-game footage for the 2 km distance milestone. The separate 4,994.1 m trip reached Plains / Coast but had a 0.36s video gap. Neither trip validates the 0.8.61 code in Valheim.
+
 ## 0.8.59 Mountain movement
 
 The 0.8.58 capture recorded one attempt to reach the Black Forest, 1,992.61 m away. The guide travelled 185.52 m. On the mountain, frame 45,236 requested a 4 m vertical rise at (-1730.37, 139.73, -792.59). The radius was 0.82 m. The starting overlap named the local terrain mesh. The old check rejected the sweep using the bounds of the 64 m tile, then repeated the same rejection for escape and return probes. It counted 920 unsupported overlaps and zero missing height queries. The operator ended the attempt. The capture supplies the terrain collider identity, tile bounds and movements. It does not contain that hillside's triangle vertices.

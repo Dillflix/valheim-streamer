@@ -14,7 +14,7 @@ internal sealed partial class ScenicProduction
 
     internal JourneyOperatorStatus JourneyOperator => new JourneyOperatorStatus(JourneyOwnsTravel, GuidePhase,
         guide != null, false, heldJourney, watching && !heldJourney, guide?.Speed ?? 0,
-        guide == null ? 0 : journey.CruiseSpeed, guide == null ? 0 : journey.TravelMetres,
+        guide == null ? 0 : journey.CruiseSpeed, guide == null ? 0 : journey.RouteProgressMetres,
         guide == null ? 0 : journey.TargetMetres, noAdvance, 0, JourneyGuideId, 0,
         guide == null ? null : journey.Itinerary?.Destination.Name, journeyStatus, null, continuousGuide: true);
 }

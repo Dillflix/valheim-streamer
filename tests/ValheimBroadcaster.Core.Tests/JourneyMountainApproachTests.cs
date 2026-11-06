@@ -8,6 +8,7 @@ internal static class JourneyMountainApproachTests
     {
         yield return ("Journey gains altitude before the crest between two lower terrain samples", NarrowCrest);
         yield return ("Journey crosses a loaded mountain range and resumes after loading the next tiles", MountainRange);
+        yield return ("Journey takes a lateral route past a towering terrain reading instead of climbing in place", SkywardRidge);
         yield return ("Journey gives a confirmed terrain contact a swept vertical exit above centre-floor clearance", VerticalContact);
     }
 
@@ -88,6 +89,55 @@ internal static class JourneyMountainApproachTests
         if (range.ContactFrames > 0) throw new Exception("Terrain course required contact recovery");
         if (!guide.Arrived) throw new Exception($"Range stalled at {guide.Position.X},{guide.Position.Y}: {guide.Status}");
         return (time, earlyY, maxY, minClear);
+    }
+
+    private sealed class HighFace : IJourneyGuideWorld
+    {
+        public bool TryGetSurface(AutonomyPosition at, out double height)
+        {
+            // Reconstructed obstacle; the trace captured rejected sweeps but
+            // did not record the height of the surface ahead.
+            height = at.X >= 160 && at.X <= 210 && Math.Abs(at.Z) < 23 ? 1600 : 80;
+            return true;
+        }
+        public double Clearance(AutonomyPosition from, AutonomyPosition to)
+        {
+            double length = from.Distance(to);
+            int samples = Math.Max(1, (int)Math.Ceiling(length / .15));
+            for (int i = 1; i <= samples; i++)
+            {
+                float f = (float)i / samples;
+                var p = new AutonomyPosition(from.X + (to.X - from.X) * f,
+                    from.Y + (to.Y - from.Y) * f, from.Z + (to.Z - from.Z) * f);
+                TryGetSurface(p, out double floor);
+                if (p.Y <= floor + .82) return length * (i - 1) / samples;
+            }
+            return length;
+        }
+    }
+
+    private static void SkywardRidge()
+    {
+        var world = new HighFace();
+        var start = new AutonomyPosition(0, 90, 0);
+        var goal = new AutonomyPosition(5100, 80, 0);
+        foreach (double speed in new double[] { 12, 24 })
+        {
+            var guide = new JourneyGuide(start, goal, speed, 16);
+            double time = 0, peak = start.Y;
+            while (!guide.Arrived && time < 600)
+            {
+                var before = guide.Position;
+                guide.Step(.05, goal, world);
+                if (world.Clearance(before, guide.Position) + .001 < before.Distance(guide.Position))
+                    throw new Exception("Unsafe movement across the high face");
+                peak = Math.Max(peak, guide.Position.Y);
+                time += .05;
+            }
+            if (!guide.Arrived || peak > start.Y + 50)
+                throw new Exception($"Failed ridge bypass at {speed} m/s: peak {peak:F1}, x {guide.Position.X:F1}");
+            Console.WriteLine($"High face at {speed} m/s: arrived in {time:F1}s, peak Y {peak:F1}");
+        }
     }
 
     private static void NarrowCrest()

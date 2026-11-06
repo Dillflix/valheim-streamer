@@ -183,7 +183,7 @@ public sealed partial class JourneyGuide
         }
         Candidate direct = Probe(world, bearing, 0, horizon, 0);
         frontier = direct.Frontier;
-        if (TryClimbTerrain(world, direct, horizon)) return;
+        if (TryClimbTerrain(world, direct, horizon, floor)) return;
         Candidate best = direct;
         if (extraHeight > 0 && !direct.Frontier &&
             direct.Clear < horizon * .55 && Position.Y + 1 < floor + altitude + extraHeight)

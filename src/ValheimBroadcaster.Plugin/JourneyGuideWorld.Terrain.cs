@@ -72,12 +72,12 @@ internal sealed partial class JourneyGuideWorld : IJourneyTerrainContact
         centreGround = double.NaN;
         requiredHeight = double.NegativeInfinity;
         proofTile = default;
-        Heightmap centre = Heightmap.FindHeightmap(start);
-        if (!centre || !TerrainGrid(centre) || !ScenicSurface.TryGroundHeight(start, out float measured))
+        Heightmap? centre = ScenicSurface.OutdoorMap(start);
+        if (!centre || !TerrainGrid(centre!) || !ScenicSurface.TryGroundHeight(start, out float measured))
             return TerrainFailure("missing centre tile/ground");
         centreGround = measured;
         proofTile = centre.transform.position;
-        float span = centre.m_width * centre.m_scale;
+        float span = centre!.m_width * centre.m_scale;
         Vector3 origin = centre.transform.position - new Vector3(span * .5f, 0, span * .5f);
         float r = radius + ContactSkin;
         if (2 * r >= span || start.x < origin.x || start.x > origin.x + span ||
@@ -91,8 +91,8 @@ internal sealed partial class JourneyGuideWorld : IJourneyTerrainContact
         {
             // Resolve a tile by its interior rather than an ambiguous seam.
             Vector3 tileCentre = centre.transform.position + new Vector3(x * span, 0, z * span);
-            Heightmap map = x == 0 && z == 0 ? centre : Heightmap.FindHeightmap(tileCentre);
-            if (!map || !TerrainGrid(map) || Mathf.Abs(map.m_width * map.m_scale - span) > .001f ||
+            Heightmap? map = x == 0 && z == 0 ? centre : ScenicSurface.OutdoorMap(tileCentre);
+            if (!map || !TerrainGrid(map!) || Mathf.Abs(map!.m_width * map.m_scale - span) > .001f ||
                 Mathf.Abs(map.transform.position.x - tileCentre.x) > .001f ||
                 Mathf.Abs(map.transform.position.z - tileCentre.z) > .001f || !MeasureTile(map, start, r))
                 return TerrainFailure("incomplete footprint tile or unsupported collision mesh");

@@ -16,7 +16,7 @@ public sealed partial class JourneyGuide
 
     private void TrackEscapeProgress(double dt)
     {
-        if (!trackMotion || Position.Distance(motionAnchor) >= 1.5)
+        if (!trackMotion || Position.HorizontalDistance(motionAnchor) >= 1.5)
         {
             motionAnchor = Position;
             slowSeconds = 0;
