@@ -7,6 +7,7 @@ internal static class JourneyNavigationSearchTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
+        yield return ("A guide for native preflight preserves historic node ages and renews its exact onward edge", NativeGuideRenewal);
         yield return ("Connected Journey search develops production-scale clear routes without exhausting node breadth", ClearLongRoutes);
         yield return ("Connected Journey search goes around a measured obstacle with an exact entry seam", SingleObstacle);
         yield return ("Connected Journey search composes opposite turns through offset trees instead of a fixed route fan", AlternatingDogleg);
@@ -129,6 +130,32 @@ internal static class JourneyNavigationSearchTests
         Check(path.Epoch == request.Epoch && scene.Now - path.OldestEvidence <= JourneyNavigationSearch.MaximumEvidenceAge + .00001,
             "Returned path reused stale physical scene evidence");
         return path;
+    }
+
+    private static void NativeGuideRenewal()
+    {
+        var scene = new Scene();
+        var request = new JourneyNavigationRequest(7, 3, Pose(0), Pose(2), P(200), P(0),
+            targetMetres: 24, forNativePreflight: true);
+        JourneyNavigationSearch search = Run(scene, request);
+        var path = Ready(search, scene, request);
+        double oldest = path.OldestEvidence;
+        scene.Now += 10;
+        search.ResumeCandidateValidation();
+        int renewals = 0;
+        search.Step(4, scene.Now, 3, probe =>
+        {
+            Check(probe.IsOnward, "Historical guide edges must go through native curve validation");
+            renewals++;
+            return scene.Observe(probe);
+        });
+        Check(renewals == 1 && search.Result != null && search.Result.OldestEvidence == oldest
+            && search.Result.OnwardObservedAt == scene.Now, "Guide age or refreshed onward identity lost");
+        scene.Now += 10;
+        search.ResumeCandidateValidation();
+        search.Step(1, scene.Now, 3, probe => new JourneyNavigationObservation(
+            JourneyNavigationEvidence.Blocked, default, 0, 3, scene.Now));
+        Check(search.Result == null, "Guide was returned despite blocked onward renewal");
     }
 
     private static void ClearLongRoutes()

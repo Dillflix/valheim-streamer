@@ -37,6 +37,12 @@ internal static class JourneyRunwayTests
 
     private static void StartupReserve()
     {
+        foreach (double cruise in new[] { 2d, 6d, 12d })
+        {
+            double guide = JourneyRunwayPolicy.DepartureGuideMetres(cruise, 64);
+            Check(guide < 32 && new JourneyRunwayPolicy().TryStart(1, guide, cruise, out _),
+                "Opening guide must provide a usable physical launch reserve");
+        }
         var policy = new JourneyRunwayPolicy();
         Check(!policy.TryStart(0, 1000, 12, out _), "Uncertified distant metres launched movement");
         Check(!policy.TryStart(8, 4, 12, out _), "Eight tiny sections manufactured physical stopping room");
