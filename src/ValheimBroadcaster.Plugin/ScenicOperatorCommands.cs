@@ -11,7 +11,7 @@ public sealed partial class BroadcasterPlugin
 {
     private void JourneyCommand(string[] args, Terminal context)
     {
-        const string usage = "broadcast journey start|stop|on|off|status|distance <256-5000 metres>|duration <seconds>|speed <2-12 metres/second> — distance selects the desired scale of a known-destination itinerary";
+        string usage = $"broadcast journey start|stop|on|off|status|distance <256-5000 metres>|duration <seconds>|speed <{ScenicJourneyPolicy.MinimumCruiseSpeed}-{ScenicJourneyPolicy.MaximumCruiseSpeed} metres/second> — distance selects the desired scale of a known-destination itinerary";
         if (args.Length < 2) { context?.AddString(usage); return; }
         string action = args[1].ToLowerInvariant();
         if (action == "start" && args.Length == 2)
@@ -38,7 +38,7 @@ public sealed partial class BroadcasterPlugin
             settings.ScenicJourneyDistance.Value = metres;
         else if (action == "duration" && args.Length == 3 && CameraNumber(args[2], 1, 2500, out float seconds) && seconds * settings.ScenicJourneySpeed.Value >= 256 && seconds * settings.ScenicJourneySpeed.Value <= 5000)
             settings.ScenicJourneyDistance.Value = seconds * settings.ScenicJourneySpeed.Value;
-        else if (action == "speed" && args.Length == 3 && CameraNumber(args[2], 2, 12, out float speed))
+        else if (action == "speed" && args.Length == 3 && CameraNumber(args[2], ScenicJourneyPolicy.MinimumCruiseSpeed, ScenicJourneyPolicy.MaximumCruiseSpeed, out float speed))
             settings.ScenicJourneySpeed.Value = speed;
         else if (action != "status" || args.Length != 2) { context?.AddString(usage); return; }
         context?.AddString(idle.JourneyStatus);

@@ -11,21 +11,8 @@ internal sealed partial class ScenicProduction
 {
     private readonly ScenicDirector director = new ScenicDirector();
     private readonly ScenicJourneyPolicy journey = new ScenicJourneyPolicy();
-    private readonly JourneyTravelController journeyTravel = new JourneyTravelController();
-    private readonly JourneyRoutePlayback journeyPlayback = new JourneyRoutePlayback();
-    private readonly ScenicJourneyPlanner journeyPlanner = new ScenicJourneyPlanner();
-    private readonly ScenicSplinePath journeyLoadingPath = new ScenicSplinePath();
-    private long journeyPredecessor, journeyEpoch;
-    private readonly List<JourneySection> journeyQueue = new List<JourneySection>(8);
-    private float nextJourneyTrace;
-    private bool journeyOwned;
-    private float journeyRequestExpiresAt;
     private long tracedReplacementPlan;
     private string? tracedReplacementReason;
-    private float nextJourneyAt;
-    private string? journeyEndingReason;
-    private bool requestedJourney, journeyPlanning, manualJourney;
-    private string journeyStatus = "No continuous journey requested";
     private bool lastMovementEnabled = true;
     private ScenicShotPlan? requestedFixture;
     private readonly ScenicPathEvaluator fixtureEvaluator = new ScenicPathEvaluator();
@@ -38,83 +25,6 @@ internal sealed partial class ScenicProduction
     internal bool FixturePreparing => requestedFixture != null;
     internal bool FixtureActive => requestedFixture != null || fixturePlanId > 0 && Plan?.Id == fixturePlanId;
     internal string FixtureStatus { get; private set; } = "No camera fixture requested";
-    internal bool JourneyOwnsTravel => journeyTravel.SuppressesScenicRelocation || requestedJourney;
-    internal bool JourneyActive => journeyOwned && journeyTravel.Active;
-    private ScenicRejectionKind journeyLiveFailure;
-    private double journeyViewBlockedSeconds;
-    private static bool JourneyFailurePhysical(ScenicRejectionKind kind) =>
-        kind == ScenicRejectionKind.SurfaceClearance || kind == ScenicRejectionKind.CameraCollision ||
-        kind == ScenicRejectionKind.CorridorCollision || kind == ScenicRejectionKind.InsideVegetation || kind == ScenicRejectionKind.InvalidPlan;
-    private static bool JourneyFailurePending(ScenicRejectionKind kind) => kind == ScenicRejectionKind.Geometry ||
-        kind == ScenicRejectionKind.Acquisition || kind == ScenicRejectionKind.CarrierRange || kind == ScenicRejectionKind.SurveyIncomplete;
-    private bool JourneyOwnsPicture => journeyOwned && journeyPlayback.Current != null && (!journeyRepairing || journeyRetainsPicture);
-    internal string JourneyStatus => journeyStatus + $"; {(journeyTravel.Active ? journeyTravel.State.ToString() : requestedJourney ? "Requested (not on air)" : journey.Outcome.ToString())}; measured {journey.TravelMetres:F0}/{journey.TargetMetres:F0}m" +
-        $"; destination {journey.Itinerary?.Description ?? "not selected"}; route progress {journey.RouteProgressMetres:F0}m; arrival shown {journey.ArrivalShownSeconds:F1}s" +
-        $"; displacement {journey.DisplacementMetres:F0}m; objective advance {journey.ObjectiveAdvanceMetres:F0}m; requested cruise {journey.CruiseSpeed:F1}m/s; effective cruise {journeyRunway.EffectiveCruise:F1}m/s" +
-        $"; achieved {journey.AchievedMetresPerSecond:F1}m/s; shown {journey.ShownSeconds:F1}s; queued {journeyQueue.Count}; certified runway {JourneyRunwayMetres():F0}m; preparation {journeyRunway.PreparationSeconds:F1}s; ahead {journeyPlanner.Reason}; selection {journeySelectionEvidence}";
-    internal string RequestJourney()
-    {
-        if (journeyOwned) return JourneyStatus;
-        if (FixtureActive) StopFixture();
-        requestedJourney = true; journeyRequestExpiresAt = Time.unscaledTime + 90; nextJourneyAt = 0;
-        if (journey.Active) { manualJourney = true; requestedJourney = false; }
-        journeyStatus = "Journey requested; preparing an independently validated departure (up to 90 seconds)";
-        nextJourneyWaitingTrace = 0; TraceJourney("request"); return journeyStatus;
-    }
-    internal void StopJourney()
-    { FinishJourney("Journey stopped; resume ordinary local scenery", ScenicJourneyOutcome.Interrupted); }
-    internal Vector3? JourneyLoadingPoint
-    {
-        get
-        {
-            if (!JourneyActive || Plan == null) return null;
-            if (!journeyTravel.CanAdvance && !journeyRepairing)
-            {
-                Camera? pausedCamera = Camera.main;
-                return pausedCamera ? pausedCamera.transform.position : (Vector3?)null;
-            }
-            if (journeyRepairing)
-            {
-                if (!HasUsablePicture) return null;
-                Camera? currentCamera = Camera.main;
-                // Repair owns no speculative loading path. Keep the protected
-                // carrier with the actual independently validated picture.
-                return currentCamera ? currentCamera.transform.position : FromCore(Plan.Sample(proposed).CameraPosition);
-            }
-            if (!Plan.IsJourney || journeyBraking) return FromCore(Plan.Sample(1).CameraPosition);
-            // Lead may cross a seam only through already certified successors.
-            // The observer still enforces its 32m camera tether and live loaded
-            // geometry checks; a pending proposal never moves the carrier.
-            ScenicShotPlan lead = Plan;
-            double distance = lead.TravelMetres * lead.MotionFraction(PlaybackProgress) + 24;
-            long predecessor = lead.Id;
-            foreach (JourneySection section in journeyQueue)
-            {
-                if (distance <= lead.TravelMetres || !section.Proof.CanAdmit ||
-                    !JourneyRunwayPolicy.HeadMatches(section.Plan, predecessor, journey.Id,
-                        section.Epoch, section.PreparedAt, CameraSpatialScene.Shared.Epoch, Time.unscaledTime)) break;
-                distance -= lead.TravelMetres; lead = section.Plan; predecessor = lead.Id;
-            }
-            double fraction = Math.Min(1, distance / Math.Max(1, lead.TravelMetres));
-            double low = 0, high = 1;
-            for (int i = 0; i < 24; i++)
-            {
-                double middle = (low + high) * .5;
-                if (lead.MotionFraction(middle) < fraction) low = middle; else high = middle;
-            }
-            if (!journeyLoadingPath.Ready || journeyLoadingPath.PreparedPlan?.Id != lead.Id)
-            {
-                // A present fallback keeps the observer's smooth lead/return
-                // path engaged. Null would snap the carrier back to the camera
-                // whenever shared work postpones preparing the next spline.
-                Camera? camera = Camera.main;
-                Vector3 fallback = camera ? camera.transform.position : FromCore(Plan.Sample(PlaybackProgress).CameraPosition);
-                if (!CameraWorkBudget.Shared.TryBegin(CameraWorkKind.Scenic, out var work)) return fallback;
-                using (work) if (!journeyLoadingPath.Prepare(lead, 1)) return fallback;
-            }
-            return FromCore(journeyLoadingPath.Sample((float)((low + high) * .5)).CameraPosition);
-        }
-    }
     internal bool RequestFixture(ScenicShotPlan plan, out string reason, float playbackMotion = 1, bool playbackDynamic = true)
     {
         if (!HasRegion || plan == null || !plan.IsDirected || plan.IsPictureOnly ||
@@ -173,7 +83,6 @@ internal sealed partial class ScenicProduction
     // Candidate surveys must never recenter the live camera's foliage cache.
     private readonly ScenicVisibility planningVisibility = new ScenicVisibility("preflight");
     private Vector3 origin;
-    private Vector3 journeyOrdinarySearchOrigin;
     private long nextId;
     private long bestEpoch, preparedEpoch;
     private ScenicShotPlan? testing, best;
@@ -193,13 +102,13 @@ internal sealed partial class ScenicProduction
     private float plannedFov;
     internal bool HasRegion { get; private set; }
     internal Vector3 RegionOrigin => origin;
-    internal ScenicShotPlan? Plan => JourneyOwnsPicture ? journeyPlayback.Current : usingIndependentPicture ? pictures.Current : director.Current;
-    private double PlaybackProgress => JourneyOwnsPicture ? journeyPlayback.Progress : director.Progress;
-    internal bool ContentExhausted => pictures.ContentExhausted || journeyExitExhausted;
+    internal ScenicShotPlan? Plan => usingIndependentPicture ? pictures.Current : director.Current;
+    private double PlaybackProgress => director.Progress;
+    internal bool ContentExhausted => pictures.ContentExhausted;
     internal bool RelocationBoundary => usingIndependentPicture
         ? pictures.CanYield(Time.unscaledTime)
         : director.Current == null || PlaybackProgress >= .999999 || director.BlocksMovement;
-    private double ShownSeconds => JourneyOwnsPicture ? journeyPlayback.ElapsedSeconds : usingIndependentPicture ? pictures.ShownSeconds : director.ElapsedSeconds;
+    private double ShownSeconds => usingIndependentPicture ? pictures.ShownSeconds : director.ElapsedSeconds;
     internal bool Searching => HasRegion && (!survey.Complete || searching);
     internal bool NeedsReplacement => forceReplacement || director.Current == null || director.NeedsReplacement;
     internal bool RecoveryExhausted { get; private set; }
@@ -212,15 +121,8 @@ internal sealed partial class ScenicProduction
     {
         get
         {
-            if (JourneyOwnsPicture && Plan != null)
-            {
-                ScenicShotSample pose = Plan.Sample(journeyPlayback.Progress);
-                // Admission already established a complete local route. Query
-                // that route's actual pose rather than a stale ordinary origin.
-                Vector3 body = FromCore(pose.CameraPosition), focus = FromCore(pose.AimPosition);
-                Vector3 observed = Plan.UsesJourneyView ? body + (focus - body).normalized * (float)JourneyViewPolicy.ObservationRange : focus;
-                return PlayerShotReadiness.PositionReady(body, true) && PlayerShotReadiness.PositionReady(observed, true);
-            }
+            if (guide != null)
+                return PlayerShotReadiness.PositionReady(FromCore(guide.Position), true);
             return HasRegion && (CanContinue || lastPresentedPlan != null &&
                 liveSceneReadiness.CanContinue(lastPresentedPlan.Id, lastPresentedReadiness)
                 ? PlayerShotReadiness.PositionReady(origin, true) : IdleShots.Ready(origin));
@@ -230,7 +132,7 @@ internal sealed partial class ScenicProduction
     private string RecoveryStatus => recovery.Active ?
         $"; no usable idle picture {recovery.ElapsedSeconds:F1}s; " +
         (recovery.Expired ? "local recovery budget exhausted" : $"recovery budget {recovery.RemainingSeconds:F1}s") : "";
-    internal string SearchStatus => (!journeyOwned && (ManualJourneyPending || journeyTravel.Active) ? "Journey: " + journeyStatus + "; " : "") + (!survey.Complete ? survey.Diagnostics :
+    internal string SearchStatus => (!JourneyActive && ManualJourneyPending ? "Journey: " + journeyStatus + "; " : "") + (!survey.Complete ? survey.Diagnostics :
         Reason + "; " + ComparisonStatus + "; salvage attempts " + sections +
         ", canopy alternatives " + elevations + "; last rejection " + lastRejection +
         (planning ? "; " + spatial.Reason : "")) + RecoveryStatus;
@@ -276,7 +178,7 @@ internal sealed partial class ScenicProduction
     {
         StopFixture(); StopJourney(); journey.Reset(); nextJourneyAt = 0;
         ClearJourneyProgramme();
-        fixtureEvaluator.Dispose(); fixtureVisibility.Reset(); journeyPlanner.Dispose(); journeyLoadingPath.Dispose();
+        fixtureEvaluator.Dispose(); fixtureVisibility.Reset();
         destinationSubject.Reset(); destinationSurvey.Reset(); destinationFeatures.Clear(); nextDestinationSurvey = 0;
         director.Reset(); pictures.Reset(); pictureAdmission.Reset(); pictureVisibility.Reset(); survey.Reset(); refreshSurvey.Reset(); evaluator.Dispose(); spatial.Reset(); subjects.Clear(); subjectRetry.Clear();
         refreshingSurvey = false; surveyRefreshAt = 0;
@@ -308,53 +210,12 @@ internal sealed partial class ScenicProduction
     }
     internal float Propose(float dt, BroadcastSettings settings, bool held)
     {
-        if (JourneyOwnsPicture)
-        {
-            if (journeyRepairing) return proposed = (float)journeyPlayback.Progress;
-            if (journeyPlayback.TryRetryObservation(journeyTravel, CameraSpatialScene.Shared.Epoch, held, out double pending))
-                return proposed = (float)pending;
-            double step = Mathf.Max(0, dt);
-            if (journeyExitId == 0 && Plan?.IsJourney == true)
-            {
-                ScenicShotPlan section = Plan;
-                double sectionCruise = JourneySectionCruise(section);
-                double nativeLength = section.JourneyCruiseSpeed > 0
-                    ? section.JourneyCruiseSpeed * section.DurationSeconds * ScenicJourneyMotion.CruiseFraction(section.JourneyEaseIn, section.JourneyEaseOut)
-                    : section.TravelMetres;
-                double remaining = nativeLength * (1 - section.MotionFraction(journeyPlayback.Progress));
-                double nextCruise = journey.CruiseSpeed;
-                if (!journeyBraking && journeyQueue.Count > 0)
-                {
-                    JourneySection next = journeyQueue[0];
-                    if (next.Proof.CanAdmit && JourneyRunwayPolicy.HeadMatches(next.Plan, section.Id, journey.Id,
-                        next.Epoch, next.PreparedAt, CameraSpatialScene.Shared.Epoch, Time.unscaledTime))
-                        nextCruise = JourneySectionCruise(next.Plan);
-                }
-                double runway = journeyBraking && Plan != null
-                    ? remaining + JourneyRunwayPolicy.StopMarginMetres
-                    : JourneyRunwayMetres();
-                double speed = journeyRunway.StepSpeed(journey.CruiseSpeed, runway, step, held,
-                    sectionCruiseLimit: sectionCruise, nextSectionCruiseLimit: nextCruise, remainingSectionMetres: remaining);
-                // The final centimetres are still part of the validated route.
-                // Complete that exact seam before admitting its arrival pan.
-                if (journeyBraking && Plan != null && runway - JourneyRunwayPolicy.StopMarginMetres <= .05)
-                    return proposed = (float)journeyPlayback.Propose(Plan.DurationSeconds * (1 - journeyPlayback.Progress), !held && journeyTravel.CanAdvance);
-                // The travel executor owns progress. Ordinary Scenic dwell,
-                // replacement requests and ShotMotion never drive this clock.
-                lastMovementEnabled = !held;
-                return proposed = (float)journeyPlayback.ProposeAtCruise(step, speed, journey.CruiseSpeed, !held && journeyTravel.CanAdvance);
-            }
-            lastMovementEnabled = !held;
-            return proposed = (float)journeyPlayback.Propose(step, !held && journeyTravel.CanAdvance);
-        }
         if (usingIndependentPicture) return proposed = 0;
         bool explicitFixture = fixturePlanId > 0 && Plan?.Id == fixturePlanId;
         float motion = explicitFixture ? fixtureMotion : Mathf.Clamp(settings.ShotMotion.Value, 0, 1.5f);
         lastMovementEnabled = (explicitFixture ? fixtureDynamic : settings.DynamicShots.Value) && motion > 0;
         return proposed = (float)director.Propose(Mathf.Max(0, dt), lastMovementEnabled && !held, motion);
     }
-    private double JourneySectionCruise(ScenicShotPlan section) => section.JourneyCruiseSpeed > 0
-        ? Math.Min(journey.CruiseSpeed, section.JourneyCruiseSpeed) : journey.CruiseSpeed;
     internal Vector3 Focus(float fraction)
     {
         if (Plan == null) return origin;
@@ -364,37 +225,12 @@ internal sealed partial class ScenicProduction
         FromCore(Plan.Sample(proposed).CameraPosition) - Focus(proposed);
     internal bool Observe(bool live, bool readable, long planId, float progress, bool blocked, bool held, string reason, Vector3? actualFocus, JourneyPresentationSample? actualCapture = null, ScenicRejectionKind failure = ScenicRejectionKind.None)
     {
-        if (Plan == null) return false;
-        if (JourneyOwnsPicture)
+        if (guide != null)
         {
-            bool matching = planId == Plan.Id;
-            journeyLiveFailure = blocked ? failure : ScenicRejectionKind.None;
-            bool physical = blocked && JourneyFailurePhysical(failure);
-            bool editorial = blocked && (failure == ScenicRejectionKind.Focus || failure == ScenicRejectionKind.Foliage);
-            journeyViewBlockedSeconds = editorial && !held ? journeyViewBlockedSeconds + Math.Min(.1f, Time.unscaledDeltaTime) : 0;
-            if (actualCapture.HasValue && actualCapture.Value.Audit.Shot == planId)
-                journeyPlayback.Observe(planId, actualCapture.Value.Time, actualCapture.Value.Progress, live, readable, physical, held);
-            else
-                journeyPlayback.Observe(planId, Time.unscaledTimeAsDouble, journeyPlayback.Progress, false, false, physical, held);
-            if (matching && live && readable && actualFocus.HasValue && TargetRoster.Finite(actualFocus.Value))
-            {
-                lastPresentedPlan = Plan; lastPresentedFocus = lastAdmittedFocus = actualFocus.Value;
-                RecordSceneReadiness(readiness, Plan, lastAdmittedFocus, actualCapture, out lastAdmittedReadiness);
-                RecordSceneReadiness(liveSceneReadiness, Plan, lastAdmittedFocus, actualCapture, out lastPresentedReadiness);
-                RememberJourneyDeparturePose(Plan, actualCapture, lastAdmittedFocus);
-                HasUsablePicture = true;
-            }
-            if (matching && actualCapture.HasValue)
-            {
-                JourneyPresentationSample captured = actualCapture.Value;
-                journey.Observe(Plan, captured.Time, captured.Progress, live && readable, held, captured.Position);
-                if (planId == journeyExitId)
-                    journey.ObserveArrival(captured.Time, live && readable, held, captured.Position, journeyEndingArrival);
-            }
-            else journey.BreakPresentation();
-            if (blocked || !readable) { lastRejection = reason; Reason = reason; }
+            ObserveGuidePicture(live && readable, planId, held, actualCapture);
             return false;
         }
+        if (Plan == null) return false;
 
         // Keep actual scene availability separate from admission of a requested
         // new plan. The camera may still be rendering its preceding valid plan.
@@ -406,7 +242,7 @@ internal sealed partial class ScenicProduction
         {
             lastPresentedPlan = shown;
             lastPresentedFocus = actualFocus!.Value;
-            RememberJourneyDeparturePose(shown, actualCapture, lastPresentedFocus);
+            RememberDepartureCapture(actualCapture);
             RecordSceneReadiness(liveSceneReadiness, shown, lastPresentedFocus, actualCapture, out lastPresentedReadiness);
             if (!shown.IsPictureOnly)
             {
@@ -436,14 +272,6 @@ internal sealed partial class ScenicProduction
         if (route != null)
             director.Observe(route.Id, Time.unscaledTime, planId == route.Id ? Mathf.Clamp01(progress) : (float)PlaybackProgress,
                 live && planId == route.Id, readable && planId == route.Id, blocked && planId == route.Id, held, lastMovementEnabled);
-        if (route != null && actualCapture.HasValue)
-        {
-            JourneyPresentationSample captured = actualCapture.Value;
-            journey.Observe(route, captured.Time, captured.Progress, live && readable && planId == route.Id, held, captured.Position);
-            if (route.Id == journeyExitId)
-                journey.ObserveArrival(captured.Time, live && readable, held, captured.Position, journeyEndingArrival);
-        }
-        else journey.BreakPresentation();
         if (live && readable && !NeedsReplacement) RecoveryExhausted = false;
         if (blocked || !readable) { lastRejection = reason; Reason = reason; }
         if (!movementBlocked && director.BlocksMovement)
@@ -497,7 +325,7 @@ internal sealed partial class ScenicProduction
             requestedFixture = null; fixtureEvaluating = false; fixtureEvaluator.Reset();
             FixtureStatus = "Camera fixture rejected: preparation exceeded 20 seconds";
         }
-        bool knownPicture = planId > 0 && (Plan?.Id == planId || lastPresentedPlan?.Id == planId);
+        bool knownPicture = planId > 0 && (JourneyActive ? JourneyGuideId == planId : Plan?.Id == planId || lastPresentedPlan?.Id == planId);
         HasUsablePicture = onAir && usableLive && knownPicture;
         ScenicShotPlan? actualPlan = Plan?.Id == planId ? Plan : lastPresentedPlan?.Id == planId ? lastPresentedPlan : null;
         destinationSubject.Observe(Time.unscaledTime, onAir, HasUsablePicture, held, actualPlan?.Feature, actualPlan?.Role ?? ScenicShotRole.Establish);
@@ -514,7 +342,7 @@ internal sealed partial class ScenicProduction
     {
         // Mission work is independent of ordinary picture/readiness gates.
         bool journeyControls = TickJourney(settings, moveCarrier, held, allowActivate, out bool journeyChanged);
-        if (journeyChanged) return true;
+        if (journeyControls || journeyChanged) return journeyChanged;
         if (!HasRegion || !SceneReady) return false;
         // Scene discovery has its own lifetime. Advance it while terrain/site
         // subjects are being collected too, before any camera candidate exists.
@@ -523,12 +351,6 @@ internal sealed partial class ScenicProduction
         ScenicFoliageScene.Shared.Ensure(origin);
         TraceReplacement();
         if (FixtureActive && TickFixture(settings, moveCarrier, held, allowActivate, out bool fixtureChanged)) return fixtureChanged;
-        // Journey execution owns the on-air plan, not the whole planning pipeline.
-        // Continue local surveys and stage ordinary exit coverage under the shared budget.
-        // A retained Journey pose keeps footage available while repair works;
-        // it must not veto a freshly validated local fallback. Travel ownership
-        // remains with the mission even after the picture changes.
-        allowActivate &= !journeyControls || journeyRepairing;
         // A previously measured clear node keeps progressing toward actual
         // admission even if route search changes subject, finishes or resets.
         // This owns no footage until complete current validation succeeds.
@@ -600,7 +422,6 @@ internal sealed partial class ScenicProduction
         }
         if (!searching && director.Prepared == null && (NeedsReplacement || director.ShouldPrefetch || director.ElapsedSeconds >= 2) && Time.unscaledTime >= retryAt)
         {
-            journeyOrdinarySearchOrigin = origin;
             searching = true; revalidating = false; testing = best = null; attempts = 0;
             planning = false; spatial.Reset(); CaptureSubjects();
             searchCurrentIndex = CurrentFeatureIndex();
@@ -796,8 +617,7 @@ internal sealed partial class ScenicProduction
         // A requested editorial improvement must not discard a valid moving
         // shot for the first static graph node encountered during preparation.
         // Actual blocked/completed routes retain independent-picture fallback.
-        bool protectCurrent = HasUsablePicture && !(journeyRepairing && journeyRetainsPicture) &&
-            (pictures.Current != null || !director.BlocksMovement);
+        bool protectCurrent = HasUsablePicture && (pictures.Current != null || !director.BlocksMovement);
         if (!pictures.WantsCandidate(protectCurrent)) { pictureAdmission.Reset(); return false; }
         long epoch = CameraSpatialScene.Shared.Epoch;
         if (pictureAdmission.Pending == null)
@@ -823,8 +643,6 @@ internal sealed partial class ScenicProduction
         if (!pictures.TryOffer(admitted, epoch, CameraSpatialScene.Shared.Epoch, Time.unscaledTime,
             Time.unscaledTime, protectCurrent)) return false;
         usingIndependentPicture = true;
-        ReleaseJourneyRepairPicture(admitted.Id);
-        journeyExitExhausted = false;
         readiness.Reset(); proposed = 0;
         if (director.Current != null) director.RequestReplacement("Developing a new cinematic route while a measured picture remains available");
         Reason = "Independent readable " + admitted.FeatureKind + " picture; preparing cinematic movement";
@@ -972,8 +790,7 @@ internal sealed partial class ScenicProduction
     {
         if (!searching || !comparison.Active) { best = null; return; }
         long epoch = CameraSpatialScene.Shared.Epoch;
-        comparison.Prune(entry => entry.Epoch == epoch && entry.Plan.Id != director.Current?.Id && director.CanOffer(entry.Plan) &&
-            (!journeyOwned || !Player.m_localPlayer || WithinJourneyHorizon(entry.Plan, Player.m_localPlayer.transform.position)));
+        comparison.Prune(entry => entry.Epoch == epoch && entry.Plan.Id != director.Current?.Id && director.CanOffer(entry.Plan));
         best = null;
         // Prefer current validation when available. An older best may still be
         // staged, but keeps its original timestamp and must be revalidated.
@@ -1038,8 +855,6 @@ internal sealed partial class ScenicProduction
         { retryAt = 0; Reason = "Prepared view already covered; planning a fresh feature"; return false; }
         director.Accept(selected, Time.unscaledTime); readiness.Reset();
         usingIndependentPicture = false;
-        ReleaseJourneyRepairPicture(selected.Id);
-        journeyExitExhausted = false;
         // Acceptance is only a proposed cut. Only rendered readable output may
         // renew the on-air recovery budget or clear its exhausted state.
         RecoveryExhausted = recovery.Expired; forceReplacement = false; proposed = 0;

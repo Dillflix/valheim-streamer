@@ -173,6 +173,11 @@ internal static class Program
             using (var file = File.Create(path + ".mp4")) file.SetLength(12 * 1024 * 1024);
             File.WriteAllText(path + ".jsonl", "{}");
         }
+        DiagnosticVideoWriter.Prune(dir, 256L * 1024 * 1024);
+        Check(Directory.GetFiles(dir, "*.mp4").Length == 11, "configured retention preserves more than eight pairs");
+        DiagnosticVideoWriter.Prune(dir, 64L * 1024 * 1024);
+        Check(Directory.GetFiles(dir, "*.mp4").Length == 4 &&
+            File.Exists(Path.Combine(dir, "footage-20200101-00010.jsonl")), "smaller configured budget retains newest complete pairs");
         DiagnosticVideoWriter.Prune(dir);
         Check(File.ReadAllText(unrelated) == "untouched", "retention preserves unrelated files");
         Check(Directory.GetFiles(dir, "*.mp4").Length < DiagnosticVideoWriter.MaximumSegments, "retention leaves a slot for current segment");

@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Collections.Generic;
 using UnityEngine;
 using ValheimBroadcaster.Core;
 
@@ -27,12 +28,26 @@ internal static class ScenicSurface
         catch (MemberAccessException) { return null; }
     }
 
+    private static readonly List<Heightmap> overlappingMaps = new List<Heightmap>(4);
+    internal static Heightmap? OutdoorMap(Vector3 point)
+    {
+        // FindHeightmap picks the first tile containing X/Z regardless of
+        // elevation. An interior tile can occupy the same column as the world.
+        Heightmap first = Heightmap.FindHeightmap(point);
+        if (!first || !Character.InInterior(first.transform.position)) return first;
+        overlappingMaps.Clear();
+        Heightmap.FindHeightmap(point, 0f, overlappingMaps);
+        foreach (Heightmap tile in overlappingMaps)
+            if (tile && tile.isActiveAndEnabled && !Character.InInterior(tile.transform.position)) return tile;
+        return null;
+    }
+
     internal static bool TryGroundHeight(Vector3 point, out float height)
     {
         height = 0;
         if (!TargetRoster.Finite(point) || Character.InInterior(point)) return false;
-        Heightmap map = Heightmap.FindHeightmap(point);
-        if (!map || !map.isActiveAndEnabled) return false;
+        Heightmap? map = OutdoorMap(point);
+        if (!map || !map!.isActiveAndEnabled) return false;
         MeshCollider collider = map.GetComponent<MeshCollider>();
         MeshFilter mesh = map.GetComponent<MeshFilter>();
         if (!collider || !collider.enabled || !collider.sharedMesh || collider.sharedMesh.vertexCount == 0 ||
@@ -91,6 +106,7 @@ internal static class ScenicSurface
         foreach (WaterVolume water in WaterVolume.Instances)
         {
             if (!water || !water.isActiveAndEnabled || !water.m_waterSurface || !water.m_waterSurface.enabled) continue;
+            if (!Character.InInterior(point) && Character.InInterior(water.transform.position)) continue;
             Bounds bounds = water.m_waterSurface.bounds;
             if (!TargetRoster.Finite(bounds.min) || !TargetRoster.Finite(bounds.max)) return false;
             if (point.x < bounds.min.x || point.x > bounds.max.x || point.z < bounds.min.z || point.z > bounds.max.z) continue;

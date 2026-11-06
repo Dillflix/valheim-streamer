@@ -1,5 +1,37 @@
 # Validation and runtime test record
 
+## 0.8.61 Skyward climb
+
+In the supplied 0.8.59 run, Journey 99 stayed at the same horizontal position for 58.7 seconds. Y rose from 136.9 to 841.8 while route progress stayed at 246.7 m. The guide kept rejecting partially clear rising approaches and flew straight up. Its travel counter treated that ascent as progress. The recorded scan does not identify the surface height ahead. On a reconstructed high face with a lateral passage, the previous guide reached Y=1644.9. The updated guide went around the face at 12 and 24 m/s. The operator display now gives itinerary progress and measures horizontal stalls from the rendered camera.
+
+The same run contains a completed 0.8.59 Journey to Meadows. The footage reviewer found 2,078.73 m of live camera movement in one guide shot, destination arrival, Mountain/Black Forest/Meadows and land/water coverage, and no missing footage under its sampling rules. This is real in-game footage for the 2 km distance milestone. The separate 4,994.1 m trip reached Plains / Coast but had a 0.36s video gap. Neither trip validates the 0.8.61 code in Valheim.
+
+## 0.8.59 Mountain movement
+
+The 0.8.58 capture recorded one attempt to reach the Black Forest, 1,992.61 m away. The guide travelled 185.52 m. On the mountain, frame 45,236 requested a 4 m vertical rise at (-1730.37, 139.73, -792.59). The radius was 0.82 m. The starting overlap named the local terrain mesh. The old check rejected the sweep using the bounds of the 64 m tile, then repeated the same rejection for escape and return probes. It counted 920 unsupported overlaps and zero missing height queries. The operator ended the attempt. The capture supplies the terrain collider identity, tile bounds and movements. It does not contain that hillside's triangle vertices.
+
+The [native terrain lab](../tests/Journey.NativeTerrain/README.md) exercises the production guide against NVIDIA PhysX sphere/triangle queries on a reconstructed slope. The original tile-box veto held the guide at 0 m for 34.02 s. With local terrain clearance, it rose 0.233 m out of contact in 0.333 s, travelled 2,183.67 m in 184.30 s, and arrived within 15.99 m of the goal. The lab also verified clearance across a tile seam and a solid roof that limited the same 4 m rise. The core tests separately cover an unanticipated terrain update at a recently rendered, previously clear position and deny the same deep-terrain exception at an unverified start. This is an offline collision and navigation test. The recorded Valheim trip is still outstanding.
+
+## 0.8.58 Experimental movement recovery
+
+In the 0.8.57 game recording, Journey 10 selected a Meadows destination 1,987.1 m away. It travelled 66.15 m through the Black Forest, advancing 54.47 m along the itinerary. The final 120 sampled frames held identical camera coordinates while the guide reported that it could find no clear path. The operator stopped the trip. The trace did not identify the collider or the bearings the guide had ruled out. The recorded 2 km milestone remains open.
+
+Using identical simulated geometry for both versions, 0.8.57 completed two of eight 2,030 m forest courses with dense tree clusters, rocks, overhead slabs and covered dead ends. The updated guide completed all eight. Each simulated displacement was checked against the course geometry. At 12 m/s the four courses took 174.5–176.0 seconds. In a separate covered passage with no viable climb, 0.8.57 remained at the closed end for the rest of the 120-second test. The new guide followed its recorded path back through the entrance and reached the original destination. These fixtures exercise specific failure mechanisms. They do not recreate the collider arrangement from the Valheim recording.
+
+## 0.8.57 Experimental continuous Journey
+
+The 0.8.56 capture selected a Black Forest destination 2,025.6 m away and spent 90 seconds preparing a departure. The initial 34 m candidate arrived at 41 seconds. No Journey motion was rendered. The new client uses continuous local steering. In-game terrain streaming, effective speed, shot quality, and arrival require a recording from the new implementation. The acceptance target is one uninterrupted trip of at least 2,000 measured metres through mixed terrain to the selected destination. [Runbook](JOURNEY-EXPEDITION.md)
+
+Offline validation used the actual guide in deterministic fixtures. The mixed coast, ridge and forest fixture travelled 2,025.2 m in 171.0 seconds at a requested 12 m/s. A fixture that streams simulated tiles around the moving observer travelled 2,029.8 m in 234.7 seconds. The itinerary fixture includes an operator hold and a measured arrival dwell. The client compiled against the pinned Valheim, Jötunn and BepInEx assemblies with warnings treated as errors. The core and native camera math suites, two coverage replay fixtures and the footage reviewer passed. The fixtures supply controlled world observations. Live streaming, Unity collision queries and rendered Valheim footage require separate validation.
+
+## 0.8.56 In-client capture retention
+
+The existing automatic trace and diagnostic video writers now use independent, configurable rolling disk budgets. Defaults are 2 GiB each. The existing capture commands, synchronized mappings, normal output locations and separate RTMP encoder apply to all modes. Retention regression cases exercise more than eight segments, oldest-first expiry and preservation of paired videos and mappings. The external collection step has been removed from the expedition workflow. The 2 km in-game milestone remains open.
+
+## 0.8.55 Experimental expedition branch
+
+[Runbook and acceptance](JOURNEY-EXPEDITION.md). The next milestone requires a full in-game recording of departure, at least 2 km of measured travel through mixed terrain and presented arrival at the original destination. No successful run has been recorded here. Core regression coverage includes two successive sections retreating along an observed passage, directional travel memory, and speed reduction under slow replenishment. The capture reviewer can reject incomplete or failed attempts and does not grade cinematography.
+
 ## 0.8.54 Live Journey retries and Scenic fallback
 
 The supplied 0.8.53 run reached 72.3 m of a 1,995.8 m itinerary. Plan 18 occupied 73.6 seconds of diagnostic footage. Retained motion records show 1,011 pairs of triangle-pending/resumed events on plans 18 and 31. The repair interval froze measured distance near 67 m for roughly 49 seconds. Ordinary coverage admitted three different rock establishing shots and a rock traverse during that repair.

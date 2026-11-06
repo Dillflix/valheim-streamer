@@ -18,7 +18,7 @@ public readonly struct JourneyOperatorStatus
         bool journeyPicture, bool replanning, bool held, bool canAdvance,
         double effectiveCruise, double requestedCruise, double measuredMetres, double targetMetres,
         double noProgressSeconds, double freshRunwayMetres, long routeId, int queuedSections,
-        string? destination, string? work, string? lastRejection)
+        string? destination, string? work, string? lastRejection, bool continuousGuide = false)
     {
         Visible = ownsTravel;
         Summary = Work = LastRejection = PictureLabel = "";
@@ -28,12 +28,12 @@ public readonly struct JourneyOperatorStatus
             phase == JourneyTravelState.None || phase == JourneyTravelState.Departure ? "Preparing departure" :
             phase == JourneyTravelState.Arriving ? "Arrival" : advancing ? "Travelling" : "Stationary";
         Summary = targetMetres <= 0 ? state + " | selecting destination" : state + " to " + Text(destination, "selected destination", 48) +
-            " | " + Number(measuredMetres) + "/" + Number(targetMetres) + " m" +
+            (continuousGuide ? " | route " : " | ") + Number(measuredMetres) + "/" + Number(targetMetres) + " m" +
             " | cruise " + Number(effectiveCruise) + "/" + Number(requestedCruise) + " m/s" +
-            " | no advance " + Number(noProgressSeconds) + "s";
-        Work = Text(work, "Awaiting navigation evidence", 150) +
+            (continuousGuide ? " | no horizontal movement " : " | no advance ") + Number(noProgressSeconds) + "s";
+        Work = Text(work, "Awaiting navigation evidence", 150) + (continuousGuide ? "" :
             " | certified " + Number(freshRunwayMetres) + "m; route " + Math.Max(0, routeId).ToString(CultureInfo.InvariantCulture) +
-            "; queued " + Math.Max(0, queuedSections).ToString(CultureInfo.InvariantCulture);
+            "; queued " + Math.Max(0, queuedSections).ToString(CultureInfo.InvariantCulture));
         if (!string.IsNullOrWhiteSpace(lastRejection) && !string.Equals(lastRejection, "none", StringComparison.OrdinalIgnoreCase) &&
             (!advancing || phase == JourneyTravelState.Departure))
             LastRejection = Text(lastRejection, "", 220);

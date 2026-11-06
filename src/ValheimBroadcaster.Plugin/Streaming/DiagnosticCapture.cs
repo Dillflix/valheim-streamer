@@ -16,6 +16,7 @@ internal sealed class DiagnosticCapture : MonoBehaviour
     private Func<string>? executable;
     private Action<string>? log;
     private string? directory;
+    private int retentionMiB;
     private DiagnosticVideoWriter? writer;
     private ProgramOrientationProbe? orientation;
     private RenderTexture? texture;
@@ -33,11 +34,12 @@ internal sealed class DiagnosticCapture : MonoBehaviour
         $"640x360 / 12 fps / no audio; {writer?.Written ?? 0} frames, {writer?.Dropped ?? 0} dropped; {directory}" :
         writer?.Closed == false ? "finalizing local video" : "stopped");
 
-    internal void Configure(FrameHold source, Func<bool> enabled, Func<string> ffmpegPath, string root, Action<string> logger)
+    internal void Configure(FrameHold source, Func<bool> enabled, Func<string> ffmpegPath, string root, Action<string> logger, int videoRetentionMiB)
     {
         if (configured) throw new InvalidOperationException("Diagnostic capture is already configured.");
         program = source; shouldCapture = enabled; executable = ffmpegPath; log = logger;
         directory = Path.Combine(root, "diagnostics", "ValheimBroadcaster", "footage");
+        retentionMiB = videoRetentionMiB;
         configured = true; StartCoroutine(CaptureFrames());
     }
 
@@ -77,9 +79,9 @@ internal sealed class DiagnosticCapture : MonoBehaviour
             if (orientation.Failure.Length != 0) { Fail("Diagnostic orientation calibration failed; no unverified video recorded."); return; }
             if (orientation.Ready && writer == null)
             {
-                writer = new DiagnosticVideoWriter(directory!, executable!(), BroadcasterPlugin.PluginVersion);
+                writer = new DiagnosticVideoWriter(directory!, executable!(), BroadcasterPlugin.PluginVersion, retentionMiB * 1024L * 1024);
                 log?.Invoke("Synchronized diagnostic footage enabled: " + directory +
-                    " (640x360/12fps, no audio; eight rolling segments; 96 MiB storage allowance). No upload is performed.");
+                    " (640x360/12fps, no audio; " + retentionMiB + " MiB rolling retention). No upload is performed.");
             }
         }
         catch (Exception e) { Fail("Diagnostic initialization failed (" + e.GetType().Name + ")."); }

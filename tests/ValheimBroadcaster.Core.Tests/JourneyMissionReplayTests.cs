@@ -49,7 +49,7 @@ internal static class JourneyMissionReplayTests
         return mission;
     }
 
-    private static JsonDocument Fixture(string filename = "0.8.48-lifecycle.json")
+    internal static JsonDocument Fixture(string filename = "0.8.48-lifecycle.json")
     {
         foreach (string start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
         for (var folder = new DirectoryInfo(start); folder != null; folder = folder.Parent)

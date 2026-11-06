@@ -17,6 +17,7 @@ public sealed class CameraTraceWriter : IDisposable
     private readonly Thread worker;
     private readonly string directory, header, session;
     private readonly long limit;
+    private readonly long? retentionBytes;
     private int pending, stopped, index;
     private long dropped, written;
     private string? error;
@@ -27,11 +28,14 @@ public sealed class CameraTraceWriter : IDisposable
     public string DirectoryPath => directory;
     public string SessionId => session;
 
-    public CameraTraceWriter(string directory, string header, long fileBytes = FileBytes)
+    public CameraTraceWriter(string directory, string header, long fileBytes = FileBytes, long? retentionBytes = null)
     {
         this.directory = directory ?? throw new ArgumentNullException(nameof(directory));
         this.header = header ?? throw new ArgumentNullException(nameof(header));
         if (fileBytes < 1024 || fileBytes > FileBytes) throw new ArgumentOutOfRangeException(nameof(fileBytes));
+        if (retentionBytes.HasValue && retentionBytes.Value < fileBytes)
+            throw new ArgumentOutOfRangeException(nameof(retentionBytes));
+        this.retentionBytes = retentionBytes;
         limit = fileBytes;
         session = DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
         worker = new Thread(Write) { IsBackground = true, Name = "Broadcaster scenic trace" };
@@ -70,8 +74,20 @@ public sealed class CameraTraceWriter : IDisposable
                     output.WriteLine(header); bytes = Encoding.UTF8.GetByteCount(header) + 1;
                     string[] files = Directory.GetFiles(directory, "scenic-*.jsonl");
                     Array.Sort(files, StringComparer.Ordinal);
-                    for (int i = 0; i < files.Length - MaximumFiles; i++)
-                        if (!string.Equals(files[i], path, StringComparison.Ordinal)) File.Delete(files[i]);
+                    long previousBytes = 0;
+                    if (retentionBytes.HasValue)
+                        foreach (string candidate in files)
+                            if (candidate != path) previousBytes += new FileInfo(candidate).Length;
+                    for (int i = 0; i < files.Length; i++)
+                    {
+                        bool expire = retentionBytes.HasValue
+                            ? previousBytes > retentionBytes.Value - limit
+                            : files.Length - i > MaximumFiles;
+                        if (!expire) break;
+                        if (files[i] == path) continue;
+                        if (retentionBytes.HasValue) previousBytes -= new FileInfo(files[i]).Length;
+                        File.Delete(files[i]);
+                    }
                 }
                 long lost = Dropped;
                 if (lost != reportedDrops)

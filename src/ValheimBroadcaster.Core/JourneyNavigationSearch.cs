@@ -24,11 +24,12 @@ public sealed class JourneyNavigationRequest
     // A guide is only an input to the native curve evaluator. Its historic
     // node timestamps must never be promoted into a movement certificate.
     public readonly bool ForNativePreflight;
+    public readonly JourneyTrailSnapshot? Trail;
     public readonly int MaximumNodes, MaximumEdges, MaximumPending;
     public JourneyNavigationRequest(long missionId, long epoch, JourneyNavigationPose start, JourneyNavigationPose entry,
         AutonomyPosition goal, AutonomyPosition carrier, double targetMetres = 32, double maximumMetres = 80,
         double reachMetres = 85, double stepMetres = 4, int maximumNodes = 512, int maximumEdges = 8192, double viewDepth = 12,
-        int maximumPending = JourneyNavigationSearch.MaximumPending, bool forNativePreflight = false)
+        int maximumPending = JourneyNavigationSearch.MaximumPending, bool forNativePreflight = false, JourneyTrailSnapshot? trail = null)
     {
         if (missionId <= 0 || epoch <= 0 || !JourneyNavigationSearch.ValidPose(start) || !JourneyNavigationSearch.ValidPose(entry) ||
             !JourneyNavigationSearch.ValidPoint(goal) || !JourneyNavigationSearch.ValidPoint(carrier) ||
@@ -41,7 +42,7 @@ public sealed class JourneyNavigationRequest
             throw new ArgumentOutOfRangeException(nameof(targetMetres));
         MissionId = missionId; Epoch = epoch; Start = start; Entry = entry; Goal = goal; Carrier = carrier;
         TargetMetres = targetMetres; MaximumMetres = maximumMetres; ReachMetres = reachMetres; StepMetres = stepMetres;
-        MaximumNodes = maximumNodes; MaximumEdges = maximumEdges; ViewDepth = viewDepth; MaximumPending = maximumPending; ForNativePreflight = forNativePreflight;
+        MaximumNodes = maximumNodes; MaximumEdges = maximumEdges; ViewDepth = viewDepth; MaximumPending = maximumPending; ForNativePreflight = forNativePreflight; Trail = trail;
     }
     private static bool Finite(double x) => !double.IsNaN(x) && !double.IsInfinity(x);
 }
@@ -492,9 +493,20 @@ public sealed class JourneyNavigationSearch
         node.Length >= ScenicJourneyPolicy.MinimumWindowMetres &&
         (node.Length >= targetMetres || node.Depth == MaximumWaypoints) &&
         node.Length <= request!.MaximumMetres &&
-        initialGoalDistance - node.Pose.Position.Distance(request.Goal) >= Math.Min(8, node.Length * .25);
+        UsefulDirection(node);
+    private bool UsefulDirection(Node node)
+    {
+        JourneyNavigationRequest query = request!;
+        if (query.Trail?.Repeats(node.Pose.Position, node.Heading) == true) return false;
+        if (initialGoalDistance - node.Pose.Position.Distance(query.Goal) >= Math.Min(8, node.Length * .25)) return true;
+        // An exploratory section must get somewhere new. The cost/goal rank
+        // still prefers a direct approach, and the onward probe is mandatory.
+        return query.Trail != null && query.Start.Position.HorizontalDistance(node.Pose.Position)
+            >= Math.Max(4, node.Length * .5);
+    }
     private bool AtGoal(Node node) => node.Depth >= 3 && node.Length >= ScenicJourneyPolicy.MinimumWindowMetres &&
-        node.Pose.Position.Distance(request!.Goal) <= Math.Max(.5, request.StepMetres * .3);
+        node.Pose.Position.Distance(request!.Goal) <= Math.Max(.5, request.StepMetres * .3) &&
+        request.Trail?.Repeats(node.Pose.Position, node.Heading) != true;
     private bool Inside(JourneyNavigationPose pose) => pose.Position.Distance(request!.Carrier) + request.ViewDepth <= request.ReachMetres;
     private bool Loops(int parent, AutonomyPosition point)
     { for (int i = parent; i >= 0; i = nodes[i].Parent) if (nodes[i].Pose.Position.Distance(point) < .75) return true; return false; }

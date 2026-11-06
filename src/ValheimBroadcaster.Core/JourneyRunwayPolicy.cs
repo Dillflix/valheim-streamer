@@ -127,7 +127,7 @@ public sealed class JourneyRunwayPolicy
     /// method supplies no movement authority if a proof is revoked.</summary>
     public double StepSpeed(double requestedCruise, double validatedMetres, double deltaSeconds,
         bool held = false, bool braking = false, double sectionCruiseLimit = 12,
-        double nextSectionCruiseLimit = 12, double remainingSectionMetres = 0)
+        double nextSectionCruiseLimit = 12, double remainingSectionMetres = 0, double producerLeadSeconds = 0)
     {
         Speed(requestedCruise); Number(validatedMetres, nameof(validatedMetres)); Number(deltaSeconds, nameof(deltaSeconds));
         Speed(sectionCruiseLimit); Speed(nextSectionCruiseLimit); Number(remainingSectionMetres, nameof(remainingSectionMetres));
@@ -140,6 +140,8 @@ public sealed class JourneyRunwayPolicy
         double envelope = SectionSpeedEnvelope(sectionCruiseLimit, nextSectionCruiseLimit, remainingSectionMetres,
             Math.Min(.1, deltaSeconds));
         double desired = braking ? 0 : Math.Min(envelope, Math.Min(DesiredCruise(requestedCruise), MaximumSafeSpeed(validatedMetres)));
+        if (!braking && producerLeadSeconds > 0)
+            desired = Math.Min(desired, MaximumSpeed(validatedMetres, ReactionSeconds + producerLeadSeconds));
         // A stopped camera resumes only when there is enough certified room for
         // useful travel. A few newly observed centimetres cannot cause creeping.
         if (Stopped && validatedMetres + .000001 < MinimumLaunchMetres(requestedCruise)) desired = 0;

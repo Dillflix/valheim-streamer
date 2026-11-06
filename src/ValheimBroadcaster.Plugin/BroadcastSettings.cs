@@ -1,5 +1,6 @@
 using BepInEx.Configuration;
 using UnityEngine;
+using ValheimBroadcaster.Core;
 using ValheimBroadcaster.Plugin.Streaming;
 
 namespace ValheimBroadcaster.Plugin;
@@ -25,6 +26,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<int> StreamWidth, StreamHeight, StreamFps, StreamBitrate;
     internal readonly ConfigEntry<bool> FlipVertical, AutomaticOrientation;
     internal readonly ConfigEntry<bool> DiagnosticVideo;
+    internal readonly ConfigEntry<int> TraceRetentionMiB, VideoRetentionMiB;
     internal readonly ConfigEntry<VideoEncoderKind> VideoEncoder;
     internal readonly ConfigEntry<int> NvencGpu;
     internal readonly ConfigEntry<bool> AutoStream, RetryStream, Automation, ScenicTravel, Unattended;
@@ -51,6 +53,12 @@ internal sealed class BroadcastSettings
         StartupServer = config.Bind("Startup", "ServerAddress", "", "Dedicated Steam server DNS name or IPv4 address and explicit port, for example server.example:2456. Crossplay/join codes are not supported.");
         StartupPasswordFile = config.Bind("Startup", "PasswordFile", "", "Absolute path to a private local file containing the server password on one line. Empty means passwordless server. Never put the password in this setting or launch arguments.");
         FFmpegPath = config.Bind("Streaming", "FFmpegPath", "ffmpeg", "Path to an FFmpeg executable with libx264 and AAC encoders. Not bundled.");
+        TraceRetentionMiB = config.Bind("Diagnostics", "TraceRetentionMiB", 2048, new ConfigDescription(
+            "Rolling storage for automatic scenic traces in MiB. Oldest trace segments expire first.",
+            new AcceptableValueRange<int>(32, 16384)));
+        VideoRetentionMiB = config.Bind("Diagnostics", "VideoRetentionMiB", 2048, new ConfigDescription(
+            "Rolling storage for clean diagnostic video and its frame mappings in MiB. Oldest pairs expire together.",
+            new AcceptableValueRange<int>(32, 16384)));
         DiagnosticVideo = config.Bind("Diagnostics", "VideoCapture", true, "Record bounded local 640x360/12fps clean-program diagnostic video and synchronized frame metadata while broadcasting and trace capture is enabled. Uses a separate low-cost FFmpeg encoder; no audio or upload. Can be disabled with broadcast capture off.");
         VideoEncoder = config.Bind("Streaming", "VideoEncoder", VideoEncoderKind.libx264, "H.264 encoder: libx264 for CPU or h264_nvenc for NVIDIA GPU. Requires encoder support in the actual FFmpeg executable and a compatible driver.");
         NvencGpu = config.Bind("Streaming", "NvencGpu", -1, "NVIDIA encoder device index, or -1 for automatic selection.");
@@ -67,9 +75,9 @@ internal sealed class BroadcastSettings
         ScenicDwell = config.Bind("Idle", "ScenicSeconds", 45f, Range("Seconds of usable scenic footage between wildlife opportunities. The dedicated scenic director sets individual shot duration from each route.", 5f, 600f));
         LiveTimelapse = config.Bind("ScenicTimelapse", "Enabled", true, "Autonomously select restrained live daylight-passage shots on an authorized empty server. No recording or simulation acceleration.");
         LiveTimelapseSeconds = config.Bind("ScenicTimelapse", "DurationSeconds", 90f, Range("Live shot duration for one visual day, returning to current natural time.", 45f, 180f));
-        ScenicJourneys = config.Bind("Idle", "ScenicJourneys", true, "Offer journeys to known scenic destinations through successively validated local sections and prepared endings. Players and unavailable geometry can interrupt a journey; no teleport occurs within a journey shot.");
+        ScenicJourneys = config.Bind("Idle", "ScenicJourneys", true, "Offer continuous camera flights to known scenic destinations. The observer follows the guide as it steers through loaded terrain. Player coverage can interrupt a journey.");
         ScenicJourneyDistance = config.Bind("Idle", "JourneyDistanceMetres", 1000f, Range("Desired itinerary scale when selecting a known scenic destination. The selected route may be shorter or longer. Completion requires observed route progress and a readable destination arrival; a partial attempt is not completed.", 256f, 5000f));
-        ScenicJourneySpeed = config.Bind("Idle", "JourneyCruiseMetresPerSecond", 6f, Range("Independent journey cruise speed. Decorative Camera.ShotMotion does not scale travel. Runtime may be slower if valid frames cannot sustain the requested speed.", 2f, 12f));
+        ScenicJourneySpeed = config.Bind("Idle", "JourneyCruiseMetresPerSecond", 6f, Range("Independent journey cruise speed. Decorative Camera.ShotMotion does not scale travel. Runtime may be slower if valid frames cannot sustain the requested speed.", ScenicJourneyPolicy.MinimumCruiseSpeed, ScenicJourneyPolicy.MaximumCruiseSpeed));
         EnvironmentCycleSeconds = config.Bind("ScenicEnvironment", "DayCycleSeconds", 0f, Range("Optional visual day-cycle duration, 30–86400 real seconds; zero preserves normal time. Requires the companion's fresh empty-server permission. Changes lighting presentation only, never simulation time.", 0f, 86400f));
         EnvironmentWeather = config.Bind("ScenicEnvironment", "Weather", "", "Optional existing Valheim environment name for scenic filming while the companion confirms no ordinary players are connected. Empty preserves normal weather. Owned overrides restore when permission or Scenic coverage ends.");
         CreatureDwell = config.Bind("Idle", "CreatureSeconds", 25f, Range("Seconds of usable creature footage. Wildlife cutaways return to players and also use this as a wall-time limit.", 5f, 300f));

@@ -54,7 +54,7 @@ internal sealed class JourneyNavigationPlanner
     { departure = independent; pendingLimit = independent ? 1 : 8; views = new JourneyObservationViews(owner, pendingLimit + 1); }
 
     internal void Begin(long mission, long sceneEpoch, long planId, ScenicShotSample first, Vector3 incoming,
-        Vector3 entryAim, Vector3 destination, Vector3 carrier, float metres, float metresPerSecond, float fieldOfView, float cameraAspect, float nearClip)
+        Vector3 entryAim, Vector3 destination, Vector3 carrier, float metres, float metresPerSecond, float fieldOfView, float cameraAspect, float nearClip, JourneyTrailSnapshot? trail)
     {
         Vector3 proposedEntry = V(first.CameraPosition) + incoming.normalized * 2f;
         bool same = active && this.mission == mission && epoch == sceneEpoch && Time.unscaledTime >= episodeAt &&
@@ -83,7 +83,7 @@ internal sealed class JourneyNavigationPlanner
         request = new JourneyNavigationRequest(mission, epoch, opening, firstEdge, P(destination), P(carrier),
             targetMetres: departure ? JourneyRunwayPolicy.DepartureGuideMetres(metresPerSecond, metres) : 56, maximumMetres: 64,
             reachMetres: JourneyRunwayPolicy.LocalReachMetres,
-            stepMetres: 4, maximumNodes: 512, maximumEdges: 8192, viewDepth: JourneyViewPolicy.ObservationRange, maximumPending: pendingLimit, forNativePreflight: true);
+            stepMetres: 4, maximumNodes: 512, maximumEdges: 8192, viewDepth: JourneyViewPolicy.ObservationRange, maximumPending: pendingLimit, forNativePreflight: true, trail: trail);
         search.Begin(request, Time.unscaledTime);
         active = true; Reason = "Searching connected loaded camera space";
     }
