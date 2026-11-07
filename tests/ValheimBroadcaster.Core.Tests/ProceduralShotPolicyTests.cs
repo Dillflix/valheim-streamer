@@ -15,9 +15,14 @@ internal static class ProceduralShotPolicyTests
         yield return ("Camera candidate reset and evidence gaps discard stale preference", ResetAndGap);
         yield return ("Procedural camera policy rejects invalid clocks and candidate scores", InvalidInputs);
         yield return ("A flickering challenger never accumulates a clear streak against a readable shot", FlickeringChallenger);
-        yield return ("A continuously clear challenger needs persistence and a sustained clear streak", SustainedClearStreak);
+        yield return ("A challenger restoring readability needs persistence and a sustained clear streak", SustainedClearStreak);
         yield return ("An unreadable eligible shot is retained through its repair window", RepairWindow);
         yield return ("Purpose promotion is denied before the minimum shot age and allowed after", PromotionNeedsAge);
+        yield return ("A readable live selection is never displaced by a stronger readable challenger", ReadableLiveRetained);
+        yield return ("Purpose promotion cannot displace a readable live selection", PromotionCannotDisplaceReadable);
+        yield return ("Picture reconsideration cannot displace a readable live selection", ReconsiderCannotDisplaceReadable);
+        yield return ("Recovery still replaces the live shot once its picture is lost", RecoveryAfterReadableRetention);
+        yield return ("Callers without readability evidence keep legacy improvement switching", LegacyImprovementWithoutReadability);
     }
 
     private static void Equal(int expected, int actual)
@@ -127,15 +132,17 @@ internal static class ProceduralShotPolicyTests
     private static void SustainedClearStreak()
     {
         var policy = new ProceduralShotPolicy();
-        var hidden = new[] { true, false };
-        Equal(0, policy.Select(0, new[] { .6f, .9f }, Both, hidden));
-        for (double now = .5; now < 9.8; now += .5)
-            Equal(0, policy.Select(now, new[] { .6f, .9f }, Both, hidden));
-        // The challenger becomes readable long after dwell expired: pending
-        // persistence alone is not enough, the clear streak must also mature.
-        Equal(0, policy.Select(9.8, new[] { .6f, .9f }, Both, Both));
-        Equal(0, policy.Select(10.4, new[] { .6f, .9f }, Both, Both));
-        Equal(1, policy.Select(10.56, new[] { .6f, .9f }, Both, Both));
+        Equal(0, policy.Select(0, new[] { .6f, .9f }, Both, new[] { true, false }));
+        // The live picture is lost while every alternative is hidden too. When
+        // the challenger finally clears after the repair window, persistence
+        // alone is not enough: its readable streak must also mature first.
+        var lost = new[] { false, false };
+        Equal(0, policy.Select(.2, new[] { .6f, .9f }, Both, lost));
+        Equal(0, policy.Select(1.0, new[] { .6f, .9f }, Both, lost));
+        var restoring = new[] { false, true };
+        Equal(0, policy.Select(1.72, new[] { .6f, .9f }, Both, restoring));
+        Equal(0, policy.Select(2.0, new[] { .6f, .9f }, Both, restoring));
+        Equal(1, policy.Select(2.08, new[] { .6f, .9f }, Both, restoring));
     }
 
     private static void RepairWindow()
@@ -155,21 +162,94 @@ internal static class ProceduralShotPolicyTests
 
     private static void PromotionNeedsAge()
     {
+        // Promotion can only act where auditions are permitted at all: callers
+        // without readability evidence. A readable live selection is covered by
+        // PromotionCannotDisplaceReadable instead.
         var policy = new ProceduralShotPolicy();
         int[] priorities = { 0, 1 };
-        Equal(0, policy.Select(0, new[] { .9f, .5f }, Both, Both));
+        Equal(0, policy.Select(0, new[] { .9f, .5f }, Both));
         // Before the minimum shot age the promotion cannot bypass the score
         // margin, so no pending comparison may even be established.
         for (double now = .1; now < 2; now += .5)
         {
-            Equal(0, policy.Select(now, new[] { .9f, .5f }, Both, Both, priorities: priorities));
+            Equal(0, policy.Select(now, new[] { .9f, .5f }, Both, priorities: priorities));
             Equal(-1, policy.PendingIndex);
         }
-        Equal(0, policy.Select(2.0, new[] { .9f, .5f }, Both, Both, priorities: priorities));
+        Equal(0, policy.Select(2.0, new[] { .9f, .5f }, Both, priorities: priorities));
         Equal(1, policy.PendingIndex);
         for (double now = 2.5; now < 5; now += .5)
-            Equal(0, policy.Select(now, new[] { .9f, .5f }, Both, Both, priorities: priorities));
-        Equal(1, policy.Select(5.01, new[] { .9f, .5f }, Both, Both, priorities: priorities));
+            Equal(0, policy.Select(now, new[] { .9f, .5f }, Both, priorities: priorities));
+        Equal(1, policy.Select(5.01, new[] { .9f, .5f }, Both, priorities: priorities));
+    }
+
+    private static void ReadableLiveRetained()
+    {
+        var policy = new ProceduralShotPolicy();
+        Equal(0, policy.Select(0, new[] { .9f, .6f }, Both, Both));
+        // The challenger is readable, beats every margin, outlives persistence,
+        // the clear-streak requirement and healthy dwell — and still never
+        // replaces a readable live shot. No audition may even be pended.
+        for (int i = 1; i <= 200; i++)
+        {
+            Equal(0, policy.Select(i * .1, new[] { .5f, .95f }, Both, Both));
+            Equal(-1, policy.PendingIndex);
+        }
+    }
+
+    private static void PromotionCannotDisplaceReadable()
+    {
+        var policy = new ProceduralShotPolicy();
+        int[] priorities = { 0, 2 };
+        Equal(0, policy.Select(0, new[] { .9f, .5f }, Both, Both));
+        // Far beyond the minimum shot age and healthy dwell, a higher editorial
+        // purpose still cannot start an audition against a readable picture.
+        for (int i = 1; i <= 100; i++)
+        {
+            Equal(0, policy.Select(i * .1, new[] { .9f, .5f }, Both, Both, priorities: priorities));
+            Equal(-1, policy.PendingIndex);
+        }
+    }
+
+    private static void ReconsiderCannotDisplaceReadable()
+    {
+        var policy = new ProceduralShotPolicy();
+        Equal(0, policy.Select(0, new[] { .8f, .8f }, Both, Both));
+        // A persistent pixel concern lowers the margin and penalizes the live
+        // score, but a readable picture is not an impaired one: no switch.
+        for (int i = 1; i <= 100; i++)
+        {
+            Equal(0, policy.Select(i * .1, new[] { .58f, .8f }, Both, Both, reconsiderPicture: true));
+            Equal(-1, policy.PendingIndex);
+        }
+    }
+
+    private static void RecoveryAfterReadableRetention()
+    {
+        var policy = new ProceduralShotPolicy();
+        Equal(0, policy.Select(0, new[] { .9f, .6f }, Both, Both));
+        // A long-standing stronger challenger is ignored while the live picture
+        // stays readable...
+        for (int i = 1; i <= 100; i++)
+            Equal(0, policy.Select(i * .1, new[] { .6f, .9f }, Both, Both));
+        // ...but once readability is lost the unchanged recovery pipeline runs:
+        // the repair window protects the live camera, then the streak-qualified
+        // readable challenger takes over.
+        var lost = new[] { false, true };
+        Equal(0, policy.Select(10.1, new[] { .6f, .9f }, Both, lost));
+        Equal(0, policy.Select(11.0, new[] { .6f, .9f }, Both, lost));
+        Equal(0, policy.Select(11.5, new[] { .6f, .9f }, Both, lost));
+        Equal(1, policy.Select(11.61, new[] { .6f, .9f }, Both, lost));
+    }
+
+    private static void LegacyImprovementWithoutReadability()
+    {
+        // Without readability evidence the policy cannot assert the live shot
+        // is fine, so scenic-style callers keep the legacy improvement path.
+        var policy = new ProceduralShotPolicy();
+        Equal(0, policy.Select(0, new[] { .8f, .5f }, Both));
+        for (double now = .1; now < 5; now += .4)
+            Equal(0, policy.Select(now, new[] { .5f, .9f }, Both));
+        Equal(1, policy.Select(5.01, new[] { .5f, .9f }, Both));
     }
 
     private static void Throws(Action action)

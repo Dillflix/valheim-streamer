@@ -40,6 +40,8 @@ namespace ValheimBroadcaster.Core
 
         /// <summary>Returns -1 only when no candidate is eligible. An occluded but
         /// physically valid picture remains a candidate while alternatives are sought.
+        /// A readable live shot is never replaced; auditions begin only when the
+        /// picture degrades (physical ineligibility or lost readability).
         /// Candidate indices must retain their meaning until Reset is called.</summary>
         public int Select(double now, IReadOnlyList<float> scores, IReadOnlyList<bool> eligible,
             IReadOnlyList<bool>? readable = null, IShotCandidateRanker? ranker = null,
@@ -94,6 +96,20 @@ namespace ValheimBroadcaster.Core
             // Collision, missing geometry or an unreachable carrier can never be
             // held in place by dwell/hysteresis. Initial selection uses this too.
             if (!currentEligible) return Switch(best, now);
+
+            // Editorial rule: a readable live shot is never replaced; auditions
+            // begin only when the picture degrades. While the selection stays
+            // physically eligible and its picture readable, no challenger may
+            // be considered — planned fresh compositions, purpose promotions,
+            // score improvements and picture reconsideration all wait until
+            // readability is lost. Streak bookkeeping already ran above, so a
+            // later recovery still finds fresh clear-streak evidence. Callers
+            // without readability data keep the legacy improvement behavior.
+            if (readable != null && readable[SelectedIndex])
+            {
+                PendingIndex = -1;
+                return SelectedIndex;
+            }
 
             bool recovery = readable != null && !readable[SelectedIndex];
             bool restoresReadable = recovery && readable![best];

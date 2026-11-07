@@ -132,7 +132,12 @@ namespace ValheimBroadcaster.Core
             bool improving = previous >= 0 && best >= 0 && best != previous &&
                 (scores[best] >= scores[previous] + (reconsiderPicture ? ProceduralShotPolicy.PoorViewImprovementMargin : ProceduralShotPolicy.ImprovementMargin) ||
                     priorities != null && priorities[best] > priorities[previous]);
-            bool canPlan = usableFootage && previous >= 0 && eligible[previous] && !constrained &&
+            // With readability data a readable live shot is never replaced
+            // (ProceduralShotPolicy enforces it), and planning requires usable
+            // footage — which here implies a readable live shot — so a planned
+            // fresh composition could never be adopted. Skip the wasted work;
+            // callers without readability data keep deliberate planned edits.
+            bool canPlan = usableFootage && readable == null && previous >= 0 && eligible[previous] && !constrained &&
                 !settling && !improving && !protectMoment && activity != CinematicActivity.Combat && ShotAge >= DesiredSeconds;
             if (!canPlan) plannedIndex = -1;
             else

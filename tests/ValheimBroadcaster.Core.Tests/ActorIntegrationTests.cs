@@ -27,17 +27,21 @@ internal static class ActorIntegrationTests
     private static readonly bool[] All = { true, true };
     private static void PurposeQuality()
     {
+        // Raw-score hysteresis applies where auditions are permitted: callers
+        // without readability evidence (a readable live shot is never replaced).
         var p = new ProceduralShotPolicy(); int[] priority = { 2, 2 };
-        p.Select(0, new[] { .55f, .3f }, All, All, priorities: priority);
-        for (int i = 1; i < 50; i++) p.Select(i * .1, new[] { .55f, .90f }, All, All, priorities: priority);
-        Check(p.Select(5.01, new[] { .55f, .90f }, All, All, priorities: priority) == 1,
+        p.Select(0, new[] { .55f, .3f }, All, priorities: priority);
+        for (int i = 1; i < 50; i++) p.Select(i * .1, new[] { .55f, .90f }, All, priorities: priority);
+        Check(p.Select(5.01, new[] { .55f, .90f }, All, priorities: priority) == 1,
             "Purpose scaling compressed a .35 quality improvement below the .15 margin.");
     }
     private static void PromotionDwell()
     {
-        var p = new ProceduralShotPolicy(); p.Select(0, new[] { .95f, .4f }, All, All);
-        for (int i = 1; i < 50; i++) Check(p.Select(i * .1, new[] { .95f, .4f }, All, All, priorities: new[] { 0, 2 }) == 0, "Promotion skipped dwell.");
-        Check(p.Select(5.01, new[] { .95f, .4f }, All, All, priorities: new[] { 0, 2 }) == 1, "Raw-score loss vetoed established purpose promotion.");
+        // Promotion dwell applies to callers without readability evidence; a
+        // readable live shot never yields to a purpose promotion at all.
+        var p = new ProceduralShotPolicy(); p.Select(0, new[] { .95f, .4f }, All);
+        for (int i = 1; i < 50; i++) Check(p.Select(i * .1, new[] { .95f, .4f }, All, priorities: new[] { 0, 2 }) == 0, "Promotion skipped dwell.");
+        Check(p.Select(5.01, new[] { .95f, .4f }, All, priorities: new[] { 0, 2 }) == 1, "Raw-score loss vetoed established purpose promotion.");
     }
     private static void ReadableBeforePurpose()
     {
@@ -139,10 +143,13 @@ internal static class ActorIntegrationTests
     {
         var pixels = new RenderedPicturePolicy(); var key = new RenderedPictureKey(1, 2, 0); var feedback = Concern(pixels, key);
         Check(feedback.ShouldReconsider, "Persistent concern never requested correction.");
-        var selection = new ProceduralShotPolicy(); selection.Select(0, new[] { .8f, .8f }, All, All);
-        for (int i = 1; i <= 20; i++) selection.Select(i * .1, new[] { .8f, .8f }, All, All);
+        // The concern penalty/margin mechanics act where auditions are allowed:
+        // callers without readability evidence. With readability data a
+        // readable live shot is retained despite persistent pixel concern.
+        var selection = new ProceduralShotPolicy(); selection.Select(0, new[] { .8f, .8f }, All);
+        for (int i = 1; i <= 20; i++) selection.Select(i * .1, new[] { .8f, .8f }, All);
         float[] scores = { .8f - feedback.Penalty, .8f };
-        for (int i = 21; i <= 51; i++) selection.Select(i * .1, scores, All, All, reconsiderPicture: true);
+        for (int i = 21; i <= 51; i++) selection.Select(i * .1, scores, All, reconsiderPicture: true);
         Check(selection.SelectedIndex == 1, "Pixel concern remained below the normal improvement threshold forever.");
         Check(pixels.MarkReconsidered(key, 2.7) && !pixels.MarkReconsidered(key, 2.8), "One concern authorized multiple corrections.");
         var next = new RenderedPictureKey(1, 3, 1); var dark = RenderedPictureQuality.Measure(Pixels(1),64,64,default,false);
