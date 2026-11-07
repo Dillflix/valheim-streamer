@@ -68,11 +68,20 @@ namespace ValheimBroadcaster.Core
             return requested;
         }
 
+        /// <summary>Fraction of the profile's target height below which a
+        /// visible subject no longer reads as the intended shot. This is the
+        /// recovery backstop for a subject receding in depth: physical pursuit
+        /// is the primary mechanism, but when the camera is blocked the
+        /// shrinking subject must eventually count as unreadable so the
+        /// occlusion-gated recovery pipeline can fire.</summary>
+        public const float MinimumTargetHeightFraction = .35f;
+
         public static bool EnvelopeReadable(ShotProjection.Envelope envelope, ShotScale scale)
         {
             ShotScaleProfile profile = Profile(scale);
             return envelope.InFront && envelope.VisibleFraction >= .98 && envelope.SafeFraction >= .85 &&
-                envelope.Headroom >= .025 && envelope.RelativeHeight >= profile.MinimumReadableHeight * .8;
+                envelope.Headroom >= .025 && envelope.RelativeHeight >= profile.MinimumReadableHeight * .8 &&
+                envelope.RelativeHeight >= profile.TargetHeight * MinimumTargetHeightFraction;
         }
 
         /// <summary>Editorial credit uses the actual projected required envelope,

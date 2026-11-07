@@ -26,6 +26,40 @@ namespace ValheimBroadcaster.Core
         /// <summary>Seconds of subject motion projected ahead when predicting
         /// an escape; chosen between aim damping (~1s) and frame time.</summary>
         public const float LookaheadSeconds = 0.6f;
+        /// <summary>Depth band: pressure starts when the subject's distance
+        /// exceeds the shot's intended framing distance by this factor and
+        /// saturates at the limit factor. A subject walking directly away
+        /// stays screen-centred while shrinking, so lateral edge pressure
+        /// alone can never cover a depth escape.</summary>
+        public const float DepthPressureOnset = 1.15f, DepthPressureLimit = 1.5f;
+
+        /// <summary>Pressure 0..1 for a single subject distance against the
+        /// shot's intended framing distance (the configured orbital range the
+        /// presented scale envelope was composed for).</summary>
+        public static float DepthPointPressure(float distance, float intendedDistance)
+        {
+            if (!Finite(distance) || distance < 0)
+                throw new ArgumentException("Frame retention requires a finite non-negative subject distance.");
+            if (!Finite(intendedDistance) || intendedDistance <= 0)
+                throw new ArgumentException("Frame retention requires a finite positive intended distance.");
+            float ratio = distance / intendedDistance;
+            return Clamp01((ratio - DepthPressureOnset) / (DepthPressureLimit - DepthPressureOnset));
+        }
+
+        /// <summary>Pressure 0..1 from the subject's current distance and the
+        /// distance projected <see cref="LookaheadSeconds"/> ahead along the
+        /// observed radial velocity (positive receding, negative approaching).
+        /// Motion toward the camera never reduces the pressure already due at
+        /// the current distance.</summary>
+        public static float DepthPressure(float distance, float radialVelocity, float intendedDistance)
+        {
+            if (!Finite(radialVelocity))
+                throw new ArgumentException("Frame retention requires a finite radial velocity.");
+            float current = DepthPointPressure(distance, intendedDistance);
+            float projected = distance + radialVelocity * LookaheadSeconds;
+            if (projected <= 0) return current;
+            return Math.Max(current, DepthPointPressure(projected, intendedDistance));
+        }
 
         /// <summary>Pressure 0..1 for a single screen position.</summary>
         public static float PointPressure(float screenX, float screenY)

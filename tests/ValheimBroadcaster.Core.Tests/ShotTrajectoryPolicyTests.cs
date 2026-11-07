@@ -16,6 +16,45 @@ internal static class ShotTrajectoryPolicyTests
         yield return ("Standby and variable frame cadence preserve world trajectory timing", Cadence);
         yield return ("World trajectory preview is read-only and rejected paths cannot advance secretly", PreviewAndConstraint);
         yield return ("World trajectory resets only for explicit lifecycle and discontinuity boundaries", ResetBoundaries);
+        yield return ("Every holding trajectory family pursues a receding subject so it cannot escape in depth", DepthPursuit);
+        yield return ("Depth pressure closes the gap to a receding subject faster than relaxed framing", DepthPressureCloses);
+    }
+
+    private static double RecedingLag(ShotTrajectoryKind kind, CinematicActivity activity,
+        float pressure, double speed, double seconds)
+    {
+        var policy = new ShotTrajectoryPolicy();
+        double lag = 0;
+        for (double now = 0; now <= seconds; now += 1d / 60)
+            lag = Tick(policy, now, now * speed, speed, kind, activity, lag: 8, pressure: pressure).Lag;
+        return lag;
+    }
+
+    private static void DepthPursuit()
+    {
+        // A subject walking directly away stays screen-centred, so only body
+        // pursuit can keep it inside the shot's envelope. Deliberate holds
+        // (Establish/ActivityArea) still yield once depth pressure reports a
+        // genuine recession; none may let the subject recede without bound.
+        foreach (ShotTrajectoryKind kind in new[] { ShotTrajectoryKind.Establish,
+            ShotTrajectoryKind.Arc, ShotTrajectoryKind.Dolly, ShotTrajectoryKind.ActivityArea })
+        foreach (CinematicActivity activity in new[] { CinematicActivity.Idle, CinematicActivity.Travel })
+        {
+            double held = RecedingLag(kind, activity, pressure: 1, speed: 7, seconds: 30);
+            Check(held < 2.5 * 8, $"{kind}/{activity} let a sprinting subject recede beyond the lag envelope ({held:F1}m).");
+            double final = RecedingLag(kind, activity, pressure: 1, speed: 7, seconds: 60);
+            Check(final <= held + 1, $"{kind}/{activity} kept losing ground to a receding subject under full depth pressure.");
+        }
+    }
+
+    private static void DepthPressureCloses()
+    {
+        double relaxed = RecedingLag(ShotTrajectoryKind.Establish, CinematicActivity.Travel, 0, 7, 30);
+        double pressured = RecedingLag(ShotTrajectoryKind.Establish, CinematicActivity.Travel, 1, 7, 30);
+        Check(pressured < relaxed,
+            "Full framing pressure did not pull the body closer to a receding subject.");
+        Check(pressured < 2 * 8,
+            "Even full pressure left the body outside twice the lag budget.");
     }
 
     private static AutonomyPosition P(double x = 0, double y = 0, double z = 0) =>

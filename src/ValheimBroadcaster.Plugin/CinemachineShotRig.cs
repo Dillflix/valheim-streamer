@@ -1184,6 +1184,16 @@ internal sealed class CinemachineShotRig : IDisposable
                     (aheadScreen.x - nowScreen.x) / FrameRetentionPolicy.LookaheadSeconds,
                     (aheadScreen.y - nowScreen.y) / FrameRetentionPolicy.LookaheadSeconds)
                 : 1f;
+            // Depth retention: a subject walking directly away stays screen-
+            // centred while shrinking, so lateral bands alone never fire. The
+            // same guardrail therefore also measures current + velocity-
+            // projected subject distance against the shot's intended orbital
+            // range, and the body closes distance through the same pursuit
+            // machinery instead of parking while the subject recedes.
+            float radialVelocity = range > 0.001f
+                ? Vector3.Dot(sceneVelocity, (focus - solvedCamera) / range) : 0f;
+            rawPressure = Mathf.Max(rawPressure,
+                FrameRetentionPolicy.DepthPressure(range, radialVelocity, nominalDistance));
             // Rise instantly, relax smoothly: a brief centred sample must not
             // flicker the tightened tracking off mid-sprint.
             candidate.EdgePressure = rawPressure >= candidate.EdgePressure ? rawPressure

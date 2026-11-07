@@ -11,6 +11,7 @@ internal static class ShotScaleTests
         yield return ("Medium framing never forgives a cropped head or torso", RequiredBody);
         yield return ("Scale framing rejects near-plane crossings and unsafe edges", NearPlaneAndEdges);
         yield return ("A medium shot must be meaningfully larger than a wide shot", ReadableSize);
+        yield return ("A visible subject far below the envelope target is no longer readable", RecededSubjectFloor);
         yield return ("Medium work framing requires a supported interaction point", SupportedWork);
         yield return ("Motion action uncertainty and doorways retain whole-body framing", RestrictedMedium);
         yield return ("A medium primary cannot award partial companion coverage", CompanionEnvelope);
@@ -81,9 +82,23 @@ internal static class ShotScaleTests
 
     private static void ReadableSize()
     {
-        Check(ShotScalePolicy.EnvelopeReadable(Box(.45, .4, .55, .46, ShotScale.Wide), ShotScale.Wide), "Wide readable subject rejected.");
-        Check(!ShotScalePolicy.EnvelopeReadable(Box(.45, .4, .55, .46, ShotScale.Medium), ShotScale.Medium), "Tiny waist-up actor called a readable medium.");
+        Check(ShotScalePolicy.EnvelopeReadable(Box(.45, .4, .55, .49, ShotScale.Wide), ShotScale.Wide), "Wide readable subject rejected.");
+        Check(!ShotScalePolicy.EnvelopeReadable(Box(.45, .4, .55, .49, ShotScale.Medium), ShotScale.Medium), "Tiny waist-up actor called a readable medium.");
         Check(ShotScalePolicy.EnvelopeReadable(Box(.3, .2, .7, .88, ShotScale.Medium), ShotScale.Medium), "Proper medium rejected.");
+    }
+
+    private static void RecededSubjectFloor()
+    {
+        // A visible subject that shrank well below the intended envelope no
+        // longer reads as the shot it was composed for: the size floor is the
+        // recovery backstop when physical pursuit is blocked.
+        float floor = ShotScalePolicy.Profile(ShotScale.Wide).TargetHeight * ShotScalePolicy.MinimumTargetHeightFraction;
+        Check(!ShotScalePolicy.EnvelopeReadable(Box(.45, .4, .55, .45, ShotScale.Wide), ShotScale.Wide),
+            "A subject far below the wide envelope target still counted as readable.");
+        Check(ShotScalePolicy.EnvelopeReadable(Box(.45, .4, .55, .4 + floor + .01, ShotScale.Wide), ShotScale.Wide),
+            "A subject just above the size floor was rejected.");
+        Check(!ShotScalePolicy.EnvelopeReadable(Box(.4, .3, .6, .44, ShotScale.Full), ShotScale.Full),
+            "A receded full-shot subject below the size floor still counted as readable.");
     }
 
     private static void SupportedWork()
