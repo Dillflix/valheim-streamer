@@ -174,6 +174,9 @@ internal sealed class CinemachineShotRig : IDisposable
         internal CameraSceneFrame? Context;
         internal BroadcastSettings? Settings;
         internal float RelaxUntil, NextRecoveryAt, RecoveryFov, RecoveryFovUntil;
+        // Predictive frame-retention pressure (0..1): rises before the subject
+        // nears the frame edge and tightens aim/body response proactively.
+        internal float EdgePressure;
         internal Vector2 RecoveryScreen, AppliedScreen, PresentedScreen;
         internal string RecoveryReason = "none";
         internal readonly FoliageShotQuality Quality;
@@ -724,8 +727,12 @@ internal sealed class CinemachineShotRig : IDisposable
         {
             // Bound ordinary tracking rotation without delaying a correction
             // needed to keep the subject readable or smoothing across an edit.
+            // The limiter must not fight the no-escape guardrail: edge
+            // pressure raises the allowed rate so a sprinting subject cannot
+            // outrun a readable-but-slow aim (at full pressure the bound is
+            // at least 120 deg/s, effectively unconstrained for pursuit).
             Quaternion limited = Upright(Quaternion.RotateTowards(lastRotation, rotation,
-                Mathf.Max(20f, intent.MaximumAngularSpeed) * step));
+                Mathf.Max(20f, intent.MaximumAngularSpeed) * Mathf.Lerp(1f, 6f, candidate.EdgePressure) * step));
             if (Quaternion.Angle(limited, rotation) > .01f)
             {
                 var limitedView = EvaluateView(position, limited, evaluatedSubjects, fov, focus);
@@ -824,7 +831,7 @@ internal sealed class CinemachineShotRig : IDisposable
             $"trajectory {(candidate.PassBy ? "world-fixed pass-by" : candidate.Observational ? "native screen/depth body" : IsScenic ? "authored world path" : candidate.TrajectoryState.Mode.ToString())}; anchor lag {(IsScenic || candidate.Observational || candidate.PassBy ? 0 : candidate.TrajectoryState.Lag):F1}m / speed {lastAnchorVelocity.magnitude:F1}m/s; " +
             $"rendered camera {renderedVelocity.magnitude:F1}m/s / subject {velocity.magnitude:F1}m/s; {candidate.TrajectoryReason}; " +
             (IsScenic || candidate.Observational || candidate.PassBy ? "" : candidate.Spatial.Diagnostics + "; ") +
-            $"aim damping {settings.AimDamping.Value:F1}s / dead zone {settings.DeadZone.Value:F2}; " +
+            $"aim damping {settings.AimDamping.Value:F1}s / dead zone {settings.DeadZone.Value:F2} / edge pressure {candidate.EdgePressure:F2}; " +
             $"placement requested ({candidate.Composition.DesiredX:F2},{candidate.Composition.DesiredY:F2}), applied ({candidate.PresentedScreen.x:F2},{candidate.PresentedScreen.y:F2}), " +
             (IsScenic ? $"environmental focus visible {lastView.PrimaryInFrame}; foreground {lastView.ForegroundOcclusion:F2}; survey complete {lastView.SurveyComplete}; " :
                 $"primary focus ({lastView.PrimaryFocusX - 0.5f:F2},{lastView.PrimaryFocusY - 0.5f:F2}), body height {lastView.PrimaryFrameHeight:F2}, safe {lastView.PrimarySafeFrame:F2}; ") +
@@ -1126,9 +1133,10 @@ internal sealed class CinemachineShotRig : IDisposable
         Candidate candidate = candidates[index];
         if (candidate.TrajectoryFrame == Time.frameCount) return;
         candidate.TrajectoryFrame = Time.frameCount;
-        if (IsScenic) { UpdateScenicTrajectory(candidate, index, now, dt); return; }
+        if (IsScenic) { candidate.EdgePressure = 0; UpdateScenicTrajectory(candidate, index, now, dt); return; }
         if (candidate.PassBy)
         {
+            candidate.EdgePressure = 0;
             candidate.PreviousAnchor = candidate.TrackingPoint.position;
             candidate.TrackingPoint.position = FromCore(passBy.Plan.Camera);
             candidate.AnchorVelocity = Vector3.zero; candidate.TrajectoryBlocked = false;
@@ -1139,6 +1147,7 @@ internal sealed class CinemachineShotRig : IDisposable
         {
             // The native screen/depth composer follows the observed point.
             // No target-relative anchor planner may preempt its dead zones.
+            candidate.EdgePressure = 0;
             candidate.TrajectoryReason = "native screen/depth response; fixed observation heading";
             candidate.TrajectoryBlocked = false;
             return;
@@ -1155,11 +1164,33 @@ internal sealed class CinemachineShotRig : IDisposable
         if (candidate.Camera.PreviousStateIsValid)
         {
             var view = candidate.Quality.Result;
-            float range = Vector3.Distance(candidate.Camera.State.GetFinalPosition(), focus);
+            CameraState solvedState = candidate.Camera.State;
+            Vector3 solvedCamera = solvedState.GetFinalPosition();
+            float range = Vector3.Distance(solvedCamera, focus);
             framingPressure = Mathf.Max(1f - view.PrimaryReadability,
                 Mathf.Max(Mathf.Clamp01((0.85f - view.PrimarySafeFrame) / 0.85f),
                     Mathf.InverseLerp(nominalDistance * 1.25f, nominalDistance * 1.8f, range)));
+            // No-escape guardrail: predictive edge pressure engages BEFORE the
+            // reactive recovery thresholds, from the subject's current screen
+            // position and its velocity-projected position a lookahead ahead.
+            // A subject (or its projection) behind the camera is a full escape.
+            Quaternion solvedRotation = solvedState.GetFinalOrientation();
+            float solvedFov = solvedState.Lens.FieldOfView;
+            Vector3 nowScreen = ProjectPoint(focus, solvedCamera, solvedRotation, solvedFov);
+            Vector3 aheadScreen = ProjectPoint(focus + sceneVelocity * FrameRetentionPolicy.LookaheadSeconds,
+                solvedCamera, solvedRotation, solvedFov);
+            float rawPressure = nowScreen.z > 0 && aheadScreen.z > 0
+                ? FrameRetentionPolicy.EdgePressure(nowScreen.x, nowScreen.y,
+                    (aheadScreen.x - nowScreen.x) / FrameRetentionPolicy.LookaheadSeconds,
+                    (aheadScreen.y - nowScreen.y) / FrameRetentionPolicy.LookaheadSeconds)
+                : 1f;
+            // Rise instantly, relax smoothly: a brief centred sample must not
+            // flicker the tightened tracking off mid-sprint.
+            candidate.EdgePressure = rawPressure >= candidate.EdgePressure ? rawPressure
+                : Mathf.Lerp(candidate.EdgePressure, rawPressure, 1f - Mathf.Exp(-elapsed / 0.5f));
+            framingPressure = Mathf.Max(framingPressure, candidate.EdgePressure);
         }
+        else candidate.EdgePressure = 0;
         ShotTrajectoryKind kind = DynamicEnabled(settings) ? director.TrajectoryKind :
             context.Activity == CinematicActivity.Travel ? ShotTrajectoryKind.Tracking : ShotTrajectoryKind.ActivityArea;
         candidate.PreviousAnchor = candidate.TrackingPoint.position;
@@ -1271,6 +1302,12 @@ internal sealed class CinemachineShotRig : IDisposable
         };
         candidate.Aim.Damping = new Vector2(settings.AimDamping.Value, settings.AimDamping.Value * 1.2f) * intent.AimDampingScale;
         if (candidate.PassBy) candidate.Aim.Damping = new Vector2(.35f, .5f);
+        // No-escape guardrail: rising edge pressure moves the aim toward hard
+        // tracking. The configured settings are never mutated; the effective
+        // damping is recomputed from them each evaluation and restores itself
+        // as soon as the pressure subsides.
+        else if (candidate.EdgePressure > 0)
+            candidate.Aim.Damping *= Mathf.Lerp(1f, 0.1f, candidate.EdgePressure);
         candidate.Context = context; candidate.Settings = settings;
         candidate.Continuous = continuous; candidate.MoveCarrier = moveCarrier;
         // Upstream group framing sizes the lens before RotationComposer aims.
@@ -1482,7 +1519,10 @@ internal sealed class CinemachineShotRig : IDisposable
             : wanted;
         var composition = ScreenComposerSettings.Default;
         composition.DeadZone.Enabled = true;
-        composition.DeadZone.Size = new Vector2(settings.DeadZone.Value, settings.DeadZone.Value * 0.75f);
+        // No-escape guardrail: edge pressure shrinks the effective dead zone
+        // toward hard tracking without mutating the configured setting.
+        composition.DeadZone.Size = new Vector2(settings.DeadZone.Value, settings.DeadZone.Value * 0.75f) *
+            Mathf.Lerp(1f, 0.15f, candidate.EdgePressure);
         composition.HardLimits.Enabled = true;
         composition.HardLimits.Size = new Vector2(0.75f, 0.70f);
         // Core projection uses Y-up; Cinemachine's composition guides use Y-down.
@@ -2341,6 +2381,7 @@ internal sealed class CinemachineShotRig : IDisposable
                     candidate.TrajectoryFrame = -1; candidate.TrajectoryAt = -1; candidate.TrajectoryBlocked = false;
                     candidate.TrajectoryReason = "awaiting trajectory";
                     candidate.RelaxUntil = candidate.NextRecoveryAt = candidate.RecoveryFov = candidate.RecoveryFovUntil = 0; candidate.RecoveryReason = "none";
+                    candidate.EdgePressure = 0;
                     candidate.AppliedScreen = candidate.RecoveryScreen = candidate.PresentedScreen = Vector2.zero;
                 }
         actor = null; subjectId = null; world = null; revision = -1;

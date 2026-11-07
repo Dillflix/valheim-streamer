@@ -29,10 +29,19 @@ namespace ValheimBroadcaster.Core
     /// Motion/attention cues choose lead room, persistent evidence avoids side
     /// flips, and projected extents constrain the requested composition. No
     /// elapsed-time oscillation or positional drift is generated here.
+    /// Editorial rule: the main subject is placed only between screen centre
+    /// and a modest centre-left offset (negative X is screen-left, matching
+    /// Cinemachine's ScreenPosition convention). Lead-room cues still choose
+    /// within that band — centre versus centre-left — but never request a
+    /// right-of-centre placement. The subject-envelope constraint overrides
+    /// the band: the policy never crops the subject to satisfy composition.
     /// </summary>
     public sealed class ShotCompositionPolicy
     {
         public const float MaximumOffset = 0.22f;
+        /// <summary>Largest allowed left-of-centre subject placement; the
+        /// editorial band for the subject's screen X is [-CenterLeftLimit, 0].</summary>
+        public const float CenterLeftLimit = MaximumOffset * 0.5f;
         public const double DirectionSeconds = 1, CueGraceSeconds = 2.5, MaximumEvidenceGap = 1;
         private const float MotionThreshold = 0.025f, EdgeMargin = 0.06f, TopMargin = 0.09f;
         private double lastNow = -1, footageClock, cueSeenAt, pendingSeconds;
@@ -102,6 +111,13 @@ namespace ValheimBroadcaster.Core
                 x -= observation.PrimaryOffsetX * 0.65f;
                 y -= observation.PrimaryOffsetY * 0.65f;
             }
+            // Editorial band: the subject's screen X target stays between the
+            // centre and a modest centre-left offset; no right-of-centre
+            // placements. For group shots the band applies to the primary
+            // subject (anchor X plus the primary's projected offset). The
+            // envelope clamp below still wins when extents conflict.
+            float bandShift = observation.Grouped ? observation.PrimaryOffsetX : 0;
+            x = Clamp(x, -CenterLeftLimit - bandShift, -bandShift);
             if (!compositionEnabled) x = y = 0;
 
             float minX = Math.Max(-MaximumOffset, -0.5f + EdgeMargin + observation.LeftExtent);
