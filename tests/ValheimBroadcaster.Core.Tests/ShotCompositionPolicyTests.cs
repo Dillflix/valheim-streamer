@@ -7,7 +7,11 @@ internal static class ShotCompositionPolicyTests
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
         yield return ("Composition deliberately places a stationary solo subject beyond the dead zone", Stationary);
-        yield return ("Composition preserves side under noisy motion and accepts sustained turns", MotionEvidence);
+        yield return ("Composition preserves the centre-left side under noisy motion and recentres after a sustained turn", MotionEvidence);
+        yield return ("Composition placement never crosses right of centre", NeverRightOfCenter);
+        yield return ("Composition lead room distinguishes centre from centre-left", LeadRoomBand);
+        yield return ("Composition envelope safety overrides the centre-left band", EnvelopeOverridesBand);
+        yield return ("Composition group band keeps the primary at or left of centre", GroupBand);
         yield return ("Composition retains lead room when a moving player stops", StoppedPlayer);
         yield return ("Composition activity interest outranks unrelated facing evidence", ActivityInterest);
         yield return ("Composition leaves headroom and respects asymmetric subject extents", Headroom);
@@ -17,7 +21,7 @@ internal static class ShotCompositionPolicyTests
         yield return ("Composition gaps discard pending turns without moving an unseen camera", Gaps);
         yield return ("Composition paused frames do not accumulate direction evidence", PausedFrames);
         yield return ("Composition toggles and shot changes preserve damping", ModeContinuity);
-        yield return ("Composition is mirror-consistent for facing movement and activity", Mirror);
+        yield return ("Composition mirrored evidence stays inside the centre-left band", Mirror);
         yield return ("Composition standby cadence matches live evaluation cadence", Cadence);
         yield return ("Composition reset removes prior subject direction and history", Reset);
     }
@@ -64,19 +68,19 @@ internal static class ShotCompositionPolicyTests
             Check(Tick(policy, i * 0.1, observation, CinematicActivity.Travel).DesiredX < 0,
                 "A momentary reversal flipped the subject's screen side.");
         for (int i = 36; i <= 75; i++) Tick(policy, i * 0.1, observation, CinematicActivity.Travel);
-        Check(policy.Current.ScreenX > 0.1 && policy.Current.DesiredX > 0,
-            "Persistent opposite movement never obtained appropriate lead room.");
+        Check(Math.Abs(policy.Current.ScreenX) < 0.02 && policy.Current.DesiredX == 0,
+            "Persistent opposite movement never released the centre-left offset back to centre.");
     }
 
     private static void StoppedPlayer()
     {
         var policy = new ShotCompositionPolicy();
         ShotCompositionObservation observation = Solo;
-        observation.MotionX = -0.1f;
+        observation.MotionX = 0.1f;
         Tick(policy, 0, observation, CinematicActivity.Travel);
         observation.MotionX = 0;
         for (int i = 1; i <= 150; i++) Tick(policy, i * 0.1, observation);
-        Check(policy.Current.ScreenX > 0.1, "Stopping returned to an unrelated default screen side.");
+        Check(policy.Current.ScreenX < -0.1, "Stopping returned to an unrelated default placement.");
     }
 
     private static void ActivityInterest()
@@ -92,7 +96,65 @@ internal static class ShotCompositionPolicyTests
             Check(Tick(policy, i * 0.1, observation, CinematicActivity.Work).DesiredX < 0,
                 "Briefly missing activity evidence abruptly reversed the shot.");
         for (int i = 21; i <= 80; i++) Tick(policy, i * 0.1, observation, CinematicActivity.Work);
-        Check(policy.Current.ScreenX > 0.08, "The director retained vanished activity evidence indefinitely.");
+        Check(Math.Abs(policy.Current.ScreenX) < 0.02 && policy.Current.DesiredX == 0,
+            "The director retained vanished activity evidence indefinitely.");
+    }
+
+    private static void NeverRightOfCenter()
+    {
+        foreach (CinematicActivity activity in new[]
+            { CinematicActivity.Idle, CinematicActivity.Travel, CinematicActivity.Work, CinematicActivity.Combat })
+            foreach (float cue in new[] { -1f, -0.3f, -0.05f, 0f, 0.05f, 0.3f, 1f })
+                for (int kind = 0; kind < 3; kind++)
+                {
+                    var policy = new ShotCompositionPolicy();
+                    ShotCompositionObservation observation = Solo;
+                    if (kind == 0) observation.MotionX = cue * 0.1f;
+                    else if (kind == 1) { observation.FacingX = cue; observation.FacingConfidence = 1; }
+                    else { observation.InterestX = cue; observation.InterestConfidence = 0.9f; }
+                    for (long shot = 0; shot < 4; shot++)
+                        for (int i = 0; i <= 40; i++)
+                        {
+                            ShotComposition result = Tick(policy, shot * 4.1 + i * 0.1, observation, activity, shot);
+                            Check(result.DesiredX <= 0.0001f && result.ScreenX <= 0.0001f,
+                                "A solo placement target crossed right of centre.");
+                        }
+                }
+    }
+
+    private static void LeadRoomBand()
+    {
+        var leftRoom = new ShotCompositionPolicy();
+        ShotCompositionObservation moving = Solo;
+        moving.MotionX = 0.1f; // travelling toward screen-right earns centre-left lead room
+        Check(Tick(leftRoom, 0, moving, CinematicActivity.Travel).DesiredX <= -0.08f,
+            "Rightward travel did not reserve centre-left lead room.");
+        var centred = new ShotCompositionPolicy();
+        moving.MotionX = -0.1f; // leftward travel would need right-of-centre room; hold centre instead
+        Check(Tick(centred, 0, moving, CinematicActivity.Travel).DesiredX == 0,
+            "Leftward travel placed the subject right of centre instead of holding centre.");
+    }
+
+    private static void EnvelopeOverridesBand()
+    {
+        var policy = new ShotCompositionPolicy();
+        ShotCompositionObservation observation = Solo;
+        observation.LeftExtent = 0.47f; // the subject spills far left of its anchor
+        ShotComposition result = Tick(policy, 0, observation);
+        Check(result.FitsEnvelope && result.DesiredX >= 0.029f,
+            "The centre-left band cropped a subject whose envelope required right placement.");
+    }
+
+    private static void GroupBand()
+    {
+        var policy = new ShotCompositionPolicy();
+        ShotCompositionObservation observation = Solo;
+        observation.Grouped = true;
+        observation.PrimaryOffsetX = -0.2f; // primary stands left of the group anchor
+        ShotComposition result = Tick(policy, 0, observation);
+        float primary = result.DesiredX + observation.PrimaryOffsetX;
+        Check(result.FitsEnvelope && primary <= 0.0001f && primary >= -0.1101f,
+            "Group placement moved the primary outside the centre-left band.");
     }
 
     private static void Headroom()
@@ -168,7 +230,8 @@ internal static class ShotCompositionPolicyTests
             Check(Tick(policy, 20 + i * 0.1, observation, CinematicActivity.Travel).DesiredX < 0,
                 "Old pending reversal survived the observation gap.");
         for (int i = 6; i <= 50; i++) Tick(policy, 20 + i * 0.1, observation, CinematicActivity.Travel);
-        Check(policy.Current.ScreenX > 0.1, "Fresh evidence could not establish composition after a gap.");
+        Check(Math.Abs(policy.Current.ScreenX) < 0.02 && policy.Current.DesiredX == 0,
+            "Fresh evidence could not re-centre composition after a gap.");
     }
 
     private static void ModeContinuity()
@@ -180,8 +243,8 @@ internal static class ShotCompositionPolicyTests
             "Disabling composition snapped the camera target to center.");
         for (int i = 2; i <= 70; i++) Tick(policy, i * 0.1, Solo, enabled: false);
         Check(Math.Abs(policy.Current.ScreenX) < 0.001, "Disabled placement did not converge to neutral.");
-        ShotComposition enabled = Tick(policy, 7.1, Solo, shot: 1);
-        Check(Math.Abs(enabled.ScreenX) < 0.03 && enabled.DesiredX > 0.1,
+        ShotComposition enabled = Tick(policy, 7.1, Solo, shot: 2);
+        Check(Math.Abs(enabled.ScreenX) < 0.03 && enabled.DesiredX < -0.1,
             "A new deliberate shot reset composition damping.");
         Check(first.ScreenX < 0, "Initial composition was not deliberate.");
     }
@@ -203,7 +266,8 @@ internal static class ShotCompositionPolicyTests
             Check(Tick(policy, 2 + i * 0.1, observation, CinematicActivity.Travel).DesiredX < 0,
                 "Resuming counted paused time as a persistent direction change.");
         for (int i = 6; i <= 50; i++) Tick(policy, 2 + i * 0.1, observation, CinematicActivity.Travel);
-        Check(policy.Current.ScreenX > 0.1, "Paused evidence prevented valid updates after resume.");
+        Check(Math.Abs(policy.Current.ScreenX) < 0.02 && policy.Current.DesiredX == 0,
+            "Paused evidence prevented valid updates after resume.");
     }
 
     private static void Mirror()
@@ -218,10 +282,12 @@ internal static class ShotCompositionPolicyTests
             else { a.InterestX = -0.2f; b.InterestX = 0.2f; a.InterestConfidence = b.InterestConfidence = 0.9f; }
             for (int i = 0; i <= 60; i++)
             {
+                // Mirrored evidence clamps to the band: a right-of-centre cue
+                // holds centre while the opposite cue earns centre-left room.
                 ShotComposition first = Tick(left, i * 0.1, a, activity);
                 ShotComposition second = Tick(right, i * 0.1, b, activity);
-                Check(Math.Abs(first.ScreenX + second.ScreenX) < 0.0001 && first.ScreenY == second.ScreenY,
-                    "Mirrored actor evidence did not produce mirrored composition.");
+                Check(first.ScreenX == 0 && second.ScreenX <= -0.1f && first.ScreenY == second.ScreenY,
+                    "Mirrored actor evidence escaped the centre-to-centre-left band.");
             }
         }
     }
@@ -229,15 +295,15 @@ internal static class ShotCompositionPolicyTests
     private static void Cadence()
     {
         var live = new ShotCompositionPolicy(); var standby = new ShotCompositionPolicy();
-        ShotCompositionObservation observation = Solo; observation.MotionX = 0.1f;
+        ShotCompositionObservation observation = Solo; observation.MotionX = -0.1f;
         Tick(live, 0, observation, CinematicActivity.Travel); Tick(standby, 0, observation, CinematicActivity.Travel);
-        observation.MotionX = -0.1f;
+        observation.MotionX = 0.1f;
         for (int i = 1; i <= 300; i++)
         {
             Tick(live, i / 60.0, observation, CinematicActivity.Travel);
             if (i % 12 == 0) Tick(standby, i / 60.0, observation, CinematicActivity.Travel);
         }
-        Check(live.Current.ScreenX > 0.1 && standby.Current.ScreenX > 0.1 &&
+        Check(live.Current.ScreenX < -0.1 && standby.Current.ScreenX < -0.1 &&
             Math.Abs(live.Current.ScreenX - standby.Current.ScreenX) < 0.015,
             "Standby update cadence changed direction confirmation or damping materially.");
     }
@@ -245,11 +311,13 @@ internal static class ShotCompositionPolicyTests
     private static void Reset()
     {
         var policy = new ShotCompositionPolicy();
-        ShotCompositionObservation observation = Solo; observation.FacingX = -1; observation.FacingConfidence = 1;
-        Tick(policy, 5, observation);
-        Check(policy.Current.ScreenX > 0, "Fixture did not establish a right-side subject.");
+        ShotCompositionObservation observation = Solo; observation.FacingX = 1; observation.FacingConfidence = 1;
+        Tick(policy, 5, observation, shot: 1);
+        Check(policy.Current.ScreenX < 0, "Fixture did not establish a centre-left subject.");
         policy.Reset();
         Check(policy.Current.ScreenX == 0 && policy.Current.ScreenY == 0, "Reset retained old placement.");
-        Check(Tick(policy, 0, Solo).ScreenX < 0, "Previous subject evidence leaked into the new shot.");
+        // Without the facing cue, shot 1 prefers the right side, which the band
+        // clamps to centre; a leaked centre-left side would stay negative.
+        Check(Tick(policy, 0, Solo, shot: 1).ScreenX == 0, "Previous subject evidence leaked into the new shot.");
     }
 }
