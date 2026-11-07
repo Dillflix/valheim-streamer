@@ -46,12 +46,15 @@ internal static class ShotLongevityTests
         float current = p.AdjustScore(0, 1, .95f, true), alternative = p.AdjustScore(1, 1, .82f, true);
         Check(alternative > current + ProceduralShotPolicy.ImprovementMargin,
             "An imminent blocked corridor beat a continuously readable alternate.");
+        // Longevity acts through scores, so pre-obstruction replacement
+        // survives only where auditions are permitted: callers without
+        // readability evidence (a readable live shot is never replaced early).
         var selection = new ProceduralShotPolicy();
-        selection.Select(0, new[] { .95f, .82f }, new[] { true, true }, new[] { true, true });
+        selection.Select(0, new[] { .95f, .82f }, new[] { true, true });
         for (double now = 1; now < 4.4; now += .9)
-            selection.Select(now, new[] { .95f, .82f }, new[] { true, true }, new[] { true, true });
-        selection.Select(4.5, new[] { current, alternative }, new[] { true, true }, new[] { true, true });
-        Check(selection.Select(5.1, new[] { current, alternative }, new[] { true, true }, new[] { true, true }) == 1,
+            selection.Select(now, new[] { .95f, .82f }, new[] { true, true });
+        selection.Select(4.5, new[] { current, alternative }, new[] { true, true });
+        Check(selection.Select(5.1, new[] { current, alternative }, new[] { true, true }) == 1,
             "Longevity scores failed to drive a sustained pre-obstruction replacement.");
     }
     private static void ObstructionTiming()

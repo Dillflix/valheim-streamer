@@ -156,19 +156,21 @@ internal static class PictureQualityTests
     }
     private static void RejectedProposal()
     {
+        // Rollback is exercised on the legacy no-readability path, where
+        // improvement proposals can still displace a healthy selection.
         var policy = new ProceduralShotPolicy();
-        Equal(0, policy.Select(0, new[] { .8f, .6f }, Both, Both));
+        Equal(0, policy.Select(0, new[] { .8f, .6f }, Both));
         for (double now = 1; now < 4.4; now += .9)
-            Equal(0, policy.Select(now, new[] { .8f, .6f }, Both, Both));
-        Equal(0, policy.Select(4.5, new[] { .5f, .9f }, Both, Both));
-        Equal(1, policy.Select(5.1, new[] { .5f, .9f }, Both, Both));
+            Equal(0, policy.Select(now, new[] { .8f, .6f }, Both));
+        Equal(0, policy.Select(4.5, new[] { .5f, .9f }, Both));
+        Equal(1, policy.Select(5.1, new[] { .5f, .9f }, Both));
         Check(policy.RejectSelection(0));
         Equal(0, policy.SelectedIndex);
         Equal(-1, policy.PendingIndex);
         // A genuinely clear replacement still needs new confirmation, but
         // retaining the already-viewed source does not restart its dwell.
-        Equal(0, policy.Select(5.2, new[] { .5f, .9f }, Both, Both));
-        Equal(1, policy.Select(5.8, new[] { .5f, .9f }, Both, Both));
+        Equal(0, policy.Select(5.2, new[] { .5f, .9f }, Both));
+        Equal(1, policy.Select(5.8, new[] { .5f, .9f }, Both));
     }
     private static void BoundedRollback()
     {
@@ -201,20 +203,22 @@ internal static class PictureQualityTests
     }
     private static void AdoptAfterReset()
     {
+        // Adoption's fresh bounded dwell is observable through the legacy
+        // no-readability improvement path; a readable live shot never yields.
         var policy = new ProceduralShotPolicy();
         Check(!policy.AdoptValidatedSelection(0, 0));
-        Equal(1, policy.Select(1, new[] { .6f, .9f }, Both, Both));
+        Equal(1, policy.Select(1, new[] { .6f, .9f }, Both));
         Check(!policy.RejectSelection(0));
         Check(policy.AdoptValidatedSelection(1, 0));
         Equal(0, policy.SelectedIndex);
         Check(!policy.AdoptValidatedSelection(.9, 1));
         Check(!policy.AdoptValidatedSelection(double.NaN, 1));
         Check(!policy.AdoptValidatedSelection(1, 2));
-        Equal(0, policy.Select(1.1, new[] { .6f, .9f }, Both, Both));
-        Equal(0, policy.Select(1.7, new[] { .6f, .9f }, Both, Both));
-        Equal(0, policy.Select(2.3, new[] { .6f, .9f }, Both, Both));
+        Equal(0, policy.Select(1.1, new[] { .6f, .9f }, Both));
+        Equal(0, policy.Select(1.7, new[] { .6f, .9f }, Both));
+        Equal(0, policy.Select(2.3, new[] { .6f, .9f }, Both));
         for (double now = 3; now < 6; now += .9)
-            Equal(0, policy.Select(now, new[] { .6f, .9f }, Both, Both));
-        Equal(1, policy.Select(6.01, new[] { .6f, .9f }, Both, Both));
+            Equal(0, policy.Select(now, new[] { .6f, .9f }, Both));
+        Equal(1, policy.Select(6.01, new[] { .6f, .9f }, Both));
     }
 }

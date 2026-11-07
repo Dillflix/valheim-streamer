@@ -111,12 +111,14 @@ internal static class EncounterCoverageTests
     }
     private static void StablePurposeChange()
     {
-        var selection = new ProceduralShotPolicy(); var eligible = new[] { true, true }; var readable = new[] { true, true };
-        selection.Select(0, new[] { .9f, .3f }, eligible, readable);
+        // Purpose-driven improvement switching survives only for callers
+        // without readability evidence; a readable live shot is never replaced.
+        var selection = new ProceduralShotPolicy(); var eligible = new[] { true, true };
+        selection.Select(0, new[] { .9f, .3f }, eligible);
         int result = 0;
-        for (int i = 1; i < 50; i++) result = selection.Select(i * .1, new[] { .25f, .85f }, eligible, readable);
-        Check(result == 0, "An editorial purpose improvement bypassed readable-shot minimum dwell.");
-        Check(selection.Select(5.01, new[] { .25f, .85f }, eligible, readable) == 1, "Sustained fulfilled alternative never became eligible.");
+        for (int i = 1; i < 50; i++) result = selection.Select(i * .1, new[] { .4f, .85f }, eligible);
+        Check(result == 0, "An editorial purpose improvement bypassed healthy-shot minimum dwell.");
+        Check(selection.Select(5.01, new[] { .4f, .85f }, eligible) == 1, "Sustained fulfilled alternative never became eligible.");
     }
     private static void UnreadablePurpose()
     {

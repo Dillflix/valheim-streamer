@@ -98,12 +98,14 @@ internal static class NativeRankingTests
     }
     private static void HealthyDwell()
     {
+        // Dwell-then-switch survives only without readability evidence; with
+        // it a readable live shot is never replaced by a better score.
         var rank = new Ranker(); var p = new ProceduralShotPolicy();
-        var eligible = new[] { true, true }; var readable = new[] { true, true };
-        p.Select(0, new[] { .8f, .5f }, eligible, readable, rank);
+        var eligible = new[] { true, true };
+        p.Select(0, new[] { .8f, .5f }, eligible, null, rank);
         var improved = new[] { .7f, 1f };
-        for (int i = 1; i < 50; i++) Check(p.Select(i * .1, improved, eligible, readable, rank) == 0, "Healthy dwell lost.");
-        Check(p.Select(5, improved, eligible, readable, rank) == 1, "Confirmed better shot never activated.");
+        for (int i = 1; i < 50; i++) Check(p.Select(i * .1, improved, eligible, null, rank) == 0, "Healthy dwell lost.");
+        Check(p.Select(5, improved, eligible, null, rank) == 1, "Confirmed better shot never activated.");
     }
     private static void Incumbent()
     {
@@ -115,24 +117,27 @@ internal static class NativeRankingTests
     }
     private static void RejectedProposal()
     {
+        // Rollback semantics are exercised on the legacy no-readability path,
+        // where improvement proposals can still arise against a healthy shot.
         var rank = new Ranker(); var p = new ProceduralShotPolicy(); var eligible = new[] { true, true };
-        var readable = new[] { true, true };
-        p.Select(0, new[] { .8f, .5f }, eligible, readable, rank);
-        for (int i = 1; i <= 50; i++) p.Select(i * .1, new[] { .7f, 1f }, eligible, readable, rank);
+        p.Select(0, new[] { .8f, .5f }, eligible, null, rank);
+        for (int i = 1; i <= 50; i++) p.Select(i * .1, new[] { .7f, 1f }, eligible, null, rank);
         Check(p.SelectedIndex == 1 && p.RejectSelection(0) && p.SelectedIndex == 0, "Denied transition retained the proposed camera.");
-        p.Select(5.1, new[] { .7f, 1f }, eligible, readable, rank);
-        Check(p.Select(5.61, new[] { .7f, 1f }, eligible, readable, rank) == 1,
+        p.Select(5.1, new[] { .7f, 1f }, eligible, null, rank);
+        Check(p.Select(5.61, new[] { .7f, 1f }, eligible, null, rank) == 1,
             "Rejecting an unshown proposal invented a fresh healthy dwell for the old shot.");
     }
     private static void PlannedRanking()
     {
+        // Deliberate planned edits remain only for callers without readability
+        // evidence; with it the director never plans against a readable shot.
         var rank = new Ranker(); var p = new CinematicShotDirector();
         var scores = new[] { .8f, .79f, .78f }; var eligible = new[] { true, true, true };
-        var readable = new[] { true, true, true }; int first = -1; bool changed = false;
+        int first = -1; bool changed = false;
         for (int i = 0; i < 400; i++)
         {
             int chosen = p.Select(i * .1, .1, scores, eligible, CinematicActivity.Idle, 0, false, 1,
-                readable: readable, ranker: rank);
+                ranker: rank);
             if (first < 0) first = chosen;
             changed |= chosen != first;
         }

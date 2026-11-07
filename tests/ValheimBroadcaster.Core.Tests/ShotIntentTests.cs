@@ -281,19 +281,23 @@ internal static class ShotIntentTests
     }
     private static void RejectedProposal()
     {
+        // Proposals now arise only from recovery: the live picture must be
+        // lost before a challenger may be nominated and then rejected.
         var director = new CinematicShotDirector();
         var all = new[] { true, true, true };
-        for (int i = 0; i <= 100; i++)
+        for (int i = 0; i <= 110; i++)
             director.Select(i * .1, .1, new[] { .9f, .7f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
         string family = director.Motion().Family;
-        director.Select(10.1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
-        Check(director.Select(10.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 1,
+        var lost = new[] { false, true, true };
+        director.Select(11.1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost);
+        director.Select(12.0, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost);
+        Check(director.Select(12.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost) == 1,
             "The test did not propose a new camera.");
         Check(director.RejectSelection(0) && director.SelectedIndex == 0 && director.ShotAge > 10 &&
             director.Motion().Family == family && director.RecentCorrections == 0,
             "Rejected proposal reset shown-shot progress or fabricated camera activity.");
         Check(!director.RejectSelection(0), "The same proposal was rolled back twice.");
-        Check(director.Select(10.8, .1, new[] { .9f, .2f, .1f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0 &&
+        Check(director.Select(12.8, .1, new[] { .9f, .2f, .1f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0 &&
             director.ShotAge > 10, "The following frame advanced the rejected candidate instead of the displayed source.");
     }
     private static void HeldTransitionBackoff()
@@ -303,12 +307,16 @@ internal static class ShotIntentTests
         // challenger), and the challenger's invalidated evidence forces it to
         // rebuild a sustained-clear streak before it may be nominated again,
         // so plain tracking resumes between attempts instead of a frozen loop.
+        // Challengers now arise only while the live picture is impaired, so
+        // the hold/backoff cycle plays out during an extended recovery.
         var director = new CinematicShotDirector();
         var all = new[] { true, true, true };
-        for (int i = 0; i <= 100; i++)
+        for (int i = 0; i <= 110; i++)
             director.Select(i * .1, .1, new[] { .9f, .7f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
-        director.Select(10.1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
-        Check(director.Select(10.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 1,
+        var lost = new[] { false, true, true };
+        director.Select(11.1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost);
+        director.Select(12.0, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost);
+        Check(director.Select(12.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost) == 1,
             "The test did not propose a challenger.");
         Check(director.RejectSelection(0) && director.SelectedIndex == 0 && director.ShotAge > 10 &&
             director.PendingIndex == -1,
@@ -316,31 +324,37 @@ internal static class ShotIntentTests
         // The adapter invalidated the obstructed challenger's evidence: for one
         // observation it is neither eligible nor readable, breaking its streak.
         var backoff = new[] { true, false, true };
-        Check(director.Select(10.8, .1, new[] { .7f, 0f, .6f }, backoff, CinematicActivity.Idle, 0, false, 1, true, backoff) == 0,
-            "Invalidated challenger evidence did not retain the live shot.");
-        // Clear again: the challenger must prove a fresh sustained streak, so
-        // the live shot keeps tracking normally during the backoff window.
-        for (int i = 109; i <= 116; i++)
-            Check(director.Select(i * .1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0,
+        Check(director.Select(12.8, .1, new[] { .7f, 0f, .6f }, backoff, CinematicActivity.Idle, 0, false, 1, true,
+            new[] { false, false, true }) == 0, "Invalidated challenger evidence did not retain the live shot.");
+        // Clear again: the retained camera restarts its repair window and the
+        // challenger must prove a fresh streak, so the live shot keeps
+        // tracking normally during the backoff window instead of a frozen loop.
+        for (int i = 129; i <= 142; i++)
+            Check(director.Select(i * .1, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost) == 0,
                 "A blocked challenger was renominated before rebuilding its sustained-clear streak.");
-        Check(director.Select(11.7, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 1,
+        Check(director.Select(14.31, .1, new[] { .7f, .95f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, lost) == 1,
             "Selection pressure never returned after the hold backoff.");
     }
     private static void RejectedProposalChain()
     {
+        // The proposal chain starts from recovery: the live picture is lost,
+        // a challenger wins, is invalidated same-frame, and the second
+        // proposal is finally rejected back to the displayed source.
         var director = new CinematicShotDirector();
         var all = new[] { true, true, true };
-        for (int i = 0; i <= 60; i++)
+        for (int i = 0; i <= 70; i++)
             director.Select(i * .1, .1, new[] { .9f, .7f, .6f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
-        director.Select(6.1, .1, new[] { .6f, .95f, .7f }, all, CinematicActivity.Idle, 0, false, 1, true, all);
-        Check(director.Select(6.7, .1, new[] { .6f, .95f, .7f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 1,
+        var lost = new[] { false, true, true };
+        director.Select(7.1, .1, new[] { .6f, .95f, .7f }, all, CinematicActivity.Idle, 0, false, 1, true, lost);
+        director.Select(8.0, .1, new[] { .6f, .95f, .7f }, all, CinematicActivity.Idle, 0, false, 1, true, lost);
+        Check(director.Select(8.7, .1, new[] { .6f, .95f, .7f }, all, CinematicActivity.Idle, 0, false, 1, true, lost) == 1,
             "The first proposal did not change the camera.");
-        Check(director.Select(6.7, 0, new[] { .6f, 0f, .8f }, new[] { true, false, true },
-            CinematicActivity.Idle, 0, false, 1, false, all) == 2,
+        Check(director.Select(8.7, 0, new[] { .6f, 0f, .8f }, new[] { true, false, true },
+            CinematicActivity.Idle, 0, false, 1, false, lost) == 2,
             "The invalidated proposal did not trigger same-frame reselection.");
         Check(director.RejectSelection(0) && director.SelectedIndex == 0 && director.ShotAge > 6 && director.RecentCorrections == 0,
             "Reselection lost the original displayed-shot checkpoint.");
-        Check(director.Select(6.8, .1, new[] { .9f, .2f, .1f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0,
+        Check(director.Select(8.8, .1, new[] { .9f, .2f, .1f }, all, CinematicActivity.Idle, 0, false, 1, true, all) == 0,
             "The following frame reused a rejected intermediate proposal.");
     }
     private static void AdoptAfterReset()
