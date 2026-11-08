@@ -68,6 +68,34 @@ namespace ValheimBroadcaster.Core
             return requested;
         }
 
+        /// <summary>Shoulder line as a fraction of standing height. The follow
+        /// camera rests on this line so the subject is viewed at eye level
+        /// instead of from a hovering vantage; deriving it from the measured
+        /// subject keeps creatures and scaled actors composed correctly.</summary>
+        public const float ShoulderHeightFraction = .8f;
+
+        /// <summary>Gentle upward grade applied over the camera distance so the
+        /// resting orbit sits just above level (atan(.07) ≈ 4°), which reads as
+        /// a natural over-the-shoulder eye line rather than a surveillance tilt.</summary>
+        public const float RestingElevationGrade = .07f;
+
+        /// <summary>Resting camera height above the follow focus for non-wide
+        /// actor coverage: the subject's shoulder line plus a near-level grade.
+        /// This is a composition preference, never a physical guarantee — the
+        /// adapter's obstacle, ceiling and eligibility checks still lift the
+        /// camera whenever terrain or water demands it. The result is clamped
+        /// at the follow focus so orbital geometry never starts below its
+        /// anchor; focusHeight is the follow focus height above the subject's
+        /// feet (the subject's BottomOffset).</summary>
+        public static float RestingCameraHeight(float subjectHeight, float focusHeight, float distance)
+        {
+            if (float.IsNaN(subjectHeight) || float.IsInfinity(subjectHeight) || subjectHeight <= 0 || subjectHeight > 32 ||
+                float.IsNaN(focusHeight) || float.IsInfinity(focusHeight) || Math.Abs(focusHeight) > 32 ||
+                float.IsNaN(distance) || float.IsInfinity(distance) || distance < 0 || distance > 1000)
+                throw new ArgumentOutOfRangeException(nameof(subjectHeight));
+            return Math.Max(0, subjectHeight * ShoulderHeightFraction - focusHeight + distance * RestingElevationGrade);
+        }
+
         /// <summary>Fraction of the profile's target height below which a
         /// visible subject no longer reads as the intended shot. This is the
         /// recovery backstop for a subject receding in depth: physical pursuit

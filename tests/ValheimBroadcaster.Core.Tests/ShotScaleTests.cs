@@ -20,6 +20,10 @@ internal static class ShotScaleTests
         yield return ("Scale quality rewards intended size without rewarding clipping", SizePreference);
         yield return ("Editorial scale credit requires an actually matching projected size", ActualScaleCredit);
         yield return ("Shot scale input validation rejects impossible dimensions", InvalidEvidence);
+        yield return ("The follow camera rests at the subject's shoulder line", ShoulderRest);
+        yield return ("The resting orbit grade stays a few degrees above level", NearLevelGrade);
+        yield return ("Resting height never starts below the follow anchor", RestingFloor);
+        yield return ("Resting height validation rejects impossible subjects", RestingValidation);
     }
 
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
@@ -158,6 +162,54 @@ internal static class ShotScaleTests
         bool invalidScale = false;
         try { ShotScalePolicy.Profile((ShotScale)100); } catch (ArgumentOutOfRangeException) { invalidScale = true; }
         Check(invalidScale, "Invalid scale accepted.");
+    }
+
+    private static void ShoulderRest()
+    {
+        // A 1.85m Viking with the usual +1.5m follow focus: the camera rests
+        // essentially on the focus line (the shoulder), raised only by the
+        // near-level grade over the shot distance, instead of hovering above.
+        float full = ShotScalePolicy.RestingCameraHeight(1.85f, 1.5f, 4.3f);
+        Near(1.85 * .8 - 1.5 + 4.3 * .07, full);
+        Check(full < .35f, "Full follow coverage still rests well above the shoulder line.");
+        float medium = ShotScalePolicy.RestingCameraHeight(1.85f, 1.5f, 2.5f);
+        Check(medium < full, "A closer shot did not lower the resting grade proportionally.");
+        // A taller creature composes from its own shoulder line, not a human's.
+        Check(ShotScalePolicy.RestingCameraHeight(3.7f, 1.5f, 4.3f) > full + 1,
+            "A large creature did not raise the shoulder line with its height.");
+    }
+
+    private static void NearLevelGrade()
+    {
+        // The resting elevation over a level shoulder line reads a few degrees
+        // above level — an eye line, not a surveillance tilt.
+        double degrees = Math.Atan(ShotScalePolicy.RestingElevationGrade) * 180 / Math.PI;
+        Check(degrees >= 3 && degrees <= 6, $"Resting grade is {degrees:F1} degrees, outside the near-level band.");
+        Check(ShotScalePolicy.ShoulderHeightFraction > .7f && ShotScalePolicy.ShoulderHeightFraction < .9f,
+            "Shoulder fraction no longer describes a shoulder.");
+    }
+
+    private static void RestingFloor()
+    {
+        // A small creature whose shoulder sits below its follow focus must not
+        // drive the orbital geometry under its own anchor.
+        Near(0, ShotScalePolicy.RestingCameraHeight(.6f, .9f, 0f));
+    }
+
+    private static void RestingValidation()
+    {
+        foreach (var (height, focus, distance) in new[]
+        {
+            (0f, 1.5f, 4f), (-1f, 1.5f, 4f), (float.NaN, 1.5f, 4f), (33f, 1.5f, 4f),
+            (1.85f, float.PositiveInfinity, 4f), (1.85f, 33f, 4f),
+            (1.85f, 1.5f, -1f), (1.85f, 1.5f, float.NaN), (1.85f, 1.5f, 1001f)
+        })
+        {
+            bool threw = false;
+            try { ShotScalePolicy.RestingCameraHeight(height, focus, distance); }
+            catch (ArgumentOutOfRangeException) { threw = true; }
+            Check(threw, "Impossible resting-height evidence accepted.");
+        }
     }
 
     private static void ActualScaleCredit()

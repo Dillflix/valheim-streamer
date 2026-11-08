@@ -2291,14 +2291,26 @@ internal sealed class CinemachineShotRig : IDisposable
             // requested full/medium scale remains deliberate at those angles.
             float compact = index >= 6 ? index == 9 ? .45f : .5f : 1f;
             distance = desired / compact;
-            height = Mathf.Min(height, desired * (candidate.Scale == ShotScale.Wide ? .35f : .12f));
+            // Non-wide follow coverage rests at the subject's shoulder line
+            // with a near-level orbit (the VerticalAxis derives from this
+            // offset, so the neutral elevation lands a few degrees above
+            // level). Wide establishing shots keep their elevated allowance.
+            // This is the resting preference only: the deoccluder, ceiling
+            // cap and eligibility checks still lift the camera when terrain
+            // or water demands clearance.
+            height = Mathf.Min(height, candidate.Scale == ShotScale.Wide ? desired * .35f
+                : ShotScalePolicy.RestingCameraHeight(primary.Height, primary.BottomOffset, desired));
         }
         if (activeContext != null && activeContext.Environment == ShotEnvironment.Sheltered)
         { distance = Mathf.Min(distance, 10f * scale); height = Mathf.Min(height, 3f * scale); }
         AutonomyPosition value = ProceduralCameraGeometry.Offset(index, distance, height,
             (encounterFraming.Heading + Mathf.DeltaAngle(this.heading, heading)) + motion.AzimuthOffset, inside);
         float radius = Mathf.Clamp(motion.RadiusScale, 0.8f, 1.15f);
-        float lift = Mathf.Max(0.25f, value.Y + Mathf.Clamp(motion.HeightOffset, -1.5f, 2f));
+        // The anchor rides at the subject focus (~1.5m above the feet), so a
+        // -0.3 floor keeps deliberate motion dips at or above ~1.2m over the
+        // ground — the same eye-level band the recovery views already use —
+        // without re-hoisting the shoulder-height resting offset.
+        float lift = Mathf.Max(-0.3f, value.Y + Mathf.Clamp(motion.HeightOffset, -1.5f, 2f));
         return CapToCeiling(new Vector3(value.X * radius, lift, value.Z * radius));
     }
 

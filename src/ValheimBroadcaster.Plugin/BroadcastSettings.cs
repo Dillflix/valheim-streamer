@@ -104,7 +104,7 @@ internal sealed class BroadcastSettings
         DeadZone = config.Bind("Camera", "DeadZone", 0.08f, Range("Screen fraction in which subjects can move without the camera immediately recentering them.", 0f, 0.3f));
         ShotMotion = config.Bind("Camera", "ShotMotion", 1f, Range("Strength of deliberate shot movement. Zero disables decorative movement while retaining tracking, damping and shot selection.", 0f, 1.5f));
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));
-        Height = config.Bind("Camera", "Height", 10f, Range("Height above target in metres.", 1f, 60f));
+        Height = config.Bind("Camera", "Height", 2f, Range("Maximum height above target in metres. Deliberate shot scales rest the follow camera near the subject's shoulder line; this cap mainly governs wide and legacy coverage.", 1f, 60f));
         FieldOfView = config.Bind("Camera", "FieldOfView", 75f, Range("Vertical camera field of view in degrees.", 30f, 110f));
         Azimuth = config.Bind("Camera", "Azimuth", 225f, Range("Preferred world-space viewing direction in degrees; procedural cameras may reframe around obstacles.", 0f, 360f));
         Smoothing = config.Bind("Camera", "Smoothing", 5f, Range("Exponential follow response per second; larger is faster.", 0.1f, 30f));
