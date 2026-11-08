@@ -120,6 +120,9 @@ internal sealed class CinemachineShotRig : IDisposable
     private readonly FollowDistanceInvariant followInvariant = new FollowDistanceInvariant();
     private float presentedNominalDistance = 8f;
     private string invariantNote = "";
+    // Absolute framing guarantee note: set whenever the final presentation
+    // clamp had to rotate the about-to-be-presented pose back onto the subject.
+    private string clampNote = "";
     private static int? invariantTerrainMask;
     private CinematicShotMotion acceptedMotion, approvedMotion;
     private PlayerShotVisibility.Result lastView;
@@ -811,6 +814,10 @@ internal sealed class CinemachineShotRig : IDisposable
         // no hold, validation failure or trajectory state can park the
         // presented camera while the subject recedes out of the shot's band.
         ApplyDistanceInvariant(candidate, ref position, ref rotation, focus, now, step);
+        // Absolute framing guarantee: the final unconditional clamp runs after
+        // every other policy - selection, recovery, blending, angular limiting
+        // and the distance invariant - so nothing downstream can re-break it.
+        ApplyFinalFrameClamp(candidate, position, ref rotation, focus, fov, now);
         UpdateVisiblePlayers(context, candidate, lastView);
         lastEncounterCoverage = MeasureEncounter(context, candidate, position, rotation, fov, lastView);
         shownEncounterTargetId = context.EncounterTargetId;
@@ -876,7 +883,7 @@ internal sealed class CinemachineShotRig : IDisposable
             (settings.NativeConfiner.Value ? roomConfiner!.Diagnostics : "Confiner disabled") + "; " +
             (nativeScenicPath ? $"Spline Dolly: {scenicPath.Length:F1}m path; distance {candidate.Dolly.Distance:F1}m" :
                 IsScenic ? "Spline Dolly unavailable/disabled; scenic fallback" : candidate.PassBy ? passBy.Reason : candidate.Observational ? candidate.Observation.Diagnostics : "Orbital Follow actor body") +
-            "; " + candidate.Framing.Diagnostics + "; " + candidate.Elevation.Description + "; native validated blend; " + CameraWorkBudget.Shared.Diagnostics + invariantNote;
+            "; " + candidate.Framing.Diagnostics + "; " + candidate.Elevation.Description + "; native validated blend; " + CameraWorkBudget.Shared.Diagnostics + invariantNote + clampNote;
         }
         return true;
     }
@@ -1070,6 +1077,10 @@ internal sealed class CinemachineShotRig : IDisposable
             // invariant override applies here too, and the held pose follows.
             ApplyDistanceInvariant(candidates[previousChoice], ref position, ref rotation, focus, now,
                 Mathf.Clamp(now - lastPoseAt, 0f, 0.25f));
+            // The hold/slate path presents a pose the composer never solved;
+            // the absolute framing guarantee applies here exactly as it does
+            // to the main presentation path, as the very last step.
+            ApplyFinalFrameClamp(candidates[previousChoice], position, ref rotation, focus, fov, now);
             lastPosition = position; lastRotation = rotation;
         }
         // This is fresh live footage from a revalidated camera, not an old image
@@ -1089,7 +1100,7 @@ internal sealed class CinemachineShotRig : IDisposable
         LastFailure = "none"; LastPictureUsable = PictureUsable(live);
         lastCuePresented = false;
         if (previousChoice >= 0) UpdatePictureContext(previousChoice, candidates[previousChoice], position, rotation, fov, now);
-        Diagnostics = "Procedural camera: holding a validated live viewpoint while camera correction settles; " + live.Reason + invariantNote;
+        Diagnostics = "Procedural camera: holding a validated live viewpoint while camera correction settles; " + live.Reason + invariantNote + clampNote;
         return true;
     }
 
@@ -2543,6 +2554,61 @@ internal sealed class CinemachineShotRig : IDisposable
         return Vector3.Lerp(from, proposed, 0.25f);
     }
 
+    // Absolute framing guarantee ("don't let the player make it out of frame,
+    // ever"): whatever pose survived every policy above - a fresh solve, a
+    // retained hold, a slate fallback, a mid-blend sample or the distance-
+    // invariant override - the live subject must be inside the viewport when
+    // the pose is handed to the game camera. The subject's focus is projected
+    // through the about-to-be-presented pose under the presented fov/aspect;
+    // outside the hard band the minimal undamped yaw/pitch correction is
+    // applied, and a subject behind the camera or inside the near plane
+    // receives a full look-at. Composer-solved poses live inside the native
+    // hard limits (0.55 x 0.50), well within the clamp band (0.42/0.38 of the
+    // half-frame), so the clamp is zero-cost in normal operation and only
+    // fires on composer-bypass paths. Scenic/journey, pass-by and
+    // observational presentations are deliberate world-fixed compositions
+    // with their own leases and stay exempt, as do genuinely subject-less
+    // presentations such as slates with no live subject.
+    private void ApplyFinalFrameClamp(Candidate candidate, Vector3 position, ref Quaternion rotation,
+        Vector3 focus, float fov, float now)
+    {
+        clampNote = "";
+        if (IsScenic || candidate.Observational || candidate.PassBy || subjects.Count == 0) return;
+        Vector3 screen = ProjectPoint(focus, position, rotation, fov);
+        FrameClampCorrection correction;
+        try { correction = FinalFrameClamp.Correct(screen.x, screen.y, screen.z > 0, fov, Aspect); }
+        catch (ArgumentOutOfRangeException) { return; }
+        if (!correction.Required) return;
+        Quaternion clamped;
+        if (correction.BehindCamera) clamped = LookAtSubject(position, focus, rotation);
+        else
+        {
+            // Positive Core yaw turns the view toward screen-right (world up
+            // axis); positive Core pitch toward screen-up, which in Unity is a
+            // negative rotation around the camera's right axis.
+            clamped = Quaternion.AngleAxis(correction.YawDegrees, Vector3.up) * rotation;
+            clamped = Upright(Quaternion.AngleAxis(-correction.PitchDegrees, clamped * Vector3.right) * clamped);
+            // The per-axis corrections are exact along each axis but couple
+            // slightly when both fire at once. The guarantee is absolute:
+            // re-project and fall back to the full look-at on any residual.
+            Vector3 check = ProjectPoint(focus, position, clamped, fov);
+            if (check.z <= 0 || Mathf.Abs(check.x) > FinalFrameClamp.HardBandX + 0.02f ||
+                Mathf.Abs(check.y) > FinalFrameClamp.HardBandY + 0.02f)
+                clamped = LookAtSubject(position, focus, rotation);
+        }
+        if (!Finite(clamped)) return;
+        rotation = clamped;
+        clampNote = "; frame clamp engaged";
+        NoteCorrection(now);
+    }
+
+    private static Quaternion LookAtSubject(Vector3 position, Vector3 focus, Quaternion fallback)
+    {
+        Vector3 direction = focus - position;
+        return direction.sqrMagnitude > 0.000001f
+            ? Quaternion.LookRotation(direction, Vector3.up) : fallback;
+    }
+
     private static void SynchronizeActorTrajectory(Candidate candidate, Vector3 acceptedAnchor, Vector3 acceptedOffset)
     {
         candidate.Spatial.Reject(acceptedOffset);
@@ -2594,7 +2660,7 @@ internal sealed class CinemachineShotRig : IDisposable
         velocity = lastAnchorVelocity = renderedVelocity = transitionVelocity = Vector3.zero; hasPose = lastSucceeded = false; solvedAt = lastPoseAt = -1; solvedFrame = -1;
         evaluateAt = predictionAt = 0; previousChoice = motionChoice = -1; transitionElapsed = 2; space = 1;
         motionBlocked = false; acceptedMotion = approvedMotion = NeutralMotion(); lastCorrection = -10; fallbackSince = -1; headingSteerUntil = 0;
-        followInvariant.Reset(); invariantNote = ""; presentedNominalDistance = 8f;
+        followInvariant.Reset(); invariantNote = ""; clampNote = ""; presentedNominalDistance = 8f;
         playerSceneId = 0; playerContextFrame = activeContext = null; playerContextAt = -1;
         unreadableSince = readableSince = -1; recoverySearchAt = 0; recoveryEpoch = 0; recoverySearch = confined = false;
         transitionSeconds = 1.4f; intent = director.Intent;
