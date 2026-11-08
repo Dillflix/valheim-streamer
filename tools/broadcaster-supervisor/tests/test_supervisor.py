@@ -1,5 +1,6 @@
 """Real filesystem transactions and deterministic managed-session lifecycle tests."""
 from copy import deepcopy
+import errno
 import json
 import os
 from pathlib import Path
@@ -259,19 +260,93 @@ class HeartbeatTests(Fixture):
     def write(self):
         sup.atomic_json(self.s.control_dir() / "status.json", self.status)
 
-    def test_locked_heartbeat_is_one_unavailable_sample(self):
+    def test_denied_live_json_retries_and_recovers_for_both_inputs(self):
         self.write()
-        for number in (32, 33, 5):
-            with self.subTest(number=number):
-                error = PermissionError("test")
-                error.winerror = number
-                with patch.object(sup, "read_json", side_effect=error):
-                    if number == 5:
-                        with self.assertRaises(PermissionError):
-                            self.s.heartbeat()
-                    else:
-                        self.assertIsNone(self.s.heartbeat())
-        self.assertEqual(self.s.heartbeat(), self.status)
+        for filename in ("status.json", "operator.json"):
+            path = self.s.control_dir() / filename if filename == "status.json" else self.state / filename
+            if filename == "operator.json":
+                sup.atomic_json(path, {"command": "pause"})
+            for number in (None, 5, 32, 33):
+                with self.subTest(filename=filename, winerror=number):
+                    error = PermissionError(errno.EACCES, "denied")
+                    if number is not None:
+                        error.winerror = number
+                    with patch.object(sup, "open_live_json", side_effect=error), patch.object(sup.time, "sleep") as sleep:
+                        if filename == "status.json":
+                            self.assertIsNone(self.s.heartbeat())
+                            self.assertIn(filename, self.s.status_read_error)
+                        else:
+                            self.assertFalse(self.s.observe_pause())
+                            self.assertIn(filename, self.s.operator_read_error)
+                            with self.assertRaises(sup.LiveReadUnavailable):
+                                self.s.requested_pause()
+                            self.assertTrue(path.exists())
+                        self.assertGreaterEqual(sleep.call_count, 3)
+            if filename == "status.json":
+                self.assertEqual(self.s.heartbeat(), self.status)
+                self.assertIsNone(self.s.status_read_error)
+            else:
+                self.assertTrue(self.s.observe_pause())
+                self.assertIsNone(self.s.operator_read_error)
+                self.assertFalse(path.exists())
+
+    def test_startup_accepts_fresh_output_after_plain_eacces_so_game_can_keep_running(self):
+        self.status.update(startup_phase="authorized", picture_live=True)
+        self.write()
+        clock = [100.0]
+        path = self.s.control_dir() / "status.json"
+        real_open = sup.open_live_json
+        def open_snapshot(file):
+            if file == path and 103 <= clock[0] < 105:
+                raise PermissionError(errno.EACCES, "access denied")
+            return real_open(file)
+        def advance(seconds):
+            clock[0] += seconds
+            self.status["sequence"] += 1
+            self.write()
+        with patch.object(sup, "open_live_json", side_effect=open_snapshot), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            self.config.stable_seconds = 6
+            result = self.s.wait_healthy()
+        self.assertTrue(result["picture_live"])
+        self.assertGreaterEqual(clock[0], 106)
+        self.assertLess(clock[0], 110)
+
+    def test_unreadable_status_never_satisfies_health(self):
+        self.status.update(startup_phase="authorized", picture_live=True)
+        self.write()
+        clock = [100.0]
+        real_open = sup.open_live_json
+        def open_snapshot(file):
+            if file.name == "status.json" and clock[0] > 100:
+                raise PermissionError(errno.EACCES, "access denied")
+            return real_open(file)
+        def advance(seconds):
+            clock[0] += seconds
+        with patch.object(sup, "open_live_json", side_effect=open_snapshot), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            with self.assertRaisesRegex(sup.HealthFailure, "health deadline.*status.json"):
+                self.s.wait_healthy()
+        self.assertGreaterEqual(clock[0], 100 + self.config.health_timeout_seconds)
+
+    @unittest.skipUnless(os.name == "nt", "requires real Windows file sharing")
+    def test_windows_writer_can_replace_an_open_snapshot_and_exclusive_lock_is_retryable(self):
+        path = self.s.control_dir() / "status.json"
+        self.write()
+        with sup.open_live_json(path) as old:
+            sup.atomic_json(path, {"new": True})
+            self.assertEqual(json.load(old), self.status)
+            self.assertEqual(sup.read_live_json(path)[0], {"new": True})
+        handle = sup._kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0, None)
+        self.assertNotEqual(handle, sup.ctypes.c_void_p(-1).value)
+        try:
+            with self.assertRaisesRegex(sup.LiveReadUnavailable, "status.json"):
+                sup.read_live_json(path)
+        finally:
+            sup._kernel.CloseHandle(handle)
+        self.assertEqual(sup.read_live_json(path)[0], {"new": True})
 
     def test_fresh_matching_heartbeat_is_accepted(self):
         self.write()

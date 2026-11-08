@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import contextlib
+import errno
 from dataclasses import dataclass
 import hashlib
 import json
@@ -29,7 +30,16 @@ import uuid
 import zipfile
 
 if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
     import msvcrt
+
+    _kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    _kernel.CreateFileW.restype = wintypes.HANDLE
+    _kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel.CloseHandle.restype = wintypes.BOOL
 else:
     import fcntl
 from sandboxie import Sandboxie, SandboxieError, guest_to_host, create_private_directory, verify_private_path
@@ -108,6 +118,56 @@ def read_json(path: Path, default=None):
         return json.loads(path.read_text(encoding="utf-8"))
     except (UnicodeError, ValueError) as error:
         raise Failure("Invalid local JSON file") from error
+
+
+class LiveReadUnavailable(Failure):
+    """An existing or inaccessible live control file could not be sampled."""
+
+
+def open_live_json(path):
+    if os.name != "nt":
+        return os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb")
+    # Allow the publisher to replace the directory entry while we read our
+    # snapshot. Open the reparse point itself so fstat can reject redirects.
+    generic_read, share_read_write_delete = 0x80000000, 0x7
+    open_existing, open_reparse_point = 3, 0x00200000
+    handle = _kernel.CreateFileW(str(path), generic_read, share_read_write_delete, None,
+                                 open_existing, open_reparse_point, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        _kernel.CloseHandle(handle)
+        raise
+    return os.fdopen(fd, "rb")
+
+
+def read_live_json(path):
+    """Read data and mtime from one opened generation of a replaceable file."""
+    for delay in (0.025, 0.05, 0.1, 0):
+        try:
+            with open_live_json(path) as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_size > MAX_JSON or
+                        getattr(info, "st_file_attributes", 0) & 0x400):
+                    raise Failure("Unsafe or oversized " + path.name)
+                data = stream.read(MAX_JSON + 1)
+                if len(data) > MAX_JSON:
+                    raise Failure("Oversized " + path.name)
+                return json.loads(data.decode("utf-8")), info.st_mtime
+        except FileNotFoundError:
+            return None, None
+        except (UnicodeError, ValueError):
+            raise Failure("Invalid JSON in " + path.name) from None
+        except OSError as error:
+            winerror = getattr(error, "winerror", None)
+            if winerror not in (5, 32, 33) and error.errno != errno.EACCES:
+                raise
+            if not delay:
+                code = f"WinError {winerror}" if winerror is not None else f"errno {error.errno}"
+                raise LiveReadUnavailable(f"{path.name} read denied ({code})") from None
+            time.sleep(delay)
 
 
 def no_symlinks(path: Path) -> None:
@@ -613,6 +673,8 @@ class Supervisor:
         self.sequence = -1
         self.last_progress = 0.0
         self.startup_phase = None
+        self.status_read_error = None
+        self.operator_read_error = None
         self.adapter = None
 
     @property
@@ -732,17 +794,18 @@ class Supervisor:
             return None
         path = self.control_dir() / "status.json"
         try:
-            status = read_json(path)
-            if not isinstance(status, dict) or time.time() - path.stat().st_mtime > 10 or path.stat().st_mtime > time.time() + 5:
+            status, modified = read_live_json(path)
+            self.status_read_error = None
+            if not isinstance(status, dict) or not -5 <= time.time() - modified <= 10:
                 return None
-        except (Failure, FileNotFoundError):
+        except LiveReadUnavailable as error:
+            if self.status_read_error != str(error):
+                print(str(error) + "; waiting for a fresh heartbeat", flush=True)
+            self.status_read_error = str(error)
             return None
-        except OSError as error:
-            # The game publishes by replacing this file. A sharing/lock violation
-            # leaves this sample unavailable; the existing health deadline still applies.
-            if getattr(error, "winerror", None) in (32, 33):
-                return None
-            raise
+        except Failure:
+            self.status_read_error = None
+            return None
         if status.get("schema") != 1 or status.get("session_id") != self.record["session_id"] or status.get("pid") != self.record["pid"]:
             return None
         if (status.get("supervisor_protocol") != 1 or not isinstance(status.get("source_sha"), str) or
@@ -796,7 +859,7 @@ class Supervisor:
         if not self.record or self.is_running():
             return False
         path = self.control_dir() / "status.json"
-        status = read_json(path)
+        status, modified = read_live_json(path)
         if not isinstance(status, dict):
             return False
         return (status.get("schema") == 1 and status.get("session_id") == self.record.get("session_id") and
@@ -808,10 +871,10 @@ class Supervisor:
                 (self.record.get("version") is None or status["version"] == self.record["version"]) and type(status.get("sequence")) is int and
                 status["sequence"] >= 0 and status.get("state") == "stopped" and
                 status.get("reason") in {"operator_exit", "operator_stopped"} and
-                self.record.get("started_at", 0) <= path.stat().st_mtime <= time.time() + 5)
+                self.record.get("started_at", 0) <= modified <= time.time() + 5)
 
     def requested_pause(self) -> bool:
-        command = read_json(self.config.state_dir / "operator.json")
+        command, _ = read_live_json(self.config.state_dir / "operator.json")
         if command:
             if command.get("command") == "pause":
                 self.state["paused"] = True
@@ -822,12 +885,26 @@ class Supervisor:
             self.save()
         return self.state.get("paused", False)
 
+    def observe_pause(self):
+        # The running observer can keep broadcasting while we retry reading a
+        # command. Launch and update boundaries must still defer new work.
+        try:
+            paused = self.requested_pause()
+            self.operator_read_error = None
+            return paused
+        except LiveReadUnavailable as error:
+            if self.operator_read_error != str(error):
+                print(str(error) + "; deferring new launches and updates until readable", flush=True)
+            self.operator_read_error = str(error)
+            return self.state.get("paused", False)
+
     def wait_healthy(self) -> dict:
         deadline = time.monotonic() + self.config.health_timeout_seconds
         self.startup_phase = None
+        self.status_read_error = None
         healthy_since = None
         while time.monotonic() < deadline:
-            if self.stopping or self.requested_pause():
+            if self.stopping or self.observe_pause():
                 raise ManualStop("Operator stopped or paused the supervisor")
             status = self.heartbeat(allow_final=True)
             if status:
@@ -852,12 +929,13 @@ class Supervisor:
                         return status
                 else:
                     healthy_since = None
-            else:
+            elif not self.status_read_error or time.monotonic() - self.last_progress > 10:
                 healthy_since = None
             if not self.is_running():
                 raise HealthFailure("Broadcaster process exited during startup")
             time.sleep(1)
-        raise HealthFailure("Broadcaster did not establish stable authorized output before the health deadline")
+        reason = "Broadcaster did not establish stable authorized output before the health deadline"
+        raise HealthFailure(f"{reason}: {self.status_read_error}" if self.status_read_error else reason)
 
     def capture_startup_failure(self, error, attempt):
         # Capture *before* stop() can send a shutdown or change the process exit code.
@@ -1182,14 +1260,14 @@ class Supervisor:
             try:
                 while not self.stopping:
                     self.require_reconciled()
-                    if self.requested_pause():
+                    if self.observe_pause():
                         self.stop()
                         if self.state.get("status") not in {"paused", "blocked"}:
                             self.report("paused", "Paused until an explicit resume")
                         time.sleep(1)
                         continue
                     if self.record is None:
-                        if time.monotonic() < next_restart:
+                        if self.operator_read_error or time.monotonic() < next_restart:
                             time.sleep(1)
                             continue
                         try:
@@ -1254,7 +1332,7 @@ class Supervisor:
                         if self.state.get("restart_failures", 0) and time.monotonic() - healthy_since >= 600:
                             self.state["restart_failures"] = 0
                             self.save()
-                    if healthy and time.monotonic() >= next_poll:
+                    if healthy and not self.operator_read_error and time.monotonic() >= next_poll:
                         next_poll = time.monotonic() + self.config.poll_seconds
                         try:
                             active = self.state.get("active") or {}

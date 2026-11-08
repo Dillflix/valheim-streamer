@@ -152,6 +152,8 @@ For automatic startup after Windows login, create a Task Scheduler task for this
 
 ## Controls, failures and recovery
 
+The live JSON reader opens status and operator snapshots with read, write and delete sharing on Windows. It retries short access conflicts, including plain errno 13. A missed status sample cannot accept an installation. Only a fresh authorized live picture and publisher can complete startup. When operator.json cannot be read, an existing broadcast can continue and new launches and updates are deferred. Extended loss of status remains subject to the configured health deadline. Both filenames are reported on read denial.
+
 For a retryable startup failure, the host prints the failure and last observed startup phase before cleanup. It records whether the held game process was still running or had already exited, including the exit code when available. Inspect `last_startup_failure` using `status`. While a managed launch is recorded, the host also attempts to save the final 2 MiB of its current BepInEx log to `startup-failure-1.log`, `-2.log` or `-3.log` in the configured private state directory before sending shutdown. These are local diagnostic logs.
 
 
