@@ -332,10 +332,13 @@ class HeartbeatTests(Fixture):
         self.assertGreaterEqual(clock[0], 100 + self.config.health_timeout_seconds)
 
     @unittest.skipUnless(os.name == "nt", "requires real Windows file sharing")
-    def test_windows_writer_can_replace_an_open_snapshot_and_exclusive_lock_is_retryable(self):
+    def test_windows_snapshot_shares_delete_access_and_recovers_after_exclusive_lock(self):
         path = self.s.control_dir() / "status.json"
         self.write()
         with sup.open_live_json(path) as old:
+            # FILE_SHARE_DELETE permits a rename of the opened generation.
+            # MoveFileExW can still reject replacing an open destination.
+            path.rename(path.with_suffix(".old"))
             sup.atomic_json(path, {"new": True})
             self.assertEqual(json.load(old), self.status)
             self.assertEqual(sup.read_live_json(path)[0], {"new": True})
@@ -347,6 +350,20 @@ class HeartbeatTests(Fixture):
         finally:
             sup._kernel.CloseHandle(handle)
         self.assertEqual(sup.read_live_json(path)[0], {"new": True})
+
+    @unittest.skipUnless(os.name == "nt", "requires real Windows file sharing")
+    def test_windows_host_can_publish_over_a_briefly_locked_destination(self):
+        import threading
+        path = self.state / "operator.json"
+        sup.atomic_json(path, {"command": "pause"})
+        with path.open("rb") as held:
+            release = threading.Timer(0.04, held.close)
+            release.start()
+            try:
+                sup.atomic_json(path, {"command": "resume"})
+            finally:
+                release.join()
+        self.assertEqual(sup.read_live_json(path)[0], {"command": "resume"})
 
     def test_fresh_matching_heartbeat_is_accepted(self):
         self.write()

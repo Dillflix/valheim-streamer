@@ -94,6 +94,10 @@ def fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def access_conflict(error):
+    return getattr(error, "winerror", None) in (5, 32, 33) or error.errno == errno.EACCES
+
+
 def atomic_json(path: Path, value: dict) -> None:
     temporary = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -103,7 +107,14 @@ def atomic_json(path: Path, value: dict) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for delay in (0.025, 0.05, 0.1, 0):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as error:
+                if os.name != "nt" or not delay or not access_conflict(error):
+                    raise
+                time.sleep(delay)
         fsync_dir(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
@@ -127,8 +138,8 @@ class LiveReadUnavailable(Failure):
 def open_live_json(path):
     if os.name != "nt":
         return os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb")
-    # Allow the publisher to replace the directory entry while we read our
-    # snapshot. Open the reparse point itself so fstat can reject redirects.
+    # Share delete access with the game's native replacement operation and
+    # open the reparse point itself so fstat can reject redirects.
     generic_read, share_read_write_delete = 0x80000000, 0x7
     open_existing, open_reparse_point = 3, 0x00200000
     handle = _kernel.CreateFileW(str(path), generic_read, share_read_write_delete, None,
@@ -162,7 +173,7 @@ def read_live_json(path):
             raise Failure("Invalid JSON in " + path.name) from None
         except OSError as error:
             winerror = getattr(error, "winerror", None)
-            if winerror not in (5, 32, 33) and error.errno != errno.EACCES:
+            if not access_conflict(error):
                 raise
             if not delay:
                 code = f"WinError {winerror}" if winerror is not None else f"errno {error.errno}"
