@@ -316,8 +316,12 @@ internal sealed class ConnectionRecovery
         // UpdateCharacterList redraws m_profiles once populated and can keep an
         // early empty/local-only list while Steam Cloud mounts. Read the native
         // save catalogue on retries without changing the user's menu selection.
-        var profiles = nextProfileCheck == 0 ? Profiles!.GetValue(readyMenu) as List<PlayerProfile> :
-            SaveSystem.GetAllPlayerProfiles();
+        var profiles = Profiles!.GetValue(readyMenu) as List<PlayerProfile>;
+        if (nextProfileCheck != 0)
+        {
+            SaveSystem.InvalidateCache(SaveDataType.Character);
+            profiles = SaveSystem.GetAllPlayerProfiles();
+        }
         PlayerProfile[] matches = profiles == null ? Array.Empty<PlayerProfile>() : profiles.Where(p =>
             p.GetFilename() == profile && p.m_fileSource == profileSource).ToArray();
         if (matches.Length == 0 && now < profileDeadline)
