@@ -32,14 +32,20 @@ class StartupSetupTests(unittest.TestCase):
             root = Path(path)
             box = root / "box"
             cfg = SimpleNamespace(game_dir=box / "game", sandbox_root=box, sandbox_name="Fixture",
-                                  require_publishing=True, state_dir=root / "state", token_file=root / "state/token")
+                                  repository="ExampleOwner/test-repo", require_publishing=True,
+                                  state_dir=root / "state", token_file=root / "state/token")
             path = cfg.game_dir / "BepInEx/config/com.dillflix.valheimbroadcaster.cfg"
             path.parent.mkdir(parents=True)
             path.write_bytes(codecs.BOM_UTF8 + b"# keep\r\n[Streaming]\r\nRtmpUrl = rtmp://example/%25\r\nAutoStart = false\r\n")
             private_dir = lambda p: p.mkdir(exist_ok=True, parents=True)
             with patch("builtins.input", side_effect=["the watcher", "Cloud", "test.invalid:2456", "set"]), \
-                 patch("getpass.getpass", side_effect=["private-fixture", "github-fixture"]):
+                 patch("getpass.getpass", side_effect=["private-fixture", "github-fixture"]) as hidden, \
+                 patch("builtins.print") as output:
                 setup.configure(cfg, sup.no_symlinks, private_dir, lambda p: self.assertTrue(p.is_file()))
+            hidden.assert_called_with("GitHub token for ExampleOwner/test-repo (hidden): ")
+            guidance = " ".join(str(call.args[0]) for call in output.call_args_list)
+            self.assertIn("target_name=ExampleOwner", guidance)
+            self.assertIn("Actions: Read-only and Contents: Read-only", guidance)
             actual = path.read_bytes()
             self.assertIn(codecs.BOM_UTF8 + b"# keep\r\n", actual)
             self.assertIn(b"RtmpUrl = rtmp://example/%25\r\n", actual)

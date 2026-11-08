@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from urllib.parse import urlencode
 
 from sandboxie import guest_to_host
 
@@ -79,6 +80,15 @@ def configure(config, no_links, private_dir, private_file):
     parser = configparser.RawConfigParser(interpolation=None, delimiters=("=",))
     parser.read_string(text)
 
+    if config.token_file and not config.token_file.exists():
+        owner, repo = config.repository.split("/")
+        query = urlencode({"name": "Valheim Broadcaster Updater", "target_name": owner,
+                           "actions": "read", "contents": "read"})
+        print(f"Automatic updates require a GitHub token for {config.repository}.")
+        print("Create a fine-grained token: https://github.com/settings/personal-access-tokens/new?" + query)
+        print(f"Choose resource owner {owner}, Only select repositories, then {repo}.")
+        print("Use Actions: Read-only and Contents: Read-only. A separate hidden prompt follows the server password.")
+
     def ask(key, label, default=""):
         current = parser.get("Startup", key, fallback="") or default
         answer = input(label + (f" [{current}]" if current else "") + ": ").strip()
@@ -95,7 +105,7 @@ def configure(config, no_links, private_dir, private_file):
             not re.fullmatch(r"[0-9]{1,5}", port) or not 0 < int(port) <= 65535):
         raise ValueError("Invalid dedicated server address or port")
     old_password = parser.get("Startup", "PasswordFile", fallback="")
-    action = input("Password: set, keep existing file, or none ["
+    action = input("Server password choice (press Enter for default; enter the password at the next hidden prompt if setting it): set, keep, or none ["
                    + ("keep" if old_password else "set") + "]: ").strip().lower() or ("keep" if old_password else "set")
     password = None
     if action == "set":
@@ -120,7 +130,7 @@ def configure(config, no_links, private_dir, private_file):
     if config.token_file and not config.token_file.exists():
         if config.state_dir not in config.token_file.parents:
             raise ValueError("Create the configured token_file privately outside the sandbox before setup")
-        token = getpass.getpass("GitHub read-only token for the configured repository (hidden): ").strip()
+        token = getpass.getpass(f"GitHub token for {config.repository} (hidden): ").strip()
         if not token or len(token) > 8192 or any(c.isspace() for c in token):
             raise ValueError("A GitHub token is required for the configured token_file")
         private_dir(config.token_file.parent)
