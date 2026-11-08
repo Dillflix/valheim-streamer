@@ -2,71 +2,91 @@ using System;
 
 namespace ValheimBroadcaster.Plugin.Streaming;
 
-// Rasterize at status refresh time. Each RTMP sample then copies only occupied rows.
-// Coordinates are expressed in final encoder space, including manual FFmpeg vflip.
+// Cache glyph coverage when status changes. Only the measured panel rectangle is
+// blended into outgoing pixels. All coordinates are in the final, upright video.
 internal sealed class StreamStatusPanel
 {
-    private byte[] bitmap = Array.Empty<byte>();
-    private int panelWidth, rows, margin;
+    private OverlayFont? font;
+    private byte[] coverage = Array.Empty<byte>();
+    private int panelWidth, panelHeight, inset;
 
-    internal void Prepare(string text, int width, int height)
+    internal void Prepare(string text, int width, int height, int fontAt1080 = 14)
     {
-        int scale = Math.Max(1, Math.Min(width / 620, height / 330));
-        margin = 2 * scale;
-        int cell = 6 * scale, line = 9 * scale;
-        int columns = (width - 2 * margin) / cell;
-        int maxLines = Math.Max(1, (height * 2 / 3 - 2 * margin) / line);
-        int x = 0, y = 0, longest = 0;
-        void Layout(bool draw)
+        int size = Math.Max(OverlayFont.MinSize, Math.Min(OverlayFont.MaxSize, (height * fontAt1080 + 540) / 1080));
+        if (font == null || font.Size != size) font = new OverlayFont(size);
+        inset = Math.Max(2, (height + 45) / 90);
+        int padX = inset, padY = Math.Max(2, inset * 2 / 3);
+        int maxWidth = width - 2 * (inset + padX);
+        int maxLines = Math.Max(1, (height * 2 / 5 - 2 * padY) / font.LineHeight);
+        string[] lines = text.Split('\n');
+        int count = Math.Min(maxLines, lines.Length);
+        int longest = 0;
+        for (int i = 0; i < count; i++)
         {
-            x = y = longest = 0;
-            foreach (char c in text)
+            string line = lines[i].TrimEnd('\r');
+            bool more = i == count - 1 && count < lines.Length;
+            int length = 0, end = 0;
+            for (; end < line.Length; end++)
             {
-                if (c == '\r') continue;
-                if (c == '\n' || x == columns)
+                int advance = font[line[end]].Advance;
+                if (length + advance > maxWidth) break;
+                length += advance;
+            }
+            if (end < line.Length || more)
+            {
+                int ellipsis = font['…'].Advance;
+                while (end > 0 && length + ellipsis > maxWidth) length -= font[line[--end]].Advance;
+                line = line.Substring(0, end) + "…";
+                length += ellipsis;
+            }
+            lines[i] = line;
+            longest = Math.Max(longest, length);
+        }
+        panelWidth = longest + 2 * padX;
+        panelHeight = count * font.LineHeight + 2 * padY;
+        int area = panelWidth * panelHeight;
+        if (coverage.Length < area) coverage = new byte[area];
+        else Array.Clear(coverage, 0, area);
+        for (int i = 0; i < count; i++)
+        {
+            int pen = padX, baseline = padY + font.Ascent + i * font.LineHeight;
+            foreach (char c in lines[i])
+            {
+                var glyph = font[c];
+                for (int row = 0; row < glyph.Height; row++)
                 {
-                    if (++y == maxLines) { y--; break; }
-                    x = 0;
-                    if (c == '\n') continue;
-                }
-                if (draw && c != ' ')
-                {
-                    string bits = BroadcastBitmapFont.Glyph(c);
-                    for (int row = 0; row < 7; row++)
-                    for (int col = 0; col < 5; col++)
+                    int y = baseline + glyph.Top + row;
+                    if (y < 0 || y >= panelHeight) continue;
+                    for (int col = 0; col < glyph.Width; col++)
                     {
-                        if (bits[row * 5 + col] != '1') continue;
-                        for (int dy = 0; dy < scale; dy++)
-                        for (int dx = 0; dx < scale; dx++)
-                        {
-                            int index = 4 * ((margin + y * line + row * scale + dy) * panelWidth +
-                                margin + x * cell + col * scale + dx);
-                            bitmap[index] = bitmap[index + 1] = bitmap[index + 2] = 244;
-                        }
+                        int x = pen + glyph.Left + col;
+                        if (x < 0 || x >= panelWidth) continue;
+                        int p = y * panelWidth + x;
+                        coverage[p] = Math.Max(coverage[p], glyph.Ink[row * glyph.Width + col]);
                     }
                 }
-                longest = Math.Max(longest, ++x);
+                pen += glyph.Advance;
             }
         }
-        Layout(false);
-        panelWidth = 2 * margin + longest * cell;
-        rows = 2 * margin + (y + 1) * line;
-        int bytes = rows * panelWidth * 4;
-        if (bitmap.Length < bytes) bitmap = new byte[bytes];
-        for (int i = 0; i < bytes; i += 4)
-        {
-            bitmap[i] = 15; bitmap[i + 1] = 20; bitmap[i + 2] = 24; bitmap[i + 3] = 255;
-        }
-        Layout(true);
     }
 
     internal void Composite(byte[] rgba, int width, int height, bool flipVertical)
     {
-        int stride = panelWidth * 4;
-        for (int row = 0; row < rows; row++)
+        for (int row = 0; row < panelHeight; row++)
         {
-            int dest = flipVertical ? height - 1 - row : row;
-            Buffer.BlockCopy(bitmap, row * stride, rgba, dest * width * 4, stride);
+            int y = inset + row;
+            int dest = ((flipVertical ? height - 1 - y : y) * width + inset) * 4;
+            for (int x = 0; x < panelWidth; x++, dest += 4)
+            {
+                // Light gray text over half-transparent black, retaining scene detail
+                // even in the padding. The source is already display-encoded RGBA.
+                int ink = coverage[row * panelWidth + x];
+                int picture = (256 - ink) / 2;
+                int label = ink * 212 + 128;
+                rgba[dest] = (byte)((rgba[dest] * picture + label) >> 8);
+                rgba[dest + 1] = (byte)((rgba[dest + 1] * picture + label) >> 8);
+                rgba[dest + 2] = (byte)((rgba[dest + 2] * picture + label) >> 8);
+            }
         }
     }
 }

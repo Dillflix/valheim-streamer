@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.65";
+    public const string PluginVersion = "0.8.66";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -138,6 +138,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             stream = gameObject.AddComponent<StreamCapture>();
             stream.OverlayEnabled = () => settings.DebugOverlay.Value;
             stream.MarkerEnabled = () => settings.ReviewMarker.Value;
+            stream.OverlayFontSize = () => settings.DebugOverlayFontSize.Value;
+            stream.OverlayShowTrace = () => settings.DebugOverlayShowTrace.Value;
             stream.DescribeStatus = Status;
             diagnosticCapture = gameObject.AddComponent<DiagnosticCapture>();
             diagnosticCapture.Configure(frameHold,

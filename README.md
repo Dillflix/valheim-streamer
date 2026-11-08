@@ -272,6 +272,8 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
 | `Streaming / DebugOverlay` | `false` | Burn the operator status and trace reference into the RTMP feed. Toggle live with `broadcast stream overlay on\|off\|status`. See [remote footage review](docs/EDITORIAL-CAPTURE.md#reviewing-a-moment-from-the-live-feed). |
+| `Streaming / DebugOverlayFontSize` | `14` | Font pixels at 1080p, adjustable from 10 to 20. Scales to the encoded frame with an 8 px floor. |
+| `Streaming / DebugOverlayShowTrace` | `true` | Include the trace reference above the status lines. The private player's marker works with this line hidden. |
 | `Display / ShowStatus` | `true` | Show the director overlay |
 | `Multiplayer / ObserverConnection` | `false` | Select the read-only connection before joining; requires matching companion authorization |
 | `Automation / Enabled`, `ScenicTravel` | `true`, `true` | Acquire players and traverse generated scenic regions in a read-only session |

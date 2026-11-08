@@ -29,7 +29,7 @@ If NGINX is in another container or on another host, set `REVIEW_BIND` to the re
 
 ## Windows broadcaster
 
-1. Install the matching 0.8.65 client in the broadcaster profile. In Valheim run `broadcast capture on` and `broadcast stream marker on`. The small lower-left reference is visible on the RTMP feed. The full debug panel has its own `broadcast stream overlay on|off` control. Both stream settings persist. The marker is off by default.
+1. Install the matching 0.8.66 client in the broadcaster profile. In Valheim run `broadcast capture on` and `broadcast stream marker on`. The small lower-left reference is visible on the RTMP feed. The full debug panel has its own `broadcast stream overlay on|off` control. Both stream settings persist. The marker is off by default.
 2. Run the uploader **on Windows outside the sandbox**, under the account that can read the sandbox's actual diagnostic files. It requires standard Python 3.10+ and makes outbound HTTPS requests. Set the upload token in an environment variable, e.g. save it privately in the user environment for the scheduled account. For a one-session test in PowerShell:
    
    ```powershell

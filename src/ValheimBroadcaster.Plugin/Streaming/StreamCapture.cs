@@ -22,7 +22,8 @@ internal sealed class StreamCapture : MonoBehaviour
     internal Func<bool>? MarkerEnabled;
     private readonly ReviewMarker marker = new ReviewMarker();
     private bool markPending;
-    internal Func<bool>? OverlayEnabled;
+    internal Func<bool>? OverlayEnabled, OverlayShowTrace;
+    internal Func<int>? OverlayFontSize;
     internal Func<FramePresentation, string>? DescribeStatus;
     private readonly StreamStatusPanel panel = new StreamStatusPanel();
     private bool overlayReady, manualFlip, overlayFault;
@@ -193,8 +194,10 @@ internal sealed class StreamCapture : MonoBehaviour
             panelStamp.Presentation == stamp.Presentation && stamp.CopiedAt - panelStamp.CopiedAt < .25) return;
         try
         {
-            string reference = "TRACE " + trace + " | T " + stamp.CopiedAt.ToString("F2", CultureInfo.InvariantCulture) + " S";
-            panel.Prepare(reference + "\n" + DescribeStatus(stamp.Presentation), width, height);
+            string text = DescribeStatus(stamp.Presentation);
+            if (OverlayShowTrace?.Invoke() != false)
+                text = "TRACE " + trace + " | T " + stamp.CopiedAt.ToString("F2", CultureInfo.InvariantCulture) + " s\n" + text;
+            panel.Prepare(text, width, height, OverlayFontSize?.Invoke() ?? 14);
             panelStamp = stamp;
             panelSession = trace;
             overlayReady = true;
