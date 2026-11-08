@@ -15,6 +15,11 @@ internal sealed class CameraRig
     private readonly CinemachineShotRig creatureCamera = new CinemachineShotRig();
     private readonly PlayerComplementaryCamera complementary = new PlayerComplementaryCamera();
     private readonly ScenicCameraRig scenicCamera = new ScenicCameraRig();
+    // Minimal baseline camera. While BroadcastSettings.SimpleFollow is on and a
+    // live player binding exists, it presents exclusively and the directed
+    // editorial pipeline above is not ticked for camera output.
+    private SimpleFollowCamera? simpleFollow;
+    private bool simpleActive;
     private bool proceduralActive, scenicActive, creatureActive, complementaryActive, presentationConfirmed, editorialHold;
     private long guideMission;
     private float guideYaw, guidePitch, guideFov, guideProgress;
@@ -24,13 +29,13 @@ internal sealed class CameraRig
     internal bool ComplementaryActive => complementaryActive;
     internal bool StoryContinuityReady { get; private set; }
     internal bool DisplayedPlayerUsable => guideMission == 0 && !scenicActive && !creatureActive && !complementaryActive && LastPictureUsable;
-    internal string PerspectiveDescription => guideMission > 0 ? "Journey" : complementaryActive ? complementary.Description : scenicActive ? "Scenic" : creatureActive ? "Creature" : "Player primary";
+    internal string PerspectiveDescription => guideMission > 0 ? "Journey" : simpleActive ? "Player simple follow" : complementaryActive ? complementary.Description : scenicActive ? "Scenic" : creatureActive ? "Creature" : "Player primary";
     internal long PresentedActorShotId => proceduralActive && !scenicActive ? ActorCamera.PresentedShotId : -1;
     private CinemachineShotRig ActorCamera => complementaryActive ? complementary.Rig : creatureActive ? creatureCamera : shotCamera;
     private string? presentationNotice;
     private string legacyMode = "awaiting coverage";
     internal string Diagnostics => presentationNotice != null ? "Camera: " + presentationNotice :
-        guideMission > 0 ? "Journey guide: continuous travel" : scenicActive ? scenicCamera.Diagnostics : proceduralActive ? (complementaryActive ? complementary.Description + "; " : "") + ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
+        guideMission > 0 ? "Journey guide: continuous travel" : simpleActive ? simpleFollow!.Diagnostics : scenicActive ? scenicCamera.Diagnostics : proceduralActive ? (complementaryActive ? complementary.Description + "; " : "") + ActorCamera.Diagnostics : "Camera: legacy " + legacyMode;
     internal bool LastPictureUsable { get; private set; }
     internal bool IsProcedural => guideMission > 0 || proceduralActive;
     internal string PictureReason => scenicActive ? scenicCamera.LastFailure : proceduralActive ? ActorCamera.PictureReason : LastFailure;
@@ -200,6 +205,33 @@ internal sealed class CameraRig
         CinematicShotInput? input = playerTarget != null ? CinematicShotInput.ForPlayer(playerTarget, selectionRevision) :
             creatureTarget ? CinematicShotInput.ForCreature(creatureTarget!, selectionRevision) :
             scenicPlan != null ? CinematicShotInput.ForScenic(scenicPlan, scenicProgress, selectionRevision, scenicVisibility) : (CinematicShotInput?)null;
+        // Minimal baseline: one native camera follows the live tracked player
+        // directly. The entire directed pipeline (shot rig, directors, scenic
+        // production) is not ticked for camera output on this path; capture
+        // and streaming still flow through the same AcceptedRenderPose and
+        // compositor presentation as every other mode. Without a live player
+        // binding, coverage falls through to the existing directed paths.
+        if (settings.SimpleFollow.Value && playerTarget != null && playerTarget.LoadedPlayer)
+        {
+            if (proceduralActive || scenicActive || creatureActive || complementaryActive)
+            {
+                complementary.Reset(); complementaryActive = false;
+                shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset();
+                scenicActive = creatureActive = proceduralActive = false;
+            }
+            simpleFollow ??= new SimpleFollowCamera();
+            simpleActive = true;
+            if (!simpleFollow.TrySolve(playerTarget.LoadedPlayer!, settings, camera, dt,
+                    out Vector3 simplePosition, out Quaternion simpleRotation, out float simpleFov))
+                return Unready(simpleFollow.LastFailure);
+            camera.transform.SetPositionAndRotation(simplePosition, simpleRotation);
+            camera.fieldOfView = simpleFov;
+            AcceptedRenderPose = CameraPoseSampler.Sample(camera, simplePosition, simpleRotation, simpleFov);
+            if (skyCamera) skyCamera.fieldOfView = simpleFov;
+            LastPictureUsable = true; LastFailure = "none"; hasPose = false;
+            return true;
+        }
+        if (simpleActive) { simpleFollow?.Reset(); simpleActive = false; }
         if (settings.ProceduralPlayers.Value && playerTarget == null && !creatureTarget && scenicPlan?.IsDirected == true)
         {
             if (!scenicActive) { shotCamera.Reset(); scenicCamera.Reset(); }
@@ -315,7 +347,7 @@ internal sealed class CameraRig
     }
 
     internal void ResetPose()
-    { guideMission = 0; hasPose = false; complementary.Reset(); complementaryActive = StoryContinuityReady = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
+    { guideMission = 0; hasPose = false; complementary.Reset(); complementaryActive = StoryContinuityReady = false; shotCamera.Reset(); creatureCamera.Reset(); scenicCamera.Reset(); simpleFollow?.Reset(); scenicActive = creatureActive = proceduralActive = simpleActive = false; LastPictureUsable = false; presentationNotice = "awaiting a ready shot"; }
 
     internal void Restore()
     {
@@ -329,7 +361,9 @@ internal sealed class CameraRig
     {
         guideMission = 0; AcceptedRenderPose = default;
         complementary.Dispose(); complementaryActive = StoryContinuityReady = false;
-        shotCamera.Dispose(); creatureCamera.Dispose(); scenicCamera.Dispose(); scenicActive = creatureActive = proceduralActive = false; LastPictureUsable = false; presentationNotice = "inactive";
+        shotCamera.Dispose(); creatureCamera.Dispose(); scenicCamera.Dispose();
+        simpleFollow?.Dispose(); simpleFollow = null;
+        scenicActive = creatureActive = proceduralActive = simpleActive = false; LastPictureUsable = false; presentationNotice = "inactive";
         if (camera)
         {
             camera.fieldOfView = savedFov;
