@@ -92,3 +92,5 @@ python tools/review-footage.py "BepInEx/diagnostics/ValheimBroadcaster/footage" 
 ```
 
 Send the ZIP to a developer. After extracting it, open `footage-review.html` to scrub the footage, or inspect the window's JSONL for all retained timestamped trace events. The ZIP includes entire completed MP4/sidecar pairs overlapping the interval, so reviewers can see footage on either side of it. If only the trace is available, the ZIP contains just that trace. If a segment is still recording, retry after it closes. The command reports counts and fails explicitly when neither source covers the interval.
+
+For private self-service downloads and the player’s **Report this moment** control, see the [Owncast review host and Windows uploader](../tools/stream-review/README.md).

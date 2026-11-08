@@ -317,3 +317,5 @@ When other players become ready, coverage switches to them and rotates if severa
 **0.5.0 runtime failure:** distant reference movement can exclude and unload the broadcaster itself, leaving a black view that `off` cannot repair. 0.5.1 adds a pre-removal guard that aborts the attempt and stops broadcasting if the observer is not retained. This is containment; dual-region loading is still unsolved. Rejoin after a failure on the older build.
 
 No second player is needed to test scene acquisition. See [SOLO-ACQUISITION.md](docs/SOLO-ACQUISITION.md) for the mark → travel away → acquire workflow. This exercises network interest and rendering, not remote-player replication or teleport travel.
+
+[Private stream review and Report this moment](tools/stream-review/README.md) pairs the developer player's displayed frame with retained diagnostic footage and trace data.

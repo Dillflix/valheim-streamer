@@ -19,6 +19,9 @@ internal sealed class StreamCapture : MonoBehaviour
     private string preflightFailure = "", orientationDiagnostics = "Orientation has not been measured.";
     private bool preflightPermanent;
     private ProgramFrameStamp pendingFrame;
+    internal Func<bool>? MarkerEnabled;
+    private readonly ReviewMarker marker = new ReviewMarker();
+    private bool markPending;
     internal Func<bool>? OverlayEnabled;
     internal Func<FramePresentation, string>? DescribeStatus;
     private readonly StreamStatusPanel panel = new StreamStatusPanel();
@@ -173,6 +176,8 @@ internal sealed class StreamCapture : MonoBehaviour
         // diagnostic banners and screen-space HUD/UI never become stream input.
         // Missing or stale compositor output supplies an intentional clean slate.
         pendingFrame = program.CopyProgramFrame(output, orientation?.FlipCamera ?? false, orientation?.FlipSlate ?? false);
+        markPending = MarkerEnabled?.Invoke() == true && ScenicTrace.Enabled &&
+            marker.Prepare(ScenicTrace.SessionId, pendingFrame.CopiedAt);
         PrepareOverlay(pendingFrame, output.width, output.height);
         pending = true;
         try { AsyncGPUReadback.Request(output, 0, TextureFormat.RGBA32, ReadbackFinished); }
@@ -212,6 +217,8 @@ internal sealed class StreamCapture : MonoBehaviour
             request.GetData<byte>().CopyTo(pixels);
             if (overlayReady && output && OverlayEnabled?.Invoke() == true)
                 panel.Composite(pixels, output.width, output.height, manualFlip);
+            if (markPending && output && MarkerEnabled?.Invoke() == true)
+                marker.Composite(pixels, output.width, output.height, manualFlip);
             pixels = session.SubmitVideo(pixels);
         }
         catch { session?.Fail("Frame transfer failed; restart streaming."); }
