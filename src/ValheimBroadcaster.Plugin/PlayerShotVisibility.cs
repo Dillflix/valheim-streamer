@@ -154,9 +154,12 @@ internal sealed class PlayerShotVisibility
         Refresh(focus); RefreshActive(); actors.Refresh(focus);
         Vector3 forward = rotation * Vector3.forward, right = rotation * Vector3.right, up = rotation * Vector3.up;
         float tangent = Mathf.Tan(fov * Mathf.Deg2Rad * 0.5f);
-        // Physical clearance remains separate from readable composition and
-        // leaf coverage. An offscreen player does not mean the world unloaded.
-        int count = Physics.OverlapSphereNonAlloc(camera, 0.25f, overlaps, obstructionMask, QueryTriggerInteraction.Ignore);
+        // The camera is a virtual point, not a solid body. Only actual
+        // penetration of solid geometry invalidates a pose (an epsilon radius
+        // catches the camera point sitting in a surface); standing NEAR a
+        // stump or post is fine - the deoccluder displaces around props and
+        // the exact near-plane box below guards the rendered image.
+        int count = Physics.OverlapSphereNonAlloc(camera, 0.05f, overlaps, obstructionMask, QueryTriggerInteraction.Ignore);
         if (SolidOverlap(count)) return Invalid("Camera intersects solid geometry");
         count = Physics.OverlapBoxNonAlloc(camera + forward * nearClip,
             new Vector3(nearClip * tangent * aspect, nearClip * tangent, 0.04f), overlaps,
@@ -371,8 +374,11 @@ internal sealed class PlayerShotVisibility
             Finite(aspect) && Finite(nearClip) && fov >= 1f && fov <= 170f && aspect > 0 && nearClip > 0;
     }
 
-    // Reused by the adapter when validating the actual interpolated movement.
-    // This checks physical safety only; foliage never blocks carrier movement.
+    // Reused by the adapter when validating travel blends and repair arcs.
+    // A thin ray keeps long moves from passing through terrain and structure
+    // walls; it deliberately models no camera body, so clutter beside the
+    // route (stumps, posts, fences) cannot block movement. The deoccluder
+    // displaces around props and visibility scoring judges the picture.
     internal bool SegmentClear(Vector3 from, Vector3 to)
     {
         if (!TargetRoster.Finite(from) || !TargetRoster.Finite(to)) return false;
@@ -380,7 +386,7 @@ internal sealed class PlayerShotVisibility
         Vector3 delta = to - from;
         if (!TargetRoster.Finite(delta) || !Finite(delta.sqrMagnitude)) return false;
         if (delta.sqrMagnitude <= 0.0001f) return true;
-        int count = Physics.SphereCastNonAlloc(from, 0.25f, delta.normalized, hits,
+        int count = Physics.RaycastNonAlloc(from, delta.normalized, hits,
             delta.magnitude, obstructionMask, QueryTriggerInteraction.Ignore);
         if (count == hits.Length) return false;
         for (int i = 0; i < count; i++) if (Solid(hits[i].collider)) return false;

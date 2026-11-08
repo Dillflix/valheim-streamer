@@ -2146,12 +2146,13 @@ internal sealed class CinemachineShotRig : IDisposable
         }
         Quaternion wantedRotation = PredictRotation(lastPosition, lastRotation, lastPoseFocus, wanted, focus);
         Quaternion futureRotation = PredictRotation(wanted, wantedRotation, focus, future, predictedFocus);
-        // Necessary tracking uses the current supported path. Uncertain future
-        // terrain or foliage can stop development, but cannot strand an otherwise
-        // valid camera/carrier while the observed player keeps moving.
-        var currentPath = visibility.Evaluate(wanted, wantedRotation, shotSubjects, lastFov, Aspect, NearClipPlane);
-        if (!currentPath.CameraClear || !SegmentClear(lastPosition, wanted) ||
-            !PositionSupported(wanted, focus, continuous, moveCarrier))
+        // The camera is a virtual point, not a solid body: proximity to world
+        // clutter (a stump, a post, a fence) never halts pursuit. The
+        // deoccluder displaces around obstacles and visibility scoring judges
+        // the picture. Only genuinely unavailable space - unloaded geometry,
+        // interior confinement, a pose collapsing onto the subject - rolls the
+        // plan back, so the anchor cannot run into world that does not exist.
+        if (!PositionSupported(wanted, focus, continuous, moveCarrier))
         {
             // Roll the plan back as well as its helper transform. Otherwise the
             // hidden planner could run far ahead and jump when clearance returns.
