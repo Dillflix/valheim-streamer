@@ -374,6 +374,18 @@ internal sealed class PlayerShotVisibility
             Finite(aspect) && Finite(nearClip) && fov >= 1f && fov <= 170f && aspect > 0 && nearClip > 0;
     }
 
+    // Minimal in-geometry probe for the distance-invariant presenter: true
+    // only when the camera point itself penetrates solid geometry. This is
+    // one of the two checks allowed to SHAPE guaranteed pursuit motion (the
+    // other is the terrain floor); neither may cancel it.
+    internal bool CameraPointInsideSolid(Vector3 camera)
+    {
+        if (!TargetRoster.Finite(camera)) return false;
+        if (obstructionMask == 0) obstructionMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        int count = Physics.OverlapSphereNonAlloc(camera, 0.05f, overlaps, obstructionMask, QueryTriggerInteraction.Ignore);
+        return SolidOverlap(count);
+    }
+
     // Reused by the adapter when validating travel blends and repair arcs.
     // A thin ray keeps long moves from passing through terrain and structure
     // walls; it deliberately models no camera body, so clutter beside the

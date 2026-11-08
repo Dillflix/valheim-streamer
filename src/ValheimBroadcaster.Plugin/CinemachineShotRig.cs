@@ -114,6 +114,13 @@ internal sealed class CinemachineShotRig : IDisposable
     // writes own azimuth; past this clock the displayed actor camera hands
     // the horizontal axis back to native recentering (stay-behind follow).
     private float headingSteerUntil;
+    // Last-line follow guarantee: if the presented camera effectively sat
+    // still while the live subject receded beyond the shot's nominal band,
+    // it moves toward the subject regardless of holds or validation vetoes.
+    private readonly FollowDistanceInvariant followInvariant = new FollowDistanceInvariant();
+    private float presentedNominalDistance = 8f;
+    private string invariantNote = "";
+    private static int? invariantTerrainMask;
     private CinematicShotMotion acceptedMotion, approvedMotion;
     private PlayerShotVisibility.Result lastView;
     internal float NearClipPlane { get; set; } = 0.3f;
@@ -586,13 +593,32 @@ internal sealed class CinemachineShotRig : IDisposable
                 }
                 if (!trackingRetained)
                 {
-                    // Guard this frame with the revalidated readable source.
-                    // The live candidate's anchor is deliberately left alone so
-                    // it keeps following the subject; subsequent frames blend
-                    // to its tracked pose, or cut once the subject is truly
-                    // lost behind solid cover.
-                    position = lastPosition; rotation = sourceRotation; fov = lastFov;
-                    actualView = sourceView; retainedReadablePose = true;
+                    // A Hold on the LIVE candidate must keep tracking: present
+                    // its freshly solved pose whenever that pose is physically
+                    // presentable, even while its picture is still dirty — a
+                    // dirty endpoint steers composition and repair, it never
+                    // parks the camera while the subject recedes. (With the
+                    // shoulder-height follow a foliage-dirty endpoint can
+                    // persist for many seconds; freezing on the revalidated
+                    // source every frame was the camera-left-behind loop.)
+                    if (choice == previousChoice && endpoint.CameraClear &&
+                        PositionSupported(desired, focus, continuous, moveCarrier) &&
+                        SegmentClear(lastPosition, desired) &&
+                        ShotCandidateRanking.Admissible(SceneKind, true, PictureUsable(endpoint)))
+                    {
+                        position = desired; rotation = desiredRotation; fov = desiredFov;
+                        actualView = endpoint;
+                        candidate.TrajectoryReason = "holding the live shot; tracking continues";
+                    }
+                    else
+                    {
+                        // Guard this frame with the revalidated readable source.
+                        // The live candidate's anchor is deliberately left alone
+                        // so it keeps following the subject; the solved pose is
+                        // presented again as soon as it is physically supported.
+                        position = lastPosition; rotation = sourceRotation; fov = lastFov;
+                        actualView = sourceView; retainedReadablePose = true;
+                    }
                 }
                 // Keep the normal 5 Hz standby survey. Repeatedly rejecting an
                 // obscured destination must not turn all cameras into 60 Hz work.
@@ -781,6 +807,10 @@ internal sealed class CinemachineShotRig : IDisposable
             return Fail("Presented camera geometry unavailable");
         if (!ShotCandidateRanking.Admissible(SceneKind, true, PictureUsable(lastView)))
             return Fail("Creature camera lost subject readability before presentation");
+        // Unconditional last line: runs after every gate above has spoken, so
+        // no hold, validation failure or trajectory state can park the
+        // presented camera while the subject recedes out of the shot's band.
+        ApplyDistanceInvariant(candidate, ref position, ref rotation, focus, now, step);
         UpdateVisiblePlayers(context, candidate, lastView);
         lastEncounterCoverage = MeasureEncounter(context, candidate, position, rotation, fov, lastView);
         shownEncounterTargetId = context.EncounterTargetId;
@@ -846,7 +876,7 @@ internal sealed class CinemachineShotRig : IDisposable
             (settings.NativeConfiner.Value ? roomConfiner!.Diagnostics : "Confiner disabled") + "; " +
             (nativeScenicPath ? $"Spline Dolly: {scenicPath.Length:F1}m path; distance {candidate.Dolly.Distance:F1}m" :
                 IsScenic ? "Spline Dolly unavailable/disabled; scenic fallback" : candidate.PassBy ? passBy.Reason : candidate.Observational ? candidate.Observation.Diagnostics : "Orbital Follow actor body") +
-            "; " + candidate.Framing.Diagnostics + "; " + candidate.Elevation.Description + "; native validated blend; " + CameraWorkBudget.Shared.Diagnostics;
+            "; " + candidate.Framing.Diagnostics + "; " + candidate.Elevation.Description + "; native validated blend; " + CameraWorkBudget.Shared.Diagnostics + invariantNote;
         }
         return true;
     }
@@ -1034,6 +1064,14 @@ internal sealed class CinemachineShotRig : IDisposable
         if (!live.CameraClear || !live.PrimaryInFrame || live.PrimaryVisibility < 0.45f) return Fail(failure);
         if (!ShotCandidateRanking.Admissible(SceneKind, true, PictureUsable(live))) return Fail(failure);
         if (fallbackSince < 0) { fallbackSince = now; NoteCorrection(now); }
+        if (previousChoice >= 0 && candidates[previousChoice] != null)
+        {
+            // The hold path is exactly where a parked presentation hides; the
+            // invariant override applies here too, and the held pose follows.
+            ApplyDistanceInvariant(candidates[previousChoice], ref position, ref rotation, focus, now,
+                Mathf.Clamp(now - lastPoseAt, 0f, 0.25f));
+            lastPosition = position; lastRotation = rotation;
+        }
         // This is fresh live footage from a revalidated camera, not an old image
         // or an assertion that a rejected candidate has loaded successfully.
         lastAimAnchor += focus - lastPoseFocus;
@@ -1051,7 +1089,7 @@ internal sealed class CinemachineShotRig : IDisposable
         LastFailure = "none"; LastPictureUsable = PictureUsable(live);
         lastCuePresented = false;
         if (previousChoice >= 0) UpdatePictureContext(previousChoice, candidates[previousChoice], position, rotation, fov, now);
-        Diagnostics = "Procedural camera: holding a validated live viewpoint while camera correction settles; " + live.Reason;
+        Diagnostics = "Procedural camera: holding a validated live viewpoint while camera correction settles; " + live.Reason + invariantNote;
         return true;
     }
 
@@ -1163,6 +1201,7 @@ internal sealed class CinemachineShotRig : IDisposable
         float elapsed = candidate.TrajectoryAt >= 0 ? Mathf.Clamp(now - candidate.TrajectoryAt, 0, 0.25f) : Mathf.Clamp(dt, 0, 0.1f);
         candidate.TrajectoryAt = now;
         float nominalDistance = Mathf.Max(3f, Offset(index, NeutralMotion(), settings, confined).magnitude);
+        if (index == previousChoice || previousChoice < 0) presentedNominalDistance = nominalDistance;
         float lagBudget = Mathf.Clamp(nominalDistance * 0.55f, confined ? 1.5f : 3f, confined ? 3f : 10f);
         float framingPressure = 0;
         if (candidate.Camera.PreviousStateIsValid)
@@ -2428,6 +2467,64 @@ internal sealed class CinemachineShotRig : IDisposable
         return false;
     }
 
+    // Last-line distance invariant: unconditional. It fires even when every
+    // other policy chose to hold, after all ordinary gates have spoken, and
+    // overrides the presented pose with bounded pursuit toward the subject.
+    // Only the floors that may never fail silently shape the step - not
+    // under terrain and not inside solid geometry - and they lift or shorten
+    // the motion, never stop it. Observational and pass-by cameras are
+    // deliberate world-fixed compositions and keep their own finite leases.
+    private void ApplyDistanceInvariant(Candidate candidate, ref Vector3 position, ref Quaternion rotation,
+        Vector3 focus, float now, float dt)
+    {
+        invariantNote = "";
+        if (IsScenic || candidate.Observational || candidate.PassBy) { followInvariant.Reset(); return; }
+        FollowInvariantDecision decision;
+        try
+        {
+            decision = followInvariant.Observe(now, ToCore(position), ToCore(focus),
+                Mathf.Max(3f, presentedNominalDistance), Mathf.Clamp(dt, 0f, 0.25f));
+        }
+        catch (ArgumentOutOfRangeException) { followInvariant.Reset(); return; }
+        if (!decision.Engaged) return;
+        invariantNote = "; distance invariant engaged";
+        Vector3 delta = FromCore(decision.Displacement);
+        if (delta.sqrMagnitude <= 0.000001f) return;
+        Vector3 proposed = ShapeInvariantMotion(position, position + delta);
+        delta = proposed - position;
+        rotation = PredictRotation(position, rotation, focus, proposed, focus);
+        position = proposed;
+        // Drag every frozen reference frame with the override: the delta-based
+        // planners (wanted = lastPosition + anchor - lastPresentedAnchor) and
+        // any hold re-pin now travel toward the subject instead of pulling
+        // the camera back to the parked pose next frame.
+        lastPresentedAnchor += delta;
+        candidate.TrackingPoint.position += delta;
+        candidate.Trajectory.Synchronize(ToCore(candidate.TrackingPoint.position - candidate.Spatial.Offset), false);
+        candidate.TrajectoryReason = "distance invariant pursuing the receding subject";
+        NoteCorrection(now);
+    }
+
+    // The only checks allowed to SHAPE invariant motion: never under terrain,
+    // never inside solid geometry. They lift or shorten the step; pursuit
+    // itself is never cancelled.
+    private Vector3 ShapeInvariantMotion(Vector3 from, Vector3 proposed)
+    {
+        invariantTerrainMask ??= LayerMask.GetMask("terrain");
+        if (Physics.Raycast(proposed + Vector3.up * 60f, Vector3.down, out RaycastHit ground, 120f,
+                invariantTerrainMask.Value, QueryTriggerInteraction.Ignore) &&
+            ground.point.y + 0.4f > proposed.y)
+            proposed.y = ground.point.y + 0.4f;
+        if (!visibility.CameraPointInsideSolid(proposed)) return proposed;
+        for (int lift = 1; lift <= 2; lift++)
+        {
+            Vector3 raised = proposed + Vector3.up * lift;
+            if (!visibility.CameraPointInsideSolid(raised)) return raised;
+        }
+        // Everything upward is solid too: shorten the step rather than stop.
+        return Vector3.Lerp(from, proposed, 0.25f);
+    }
+
     private static void SynchronizeActorTrajectory(Candidate candidate, Vector3 acceptedAnchor, Vector3 acceptedOffset)
     {
         candidate.Spatial.Reject(acceptedOffset);
@@ -2479,6 +2576,7 @@ internal sealed class CinemachineShotRig : IDisposable
         velocity = lastAnchorVelocity = renderedVelocity = transitionVelocity = Vector3.zero; hasPose = lastSucceeded = false; solvedAt = lastPoseAt = -1; solvedFrame = -1;
         evaluateAt = predictionAt = 0; previousChoice = motionChoice = -1; transitionElapsed = 2; space = 1;
         motionBlocked = false; acceptedMotion = approvedMotion = NeutralMotion(); lastCorrection = -10; fallbackSince = -1; headingSteerUntil = 0;
+        followInvariant.Reset(); invariantNote = ""; presentedNominalDistance = 8f;
         playerSceneId = 0; playerContextFrame = activeContext = null; playerContextAt = -1;
         unreadableSince = readableSince = -1; recoverySearchAt = 0; recoveryEpoch = 0; recoverySearch = confined = false;
         transitionSeconds = 1.4f; intent = director.Intent;
