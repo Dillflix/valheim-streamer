@@ -152,6 +152,9 @@ For automatic startup after Windows login, create a Task Scheduler task for this
 
 ## Controls, failures and recovery
 
+For a retryable startup failure, the host prints the failure and last observed startup phase before cleanup. It records whether the held game process was still running or had already exited, including the exit code when available. Inspect `last_startup_failure` using `status`. While a managed launch is recorded, the host also attempts to save the final 2 MiB of its current BepInEx log to `startup-failure-1.log`, `-2.log` or `-3.log` in the configured private state directory before sending shutdown. These are local diagnostic logs.
+
+
 All commands take the same `--config` path:
 
 | Command | Behavior |

@@ -612,6 +612,7 @@ class Supervisor:
         self.state: dict = {}
         self.sequence = -1
         self.last_progress = 0.0
+        self.startup_phase = None
         self.adapter = None
 
     @property
@@ -736,6 +737,12 @@ class Supervisor:
                 return None
         except (Failure, FileNotFoundError):
             return None
+        except OSError as error:
+            # The game publishes by replacing this file. A sharing/lock violation
+            # leaves this sample unavailable; the existing health deadline still applies.
+            if getattr(error, "winerror", None) in (32, 33):
+                return None
+            raise
         if status.get("schema") != 1 or status.get("session_id") != self.record["session_id"] or status.get("pid") != self.record["pid"]:
             return None
         if (status.get("supervisor_protocol") != 1 or not isinstance(status.get("source_sha"), str) or
@@ -817,7 +824,7 @@ class Supervisor:
 
     def wait_healthy(self) -> dict:
         deadline = time.monotonic() + self.config.health_timeout_seconds
-        last_phase = None
+        self.startup_phase = None
         healthy_since = None
         while time.monotonic() < deadline:
             if self.stopping or self.requested_pause():
@@ -825,8 +832,8 @@ class Supervisor:
             status = self.heartbeat(allow_final=True)
             if status:
                 phase = status.get("startup_phase")
-                if phase in ("waiting_for_menu", "selecting_character", "joining_server", "password_submitted", "authorized") and phase != last_phase:
-                    last_phase = phase
+                if phase in ("waiting_for_menu", "selecting_character", "joining_server", "password_submitted", "authorized") and phase != self.startup_phase:
+                    self.startup_phase = phase
                     self.report("starting", "Game startup: " + phase)
                 if status.get("state") == "stopped":
                     raise ManualStop("Broadcaster was stopped by the operator")
@@ -851,6 +858,35 @@ class Supervisor:
                 raise HealthFailure("Broadcaster process exited during startup")
             time.sleep(1)
         raise HealthFailure("Broadcaster did not establish stable authorized output before the health deadline")
+
+    def capture_startup_failure(self, error, attempt):
+        # Capture *before* stop() can send a shutdown or change the process exit code.
+        if isinstance(error, OSError):
+            code = getattr(error, "winerror", None)
+            reason = f"{type(error).__name__} (WinError {code})" if code is not None else f"{type(error).__name__} (errno {error.errno})"
+            trace = error.__traceback__
+            while trace and trace.tb_next and trace.tb_next.tb_frame.f_code.co_filename == __file__:
+                trace = trace.tb_next
+            if trace:
+                reason += " in " + trace.tb_frame.f_code.co_name
+        else:
+            reason = str(error)  # Failure contains operator-safe text.
+        process = "no retained process"
+        if self.process is not None:
+            try:
+                code = self.process.poll()
+                process = "running before supervisor cleanup" if code is None else f"already exited, code {code} (0x{code & 0xffffffff:08X})"
+            except (OSError, SandboxieError):
+                process = "process state unavailable"
+        phase = self.startup_phase or "before first startup heartbeat"
+        message = f"{reason} | {phase} | {process}"
+        self.state["last_startup_failure"] = {"at": int(time.time()), "message": message,
+                                              "session_id": self.record.get("session_id") if self.record else None}
+        print("Startup failure before cleanup:", message, flush=True)
+        if self.record:
+            # Reuse at most three slots in the private host state directory.
+            self.preserve_log(self.config.state_dir, f"startup-failure-{min(attempt, 3)}.log")
+        return message
 
     def signal_owned_group(self, sig: int) -> None:
         if not self.record:
@@ -1026,6 +1062,7 @@ class Supervisor:
                 stream.seek(max(0, source.stat().st_size - 2 * 1024 * 1024))
                 content = stream.read(2 * 1024 * 1024)
             target = transaction / name
+            no_symlinks(target)
             with target.open("wb") as stream:
                 stream.write(content)
                 stream.flush()
@@ -1156,6 +1193,7 @@ class Supervisor:
                             time.sleep(1)
                             continue
                         try:
+                            self.startup_phase = None
                             expected = baseline or self.state.get("active") or {}
                             if baseline and self.installed_baseline(installed_manifest) != baseline:
                                 raise Failure("The supplied baseline manifest changed during startup")
@@ -1179,16 +1217,18 @@ class Supervisor:
                             self.state["paused"] = True
                             self.report("blocked", str(error))
                             continue
-                        except (Failure, OSError):
-                            self.stop()
+                        except (Failure, OSError) as error:
                             count = self.state.get("restart_failures", 0) + 1
+                            detail = self.capture_startup_failure(error, count)
+                            self.stop()
                             self.state["restart_failures"] = count
                             if count >= 3:
                                 self.state["paused"] = True
-                                self.report("blocked", "Three startup attempts failed; inspect local diagnostics and explicitly resume")
+                                self.report("blocked", f"Startup failed three times. {detail}. Explicit resume required")
                             else:
-                                next_restart = time.monotonic() + min(300, 30 * 2 ** (count - 1))
-                                self.report("backoff", "Startup failed; bounded retry scheduled")
+                                delay = min(300, 30 * 2 ** (count - 1))
+                                next_restart = time.monotonic() + delay
+                                self.report("backoff", f"{detail}. Retry scheduled in {delay}s")
                             continue
                     status = self.heartbeat(allow_final=True)
                     if status and status.get("state") in {"stopped", "blocked"}:

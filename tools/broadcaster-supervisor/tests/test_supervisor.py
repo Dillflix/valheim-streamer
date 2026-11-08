@@ -259,6 +259,20 @@ class HeartbeatTests(Fixture):
     def write(self):
         sup.atomic_json(self.s.control_dir() / "status.json", self.status)
 
+    def test_locked_heartbeat_is_one_unavailable_sample(self):
+        self.write()
+        for number in (32, 33, 5):
+            with self.subTest(number=number):
+                error = PermissionError("test")
+                error.winerror = number
+                with patch.object(sup, "read_json", side_effect=error):
+                    if number == 5:
+                        with self.assertRaises(PermissionError):
+                            self.s.heartbeat()
+                    else:
+                        self.assertIsNone(self.s.heartbeat())
+        self.assertEqual(self.s.heartbeat(), self.status)
+
     def test_fresh_matching_heartbeat_is_accepted(self):
         self.write()
         self.assertEqual(self.s.heartbeat(), self.status)
@@ -395,6 +409,21 @@ class LoopTests(Fixture):
         self.s.run()
         self.assertEqual(len(self.launches), 1)
         self.assertTrue(self.s.state["paused"])
+
+    def test_failure_evidence_distinguishes_live_game_from_exit_before_stop(self):
+        self.s.record = {"session_id": "e" * 32}
+        self.s.startup_phase = "authorized"
+        (self.game / "BepInEx/LogOutput.log").write_text("on-air before stop")
+        error = PermissionError(13, "secret-argument")
+        for code, expected in [(None, "running before supervisor cleanup"), (3221225477, "0xC0000005")]:
+            self.s.process = SimpleNamespace(poll=lambda: code)
+            message = self.s.capture_startup_failure(error, 2)
+            self.assertIn(expected, message)
+            self.assertIn("authorized", message)
+            self.assertIn("PermissionError", message)
+            self.assertNotIn("secret-argument", message)
+            self.assertEqual(message, self.s.state["last_startup_failure"]["message"])
+            self.assertEqual("on-air before stop", (self.state / "startup-failure-2.log").read_text())
 
     def test_manual_baseline_adopts_only_after_stable_health(self):
         new = {"version": "0.8.20", "source_sha": "a" * 40, "run_number": 0}
