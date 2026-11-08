@@ -188,6 +188,7 @@ internal static class Program
             .Concat(ShotProjectionTests.Cases())
             .Concat(ShotCompositionPolicyTests.Cases())
             .Concat(FrameRetentionPolicyTests.Cases())
+            .Concat(FollowDistanceInvariantTests.Cases())
             .Concat(ObserverContextTests.Cases()).ToArray();
 
         int failed = 0;
