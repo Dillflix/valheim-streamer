@@ -16,6 +16,8 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<float> EnvironmentCycleSeconds;
     internal readonly ConfigEntry<string> EnvironmentWeather;
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
+    internal readonly ConfigEntry<bool> SimpleFollow;
+    internal readonly ConfigEntry<float> SimpleFollowDistance;
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
     internal readonly ConfigEntry<bool> PredictiveShots, ShotSequences, ShotScales, RenderedPictureEvaluation;
     internal readonly ConfigEntry<bool> NativeConfiner, NativeSplineDolly, NativeClearShot;
@@ -84,6 +86,8 @@ internal sealed class BroadcastSettings
         WildlifeCutaways = config.Bind("Idle", "WildlifeCutaways", true, "Allow nearby wildlife cutaways after every connected ordinary player has been observed idle for at least 60 seconds. Requires the optional companion activity feed; no spawning, simulation, or travel is enabled.");
         CreatureRadius = config.Bind("Idle", "CreatureRadius", 50f, Range("Loaded-creature search radius around the survey origin in metres.", 5f, 100f));
         AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
+        SimpleFollow = config.Bind("Camera", "SimpleFollow", true, "Minimal single-camera follow baseline: one native camera follows the covered player directly, framed slightly center-left and settling behind their facing. Disables the directed multi-camera editorial system until the baseline is trusted.");
+        SimpleFollowDistance = config.Bind("Camera", "SimpleFollowDistance", 6f, Range("Simple follow orbit distance from the subject in metres.", 2f, 30f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use the shared Cinemachine pipeline for player, creature and scenic coverage. False selects legacy fixed framing for comparison. This existing config key is retained for compatibility.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
         PredictiveShots = config.Bind("Camera", "PredictiveShots", true, "Prefer presently readable viewpoints expected to remain useful during observed movement. Prediction is bounded, uncertain evidence stays neutral, and it never requests travel.");

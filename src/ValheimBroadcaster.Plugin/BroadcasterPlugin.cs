@@ -320,7 +320,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 presentedMode == CoverageMode.Player && presentedPlayerId == CurrentTarget()?.Identity.Id;
             RecordVisibleCoverage(recentPicture);
             ObserveLocalActivity(recentPicture);
+            // SimpleFollow: the baseline never leaves a live player for an
+            // editorial wildlife cutaway; the directed pipeline stays parked.
             bool cutawayAllowed = wildlife.Update(roster, remote,
+                settings.SimpleFollow.Value ||
                 coverage.Preference != CoveragePreference.Auto || !settings.WildlifeCutaways.Value || selfTest || probe.Active || !director.IsEnabled || director.IsHolding || idle.JourneyOwnsTravel ||
                 !observer.RemoteSession || observer.Phase != ObserverPhase.Watching || automatic?.ControlsSelection != true ||
                 automatic.RouteActive || HasFreshEncounter(), coverage.IsWildlifeCutaway);
