@@ -167,9 +167,12 @@ class Config:
 
     @classmethod
     def load(cls, path: Path) -> Config:
-        raw = read_json(path)
+        missing = object()
+        raw = read_json(path, default=missing)
+        if raw is missing:
+            raise Failure(f"Supervisor config file not found: {path.absolute()}. Pass --config with the path to your existing supervisor.json.")
         if not isinstance(raw, dict):
-            raise Failure("Configuration must be a JSON object")
+            raise Failure(f"Expected a JSON object in {path.absolute()}. Check that --config points to your supervisor settings.")
         allowed = set(cls.__dataclass_fields__)
         if set(raw) - allowed:
             raise Failure("Unknown supervisor configuration key")

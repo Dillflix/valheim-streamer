@@ -14,6 +14,19 @@ import supervisor as sup
 
 
 class StartupSetupTests(unittest.TestCase):
+    def test_missing_config_and_wrong_json_shape_have_distinct_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "supervisor.json"
+            with self.assertRaisesRegex(sup.Failure, "config file not found") as missing:
+                sup.Config.load(path)
+            self.assertIn(str(path), str(missing.exception))
+            for contents in ("null", "[]", '"private-value"'):
+                with self.subTest(contents=contents):
+                    path.write_text(contents, encoding="utf-8")
+                    with self.assertRaisesRegex(sup.Failure, "Expected a JSON object") as invalid:
+                        sup.Config.load(path)
+                    self.assertNotIn("private-value", str(invalid.exception))
+
     def test_setup_preserves_other_settings_and_stores_credentials_in_separate_roots(self):
         with tempfile.TemporaryDirectory() as path:
             root = Path(path)
