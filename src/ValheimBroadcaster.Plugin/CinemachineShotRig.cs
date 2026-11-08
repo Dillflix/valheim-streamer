@@ -1378,13 +1378,19 @@ internal sealed class CinemachineShotRig : IDisposable
         {
             BindingMode = BindingMode.WorldSpace,
             // Per-axis damping keeps the boom axis tightest: z lag reads as
-            // the subject outrunning the frame, so it settles fastest, while
-            // the vertical axis stays soft (heavier still on boat swell).
-            PositionDamping = new Vector3(1f, context.Locomotion == ShotLocomotion.Boat ? 1.8f : 1.25f, 0.6f) *
+            // the subject outrunning the frame, so it settles fastest. On
+            // actor follow coverage the vertical axis matches the lateral
+            // one — broadcast-tight pinning means jumps and slopes stay
+            // framed instead of reading as loose vertical slop. Boat swell
+            // stays heavily damped and scenic coverage keeps its softer lift.
+            PositionDamping = new Vector3(1f, context.Locomotion == ShotLocomotion.Boat ? 1.8f : actorOrbit ? 1f : 1.25f, 0.6f) *
                 Mathf.Clamp(settings.PositionDamping.Value * intent.PositionDampingScale, .1f, 4f),
             AngularDampingMode = AngularDampingMode.Quaternion
         };
-        candidate.Aim.Damping = new Vector2(settings.AimDamping.Value, settings.AimDamping.Value * 1.2f) * intent.AimDampingScale;
+        // Broadcast-tight aim applies to actor follow coverage only; scenic
+        // landmark aiming keeps its previous, softer response floor.
+        float aimBase = actorOrbit ? settings.AimDamping.Value : Mathf.Max(settings.AimDamping.Value, 0.4f);
+        candidate.Aim.Damping = new Vector2(aimBase, aimBase * 1.2f) * intent.AimDampingScale;
         if (candidate.PassBy) candidate.Aim.Damping = new Vector2(.35f, .5f);
         // No-escape guardrail: rising edge pressure moves the aim toward hard
         // tracking. The configured settings are never mutated; the effective
@@ -1617,12 +1623,24 @@ internal sealed class CinemachineShotRig : IDisposable
             : wanted;
         var composition = ScreenComposerSettings.Default;
         composition.DeadZone.Enabled = true;
+        // Editorial rule: broadcast-tight pinning. The actor subject is pinned
+        // to the composition target, not loosely owning a region of the frame.
+        // The near-zero default dead zone starts damped correction at once —
+        // upstream has no separate soft-zone size; everything between the
+        // dead zone and the hard limits corrects at AimDamping speed — and a
+        // zero setting removes the dead zone cleanly (Validate allows size 0).
+        // Scenic landmark compositions keep their previous, looser guides.
         // No-escape guardrail: edge pressure shrinks the effective dead zone
         // toward hard tracking without mutating the configured setting.
-        composition.DeadZone.Size = new Vector2(settings.DeadZone.Value, settings.DeadZone.Value * 0.75f) *
+        float deadZone = IsScenic ? Mathf.Max(settings.DeadZone.Value, 0.08f) : settings.DeadZone.Value;
+        composition.DeadZone.Size = new Vector2(deadZone, deadZone * 0.75f) *
             Mathf.Lerp(1f, 0.15f, candidate.EdgePressure);
         composition.HardLimits.Enabled = true;
-        composition.HardLimits.Size = new Vector2(0.75f, 0.70f);
+        // Tight hard limits keep even worst-case transients well inside the
+        // frame. The undamped hard-limit pass runs only while the camera's
+        // LookAtTargetAttachment is 1; CinemachineCamera resets it to 1 every
+        // update and nothing in this rig (or its FreeLook modifiers) lowers it.
+        composition.HardLimits.Size = IsScenic ? new Vector2(0.75f, 0.70f) : new Vector2(0.55f, 0.50f);
         // Core projection uses Y-up; Cinemachine's composition guides use Y-down.
         composition.ScreenPosition = new Vector2(candidate.AppliedScreen.x, -candidate.AppliedScreen.y);
         // Hard limits stay centered in the actual image, independently of the
