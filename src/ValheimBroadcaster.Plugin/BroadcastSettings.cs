@@ -99,9 +99,9 @@ internal sealed class BroadcastSettings
         NativePassBy = config.Bind("Camera", "PassByShots", true, "Offer finite roadside shots during steady open-space player travel. The camera holds a world position and pans as players pass; encounters, course changes and unreadable views retain tracking alternatives.");
         DeliberateComposition = config.Bind("Camera", "DeliberateComposition", true, "Choose persistent actor or environmental screen placement from shot intent, movement and observed activity. False retains a centered comparison preference with the same damping and safety checks.");
         GroupFraming = config.Bind("Camera", "GroupFraming", true, "Include persistent nearby companions and relevant opponents when a readable group composition is available.");
-        PositionDamping = config.Bind("Camera", "PositionDamping", 0.8f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));
-        AimDamping = config.Bind("Camera", "AimDamping", 1f, Range("Cinemachine aim settling time in seconds (approximately 99% convergence); larger values soften aiming response to subject movement.", 0.1f, 3f));
-        DeadZone = config.Bind("Camera", "DeadZone", 0.12f, Range("Screen fraction in which subjects can move without the camera immediately recentering them.", 0f, 0.3f));
+        PositionDamping = config.Bind("Camera", "PositionDamping", 0.35f, Range("Cinemachine position settling time in seconds (approximately 99% convergence). Shot trajectory planning is separate; larger values soften final body response.", 0.1f, 3f));
+        AimDamping = config.Bind("Camera", "AimDamping", 0.4f, Range("Cinemachine aim settling time in seconds (approximately 99% convergence); larger values soften aiming response to subject movement.", 0.1f, 3f));
+        DeadZone = config.Bind("Camera", "DeadZone", 0.08f, Range("Screen fraction in which subjects can move without the camera immediately recentering them.", 0f, 0.3f));
         ShotMotion = config.Bind("Camera", "ShotMotion", 1f, Range("Strength of deliberate shot movement. Zero disables decorative movement while retaining tracking, damping and shot selection.", 0f, 1.5f));
         Distance = config.Bind("Camera", "Distance", 18f, Range("Horizontal distance from target in metres.", 2f, 80f));
         Height = config.Bind("Camera", "Height", 10f, Range("Height above target in metres.", 1f, 60f));

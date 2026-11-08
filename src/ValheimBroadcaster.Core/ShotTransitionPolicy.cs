@@ -20,13 +20,16 @@ namespace ValheimBroadcaster.Core
     public static class ShotTransitionPolicy
     {
         public const double ReturnSeconds = 0.5;
-        /// <summary>The editorial rule: the only motivated cut is severe hard
-        /// occlusion — the live subject more than 80 percent blocked by solid
-        /// geometry, i.e. hard-geometry visibility below this threshold.
+        /// <summary>No-cut mode pending validated single-camera follow: the
+        /// only remaining cut is a scene discontinuity (teleport or binding
+        /// change), which is physically unbridgeable and keeps its
+        /// establishing cut. Severe hard occlusion — the live subject more
+        /// than 80 percent blocked by solid geometry, i.e. hard-geometry
+        /// visibility below this threshold — now travels to its validated
+        /// replacement as a live-validated blend instead of cutting.
         /// Editorial changes (beats, combat angles, large viewpoint moves)
         /// travel as validated blends, obstructed paths hold for in-place
-        /// repair, and foreground foliage never motivates a cut. Scene
-        /// discontinuities keep their establishing cut.</summary>
+        /// repair, and foreground foliage never motivates a transition.</summary>
         public const float SevereOcclusionVisibility = 0.2f;
         // Visual-distinctness thresholds. No longer cut criteria: the adapter
         // uses them to prefer grammatically distinct replacement candidates.
@@ -53,10 +56,12 @@ namespace ValheimBroadcaster.Core
             if (!sameScene) return Cut("New scene receives an establishing cut");
             if (!sourceReadable || recovering)
             {
-                // The one motivated cut: the subject disappeared behind solid
-                // cover. A dirty-but-visible subject travels to its clear view.
+                // No-cut mode: even a subject lost behind solid cover travels
+                // to its validated replacement. The blend is live-validated
+                // every frame and returns home if its path fails mid-move.
                 if (sourceVisibility < SevereOcclusionVisibility)
-                    return Cut("Subject lost behind solid cover; cutting to the validated replacement");
+                    return Blend(angleDegrees, distance, environment, activity,
+                        "Traveling to a clear view of a subject behind solid cover");
                 return Blend(angleDegrees, distance, environment, activity,
                     "Moving to a clear view of a partially covered subject");
             }
@@ -73,14 +78,14 @@ namespace ValheimBroadcaster.Core
                 : "Continuous adjustment within the same scene";
             return Blend(angleDegrees, distance, environment, activity, reason);
         }
-        /// <summary>Mid-move validation failed. Glide back to the source
-        /// whenever its subject is not severely blocked by solid geometry —
-        /// even a momentarily unreadable source goes home and lets in-place
-        /// repair work. Cutting forward to the validated destination is
-        /// reserved for a subject lost behind solid cover. A physically
-        /// unsupported blended pose may not linger through a glide, so the
-        /// return happens immediately (zero seconds) instead of over
-        /// ReturnSeconds.</summary>
+        /// <summary>Mid-move validation failed. No-cut mode pending validated
+        /// single-camera follow: the camera always glides back toward the
+        /// source — even one momentarily unreadable or behind solid cover —
+        /// and lets in-place repair work; the rig's mid-blend fall-through
+        /// re-decides every frame toward the best available view. A
+        /// physically unsupported blended pose may not linger through a
+        /// glide, so the return happens immediately (zero seconds) instead
+        /// of over ReturnSeconds.</summary>
         public static ShotTransitionDecision DecideObstructedBlend(bool sourceReadable, float sourceVisibility,
             bool blendedSupported)
         {
@@ -90,7 +95,8 @@ namespace ValheimBroadcaster.Core
                 return new ShotTransitionDecision(ShotTransitionMode.Return, blendedSupported ? ReturnSeconds : 0,
                     sourceReadable ? "Returning to the validated source after an obstructed move"
                         : "Returning to a partially covered source for in-place repair");
-            return Cut("Subject lost behind solid cover; adopting the validated destination");
+            return new ShotTransitionDecision(ShotTransitionMode.Return, blendedSupported ? ReturnSeconds : 0,
+                "Returning toward the covered source; repair re-decides toward the best available view");
         }
         private static ShotTransitionDecision Blend(float angleDegrees, float distance,
             ShotEnvironment environment, CinematicActivity activity, string reason)

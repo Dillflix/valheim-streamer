@@ -19,9 +19,9 @@ internal static class ShotIntentTests
         yield return ("Purpose scale and lens ease instead of snapping on activity changes", SmoothScale);
         yield return ("Movement profiles distinguish sprinting from water and vessel motion", MovementProfiles);
         yield return ("A healthy transition source is retained over an unreadable destination", UnreadableDestination);
-        yield return ("Recovery cuts only when the subject is lost behind solid cover", RecoveryTransitions);
+        yield return ("Recovery always travels as a blend, even behind solid cover", RecoveryTransitions);
         yield return ("Obstructed transition paths always hold for in-place repair", ObstructedPathHold);
-        yield return ("An obstructed move returns home unless the subject is lost behind solid cover", ObstructedBlendReturn);
+        yield return ("An obstructed move always returns home for re-decided repair", ObstructedBlendReturn);
         yield return ("Editorial changes blend while new scenes keep their establishing cut", SceneTransitions);
         yield return ("A foliage-dirtied but visible subject blends through a purposeful role change", FoliageDirtyBlend);
         yield return ("Doorway handoffs have bounded brief transitions", DoorwayTransition);
@@ -176,9 +176,9 @@ internal static class ShotIntentTests
         "An aesthetic transition discarded readable source footage.");
     private static void RecoveryTransitions()
     {
-        Check(Transition(source: false, visibility: .1f).Mode == ShotTransitionMode.Cut &&
-            Transition(recovering: true, visibility: .1f).Mode == ShotTransitionMode.Cut,
-            "A subject lost behind solid cover did not cut to its validated replacement.");
+        Check(Transition(source: false, visibility: .1f).Mode == ShotTransitionMode.Blend &&
+            Transition(recovering: true, visibility: .1f).Mode == ShotTransitionMode.Blend,
+            "A subject lost behind solid cover did not travel to its validated replacement as a blend.");
         Check(Transition(source: false, visibility: .5f).Mode == ShotTransitionMode.Blend &&
             Transition(recovering: true, visibility: .5f).Mode == ShotTransitionMode.Blend,
             "A partially covered subject cut instead of moving to its clear view.");
@@ -202,9 +202,11 @@ internal static class ShotIntentTests
             "An unsupported blended pose lingered through a timed glide.");
         Check(ShotTransitionPolicy.DecideObstructedBlend(false, .5f, true).Mode == ShotTransitionMode.Return,
             "A momentarily unreadable but partially covered source did not glide home for repair.");
-        Check(ShotTransitionPolicy.DecideObstructedBlend(false, .1f, true).Mode == ShotTransitionMode.Cut &&
-            ShotTransitionPolicy.DecideObstructedBlend(false, .1f, false).Mode == ShotTransitionMode.Cut,
-            "A subject lost behind solid cover did not adopt the validated destination.");
+        var covered = ShotTransitionPolicy.DecideObstructedBlend(false, .1f, true);
+        var unsupported = ShotTransitionPolicy.DecideObstructedBlend(false, .1f, false);
+        Check(covered.Mode == ShotTransitionMode.Return && covered.Seconds > 0 &&
+            unsupported.Mode == ShotTransitionMode.Return && unsupported.Seconds == 0,
+            "A subject behind solid cover cut forward instead of returning for re-decided repair.");
     }
     private static void SceneTransitions()
     {

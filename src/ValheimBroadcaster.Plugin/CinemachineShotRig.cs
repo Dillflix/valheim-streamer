@@ -110,6 +110,10 @@ internal sealed class CinemachineShotRig : IDisposable
     private bool lastObservational, lastGroupDollySetting, lastFreeLookSetting;
     private long shotId;
     private float approvedHeading, creatureScale = 1;
+    // While arc-repair steers the shared orbital heading, external axis
+    // writes own azimuth; past this clock the displayed actor camera hands
+    // the horizontal axis back to native recentering (stay-behind follow).
+    private float headingSteerUntil;
     private CinematicShotMotion acceptedMotion, approvedMotion;
     private PlayerShotVisibility.Result lastView;
     internal float NearClipPlane { get; set; } = 0.3f;
@@ -1223,6 +1227,13 @@ internal sealed class CinemachineShotRig : IDisposable
                 lastSucceeded && PresentationConfirmed && transitionElapsed >= transitionSeconds);
         else candidate.Spatial.Suspend("spatial horizon waiting for this shot to be displayed");
         candidate.TrackingPoint.position = FromCore(candidate.TrajectoryState.Anchor) + candidate.Spatial.Offset;
+        // Native recentering reads the follow proxy's forward vector. Carry
+        // the subject's facing projected on the up plane so "behind the
+        // character" stays well-defined; a near-vertical or zero facing
+        // keeps the proxy's last valid heading instead of inventing one.
+        Vector3 subjectFacing = Vector3.ProjectOnPlane(context.FacingDirection, Vector3.up);
+        if (TargetRoster.Finite(subjectFacing) && subjectFacing.sqrMagnitude > 0.0001f)
+            candidate.TrackingPoint.rotation = Quaternion.LookRotation(subjectFacing.normalized, Vector3.up);
         candidate.AnchorVelocity = FromCore(candidate.TrajectoryState.Velocity) + candidate.Spatial.Velocity;
         if (candidate.TrajectoryState.WasReset) candidate.PreviousAnchor = candidate.TrackingPoint.position;
         candidate.TrajectoryReason = candidate.TrajectoryBlocked ? "anchor waiting for clear path" :
@@ -1299,14 +1310,38 @@ internal sealed class CinemachineShotRig : IDisposable
             candidate.PresentedScreen = new Vector2(placement, 0);
         }
         Vector3 offset = IsScenic ? Vector3.zero : Offset(index, motion, settings, confined);
+        bool actorOrbit = !IsScenic && !candidate.Observational && !candidate.PassBy;
+        // Native stay-behind: the DISPLAYED actor camera lets OrbitalFollow's
+        // own recentering settle behind the subject's forward vector
+        // (RecenteringTarget=TrackingTarget reads the follow proxy's facing).
+        // External writes to HorizontalAxis.Value cancel recentering by
+        // design, so the rig writes the axis only to seed a fresh camera,
+        // to keep standby survey azimuths distinct, or while arc-repair or
+        // encounter framing actively steers; when steering stops, native
+        // recentering resumes on its own.
+        bool encounterSteering = !IsScenic && wantedEncounterPurpose != EncounterShotPurpose.Player &&
+            NativeEncounterFraming.Active(context);
+        bool nativeRecentering = actorOrbit && index == previousChoice && hasPose &&
+            candidate.Camera.PreviousStateIsValid && Time.unscaledTime >= headingSteerUntil && !encounterSteering;
+        candidate.Orbit.RecenteringTarget = actorOrbit
+            ? CinemachineOrbitalFollow.ReferenceFrames.TrackingTarget
+            : CinemachineOrbitalFollow.ReferenceFrames.AxisCenter;
+        candidate.Orbit.HorizontalAxis.Recentering.Enabled = nativeRecentering;
+        // Aim lookahead is an actor-camera behavior: scenic, observational
+        // and pass-by compositions keep their deliberate static aim.
+        candidate.Aim.Lookahead.Enabled = actorOrbit;
         candidate.Orbit.Radius = offset.magnitude;
-        candidate.Orbit.HorizontalAxis.Value = Mathf.Atan2(-offset.x, -offset.z) * Mathf.Rad2Deg;
+        float wantedAxis = Mathf.Atan2(-offset.x, -offset.z) * Mathf.Rad2Deg;
+        if (!nativeRecentering) candidate.Orbit.HorizontalAxis.Value = wantedAxis;
         candidate.Orbit.VerticalAxis.Value = Mathf.Atan2(offset.y, new Vector2(offset.x, offset.z).magnitude) * Mathf.Rad2Deg;
         candidate.Orbit.RadialAxis.Value = 1;
         candidate.Orbit.TrackerSettings = new TrackerSettings
         {
             BindingMode = BindingMode.WorldSpace,
-            PositionDamping = new Vector3(1f, context.Locomotion == ShotLocomotion.Boat ? 1.8f : 1.2f, 1f) *
+            // Per-axis damping keeps the boom axis tightest: z lag reads as
+            // the subject outrunning the frame, so it settles fastest, while
+            // the vertical axis stays soft (heavier still on boat swell).
+            PositionDamping = new Vector3(1f, context.Locomotion == ShotLocomotion.Boat ? 1.8f : 1.25f, 0.6f) *
                 Mathf.Clamp(settings.PositionDamping.Value * intent.PositionDampingScale, .1f, 4f),
             AngularDampingMode = AngularDampingMode.Quaternion
         };
@@ -1315,9 +1350,14 @@ internal sealed class CinemachineShotRig : IDisposable
         // No-escape guardrail: rising edge pressure moves the aim toward hard
         // tracking. The configured settings are never mutated; the effective
         // damping is recomputed from them each evaluation and restores itself
-        // as soon as the pressure subsides.
+        // as soon as the pressure subsides. With the tighter defaults the
+        // pressure-scaled result is floored at 0.05s so full pressure stays
+        // a damped response instead of a numerically degenerate snap.
         else if (candidate.EdgePressure > 0)
-            candidate.Aim.Damping *= Mathf.Lerp(1f, 0.1f, candidate.EdgePressure);
+        {
+            Vector2 pressed = candidate.Aim.Damping * Mathf.Lerp(1f, 0.1f, candidate.EdgePressure);
+            candidate.Aim.Damping = new Vector2(Mathf.Max(0.05f, pressed.x), Mathf.Max(0.05f, pressed.y));
+        }
         candidate.Context = context; candidate.Settings = settings;
         candidate.Continuous = continuous; candidate.MoveCarrier = moveCarrier;
         // Upstream group framing sizes the lens before RotationComposer aims.
@@ -1359,6 +1399,15 @@ internal sealed class CinemachineShotRig : IDisposable
         // ManualCameraUpdate owns exact elapsed time and native skipped-frame compensation.
         try { ManualCameraUpdate.Update(candidate.Camera, Vector3.up, dt); }
         finally { candidate.Elevation.Restore(); }
+        if (nativeRecentering)
+        {
+            // Keep the shared heading plumbing aligned with the natively
+            // recentered axis so offset predictions and the next arc-repair
+            // step start from the camera's actual bearing, never a stale
+            // external heading that would snap the view on the first write.
+            float drift = Mathf.DeltaAngle(wantedAxis, candidate.Orbit.HorizontalAxis.Value);
+            if (Mathf.Abs(drift) > 0.01f) { heading += drift; approvedHeading = heading; }
+        }
         CameraState state = candidate.Camera.State;
         Vector3 solved = state.GetFinalPosition();
         if (candidate.Observational)
@@ -1694,6 +1743,11 @@ internal sealed class CinemachineShotRig : IDisposable
         // damps heading toward approvedHeading at rate 5/s, so bounding one
         // step keeps the presented arc at or below 60 degrees per second.
         approvedHeading = Mathf.MoveTowardsAngle(heading, heading + bestOffset, ShotRepairMath.ArcSteerStepDegrees);
+        // While repair steers, external axis writes own the azimuth (they
+        // cancel native recentering by design). The window matches the
+        // shared recovery clock; once repair stops extending it, the
+        // displayed camera hands the axis back to native stay-behind.
+        headingSteerUntil = now + 0.6f;
         candidate.TrajectoryReason = candidate.RecoveryReason = "arcing around an obstruction";
         return true;
     }
@@ -2292,11 +2346,22 @@ internal sealed class CinemachineShotRig : IDisposable
             orbit.RecenteringTarget = CinemachineOrbitalFollow.ReferenceFrames.AxisCenter;
             orbit.HorizontalAxis.Range = new Vector2(-180, 180); orbit.HorizontalAxis.Wrap = true;
             orbit.VerticalAxis.Range = new Vector2(-80, 89); orbit.VerticalAxis.Wrap = false;
-            orbit.HorizontalAxis.Recentering.Enabled = false; orbit.VerticalAxis.Recentering.Enabled = false;
+            // Native stay-behind: horizontal recentering settles the displayed
+            // actor camera behind the follow proxy's forward vector (the
+            // subject's facing). Enabled is toggled per evaluation; external
+            // axis writes cancel recentering by design, which is exactly how
+            // arc-repair steering composes with it. Vertical and radial axes
+            // stay externally owned.
+            orbit.HorizontalAxis.Recentering = new InputAxis.RecenteringSettings { Enabled = false, Wait = 0f, Time = 2f };
+            orbit.VerticalAxis.Recentering.Enabled = false;
             orbit.RadialAxis.Recentering.Enabled = false;
             var aim = child.AddComponent<CinemachineRotationComposer>();
             aim.CenterOnActivate = true;
-            aim.Lookahead.Enabled = false;
+            // Outrun-proofing: aim ahead of the measured subject velocity so a
+            // sprinting character stops riding the dead-zone edge. IgnoreY
+            // keeps jumps and terrain bumps out of the predicted aim. Enabled
+            // is toggled per evaluation (actor cameras only).
+            aim.Lookahead = new LookaheadSettings { Enabled = false, Time = 0.3f, Smoothing = 10f, IgnoreY = true };
             var obstacles = child.AddComponent<CinemachineDeoccluder>();
             obstacles.CollideAgainst = mask;
             obstacles.MinimumDistanceFromTarget = 1f;
@@ -2304,7 +2369,10 @@ internal sealed class CinemachineShotRig : IDisposable
             {
                 Enabled = true, CameraRadius = 0.35f, MaximumEffort = 3,
                 Strategy = CinemachineDeoccluder.ObstacleAvoidance.ResolutionStrategy.PreserveCameraDistance,
-                MinimumOcclusionTime = 0.15f, SmoothingTime = 0.4f, Damping = 1.2f, DampingWhenOccluded = 0.15f
+                // No-cut mode: brief flickers wait out MinimumOcclusionTime,
+                // corrections release smoothly (Damping 0.6) so the single
+                // following camera never pops around cover.
+                MinimumOcclusionTime = 0.2f, SmoothingTime = 0.4f, Damping = 0.6f, DampingWhenOccluded = 0.15f
             };
             obstacles.ShotQualityEvaluation = new CinemachineDeoccluder.QualityEvaluation { Enabled = false };
             // Native confinement follows obstacle correction, and the complete
@@ -2397,7 +2465,7 @@ internal sealed class CinemachineShotRig : IDisposable
         actor = null; subjectId = null; world = null; revision = -1;
         velocity = lastAnchorVelocity = renderedVelocity = transitionVelocity = Vector3.zero; hasPose = lastSucceeded = false; solvedAt = lastPoseAt = -1; solvedFrame = -1;
         evaluateAt = predictionAt = 0; previousChoice = motionChoice = -1; transitionElapsed = 2; space = 1;
-        motionBlocked = false; acceptedMotion = approvedMotion = NeutralMotion(); lastCorrection = -10; fallbackSince = -1;
+        motionBlocked = false; acceptedMotion = approvedMotion = NeutralMotion(); lastCorrection = -10; fallbackSince = -1; headingSteerUntil = 0;
         playerSceneId = 0; playerContextFrame = activeContext = null; playerContextAt = -1;
         unreadableSince = readableSince = -1; recoverySearchAt = 0; recoveryEpoch = 0; recoverySearch = confined = false;
         transitionSeconds = 1.4f; intent = director.Intent;
