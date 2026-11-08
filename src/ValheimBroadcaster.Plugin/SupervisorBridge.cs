@@ -81,7 +81,7 @@ internal sealed class SupervisorBridge
             throw new IOException("Supervisor file is a link");
     }
 
-    internal void Tick(string state, bool authorized, bool active, bool publishing, string failureCategory, string reason, int encoderPid = 0, bool pictureLive = false, int[]? encoderPids = null)
+    internal void Tick(string state, bool authorized, bool active, bool publishing, string failureCategory, string reason, int encoderPid = 0, bool pictureLive = false, int[]? encoderPids = null, string startupPhase = "")
     {
         if (Time.realtimeSinceStartup < nextTick) return;
         nextTick = Time.realtimeSinceStartup + 1;
@@ -102,7 +102,7 @@ internal sealed class SupervisorBridge
                 }
                 catch (ArgumentException) { }
             }
-            Publish(state, authorized, active, publishing, failureCategory, reason, encoderPid, pictureLive, encoderPids);
+            Publish(state, authorized, active, publishing, failureCategory, reason, encoderPid, pictureLive, encoderPids, startupPhase);
         }
         catch (Exception error)
         {
@@ -110,14 +110,14 @@ internal sealed class SupervisorBridge
         }
     }
 
-    internal void Publish(string state, bool authorized, bool active, bool publishing, string failureCategory, string reason, int encoderPid = 0, bool pictureLive = false, int[]? encoderPids = null)
+    internal void Publish(string state, bool authorized, bool active, bool publishing, string failureCategory, string reason, int encoderPid = 0, bool pictureLive = false, int[]? encoderPids = null, string startupPhase = "")
     {
         // A requested update stop is not a new operator cancellation, including
         // the intermediate frames before native logout and encoder drain finish.
         if (ShutdownRequested) reason = failureCategory == "none" ? "supervisor_shutdown" : failureCategory;
         var status = new Status
         {
-            session_id = session, pid = pid, version = BroadcasterPlugin.PluginVersion,
+            startup_phase = startupPhase, session_id = session, pid = pid, version = BroadcasterPlugin.PluginVersion,
             plugin_sha256 = pluginHash, source_sha = sourceSha, sequence = ++sequence, encoder_pid = encoderPid,
             encoder_pids = encoderPids ?? Array.Empty<int>(),
             state = state, observer_authorized = authorized, observer_active = active,
@@ -147,6 +147,7 @@ internal sealed class SupervisorBridge
     [Serializable]
     private sealed class Status
     {
+        public string startup_phase = "";
         public int schema = 1, supervisor_protocol = SupervisorIdentity.Protocol, pid, encoder_pid;
         public int[] encoder_pids = Array.Empty<int>();
         public long sequence;

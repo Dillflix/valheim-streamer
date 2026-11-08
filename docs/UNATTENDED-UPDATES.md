@@ -2,11 +2,25 @@
 
 **0.8.48 is the first main-line integration of this capability.** The earlier updater remained on `feature-unattended-client-updates` and its 0.8.19 label did not mean that later main-line clients contained it. Startup and supervision are optional: `Startup.Enabled` defaults to `false`, and installing the client does not start a host supervisor or schedule updates. See the [audit findings and evidence](UPDATER-0.8.48-AUDIT.md).
 
-The updater targets the existing **`ValheimBroadcastTest` Sandboxie box on Windows**. It runs outside the sandbox, watches one configured GitHub branch, downloads and verifies a successful client build, stops only its broadcaster process, replaces the sandbox's broadcaster files, and starts that copied game again. The plugin selects the configured existing character and joins the configured dedicated Steam server through Valheim's normal authentication flow.
+The updater targets the Windows box named in your supervisor JSON. `ValheimBroadcastTest` is the example name. Keep your existing configuration when using a box such as `ValheimBroadcastClean`. It runs outside the sandbox, watches one configured GitHub branch, downloads and verifies a successful client build, stops only its broadcaster process, replaces the sandbox's broadcaster files, and starts that copied game again. The plugin selects the configured existing character and joins the configured dedicated Steam server through Valheim's normal authentication flow.
 
 Sandboxed Steam must already be running and signed in as the broadcaster account. This does not automate Steam login or Steam Guard. It does not stop the dedicated server, terminate the entire sandbox, or update the main Windows Valheim installation. Observer admission remains protocol 3, so no server upgrade is required for this feature.
 
 The Windows adapter uses the installed Sandboxie API and retains the launched game's process handle. Identity checks include sandbox name, Windows session, executable and creation time. It does not infer ownership from `valheim.exe` alone. **Source checks and automated tests are not an in-game pass:** actual Sandboxie launch, authentication, streaming and rollback must pass the acceptance cases below before relying on unattended operation.
+
+## Existing broadcaster quick start (0.8.67)
+
+1. Keep the broadcaster's sandboxed Steam account signed in. Close the broadcaster game and stop its supervisor if already running. Extract the client ZIP to a staging folder such as `C:\Tools\ValheimBroadcasterSupervisor\client`. Copy its complete `ValheimBroadcaster` directory into the physical sandbox's `BepInEx\plugins`. Leave the root `release-manifest.json` in staging. Extract the supervisor ZIP into the host supervisor folder alongside your existing `supervisor.json`.
+2. From the host run the commands below. `configure-startup` edits the sandboxed BepInEx config, retaining the other mod settings. It prompts once for the exact existing filename stem, Local or Cloud, dedicated Steam address and port, and the server password. Press Enter to reuse configured values. When choosing **set**, enter the password at the hidden prompt. When the host token file is configured but missing, a separate hidden prompt creates it outside the sandbox. Permissions are checked using the existing private-directory policy. For the first setup, the mod must have generated its config once.
+3. The first `run` can use the supplied manifest to hand off a manually updated installation, including one with an older saved baseline. It checks all installed DLLs and notices, then launches with the pinned version and source and accepts only after stable observer/picture/publisher evidence. It respects saved pause and quarantine. Once accepted, omit `--installed-manifest` on subsequent launches and in scheduled tasks.
+
+```powershell
+Set-Location C:\Tools\ValheimBroadcasterSupervisor
+py -3 supervisor.py --config .\supervisor.json configure-startup
+py -3 supervisor.py --config .\supervisor.json run --installed-manifest .\client\release-manifest.json
+```
+
+To exercise shutdown and automatic rejoin without waiting for an update, leave `run` open. In a second host PowerShell in the same folder, use `py -3 supervisor.py --config .\supervisor.json pause`. Wait for `status` to show `paused` and the owned client to exit, then issue `resume`. Watch for a new launch, character selection, password submission (on a password-protected server), observer authorization and stable broadcasting. The host persists the last GitHub poll result in `status`. A qualified newer build exercises installation and rollback through the normal transaction. Use a **push-build artifact** for a pre-merge manual handoff. A PR test-merge SHA may never enter the configured branch's ancestry. If that happens after a squash or rebase, install the merged branch's CI build and hand it off with its matching manifest.
 
 ## How an update is accepted
 
@@ -32,7 +46,7 @@ Before the first automated update:
 
 **Main-line 0.8.47 and earlier cannot be a supervised bootstrap baseline:** they do not contain this bridge/startup integration. The old feature-branch implementation also lacks the current provenance/capability contract. A local build without an exact CI source revision cannot establish an update baseline. Version numbering alone does not establish support. The first manual installation above is required; later healthy supervised builds can serve as rollback baselines.
 
-Extract the supervisor artifact into a host folder such as `C:\Tools\ValheimBroadcasterSupervisor`. Keep `supervisor.py` and `sandboxie.py` beside each other. Copy `example-config.json` to a private host configuration path and edit it. The examples below use `C:\Tools\ValheimBroadcasterSupervisor\supervisor.json`; choose another absolute path if preferred.
+Extract the supervisor artifact into a host folder such as `C:\Tools\ValheimBroadcasterSupervisor`. Keep `supervisor.py`, `sandboxie.py` and `startup_setup.py` beside each other. Copy `example-config.json` to a private host configuration path and edit it. The examples below use `C:\Tools\ValheimBroadcasterSupervisor\supervisor.json`; choose another absolute path if preferred.
 
 ## Two different kinds of game path
 

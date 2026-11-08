@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.67 restores unattended password submission during dedicated-server admission.** The Windows supervisor can configure an existing sandboxed installation, adopt a manually installed build after verifying its manifest and live broadcast, and show startup progress and update-poll results. The existing protocol-3 server companion is compatible. [Windows setup and restart rehearsal](docs/UNATTENDED-UPDATES.md#existing-broadcaster-quick-start-0867)
+
 **0.8.63 addresses flicker in the observer’s Valheim window after Journey arrival.** During a brief held frame the game camera retains its last captured broadcast pose. A stationary arrival picture can continue through a pending foliage refresh and earn dwell for its displayed frames.
 
 **0.8.62 brings the 0.8.61 Journey director and PR #18’s camera transitions to main.** Within a scene, severe hard occlusion can trigger a cut. Other editorial changes use blends. Journey supports cruise speeds up to 24 m/s. A local guide steers toward the chosen destination as terrain loads around the observer. Use the existing in-game recorder for synchronized footage and diagnostics. An in-game 0.8.59 recording covered 2,078.7 m across Mountain, Black Forest and Meadows and reached its selected destination. Operators can keep their current protocol-3 server companion. [Journey runbook](docs/JOURNEY-EXPEDITION.md)

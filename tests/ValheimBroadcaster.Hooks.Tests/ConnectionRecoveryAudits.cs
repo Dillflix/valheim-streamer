@@ -39,6 +39,14 @@ internal static class ConnectionRecoveryAudits
         var password = Method("ZNet", "OnPasswordEntered");
         check("Reconnect password reuses the native authenticated peer-info flow", password.Parameters.Count == 1 &&
             password.Parameters[0].ParameterType.MetadataType == MetadataType.String && Calls(password, "ZNet", "SendPeerInfo") == 1);
+        var challenge = Method("ZNet", "RPC_ClientHandshake");
+        check("Password challenge binds the incoming pre-admission RPC to the native dialog",
+            challenge.Body.Instructions.Any(i => i.OpCode == OpCodes.Stfld && i.Previous.OpCode == OpCodes.Ldarg_1 &&
+                i.Operand is FieldReference f && f.Name == "m_tempPasswordRPC" && f.FieldType.Name == "ZRpc") &&
+            password.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldfld && i.Operand is FieldReference f && f.Name == "m_tempPasswordRPC") &&
+            Calls(Method("ZNet", "GetServerPeer"), "ZNetPeer", "IsReady") == 1);
+        check("Native save catalogue enumerates and loads available character profiles",
+            Calls(Method("SaveSystem", "GetAllPlayerProfiles"), "PlayerProfile", "Load") == 1);
         check("Transport loss is distinct from operator logout", Calls(Method("ZNet", "RPC_Disconnect"), "Game", "Logout") == 0 &&
             Calls(Method("ZNet", "UpdatePeers"), "Game", "Logout") == 0 && Calls(Method("Menu", "Logout"), "Game", "Logout") == 1);
         var startup = game.MainModule.Types.Single(t => t.Name == "FejdStartup");

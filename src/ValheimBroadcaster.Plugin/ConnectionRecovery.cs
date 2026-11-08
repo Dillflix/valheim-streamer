@@ -21,6 +21,7 @@ internal sealed class ConnectionRecovery
     private readonly StartupJoinPolicy startup;
     private bool startupPrepared;
     private bool supervisorShutdownFailed;
+    private static readonly FieldInfo? PendingPasswordRpc = AccessTools.Field(typeof(ZNet), "m_tempPasswordRPC");
     private static readonly FieldInfo? Profiles = AccessTools.Field(typeof(FejdStartup), "m_profiles");
     private static readonly FieldInfo? CinematicInstance = AccessTools.Field(typeof(CinematicsManager), "s_instance");
     private string failureCategory = "none";
@@ -28,6 +29,10 @@ internal sealed class ConnectionRecovery
     internal bool Blocked => policy.State == ConnectionRecoveryState.Halted || startup.State == StartupJoinState.Blocked;
     internal string FailureCategory => failureCategory;
     internal bool Starting => startup.Pending;
+    internal string StartupPhase => startup.State == StartupJoinState.Complete ? "authorized" :
+        startup.State == StartupJoinState.Connecting ? (passwordSubmittedTo ? "password_submitted" : "joining_server") :
+        startup.Pending ? (readyMenu ? "selecting_character" : "waiting_for_menu") : "";
+
     internal string StartupStatus => "Startup: " + startup.State + "; attempts " + startup.Attempts + "; reason " + startup.Failure;
     private readonly ConnectionRecoveryPolicy policy = new ConnectionRecoveryPolicy();
     private static readonly MethodInfo? PasswordEntered = AccessTools.Method(typeof(ZNet), "OnPasswordEntered", new[] { typeof(string) });
@@ -62,7 +67,7 @@ internal sealed class ConnectionRecovery
 
     internal void Install(Harmony harmony)
     {
-        if (PasswordEntered == null || ContinueLogout == null || Profiles == null) throw new MissingMethodException("Native observer reconnect lifecycle unavailable");
+        if (PasswordEntered == null || PendingPasswordRpc?.FieldType != typeof(ZRpc) || ContinueLogout == null || Profiles == null) throw new MissingMethodException("Native observer reconnect lifecycle unavailable");
         Hook(harmony, typeof(FejdStartup), "JoinServer", nameof(BeforeJoin));
         Hook(harmony, typeof(FejdStartup), "Start", nameof(MenuReady), true);
         Hook(harmony, typeof(FejdStartup), "OnStartGame", nameof(MenuInteraction));
@@ -136,14 +141,22 @@ internal sealed class ConnectionRecovery
     private static void PasswordRequested(ZNet __instance, ZRpc __0, bool __1)
     {
         ConnectionRecovery? recovery = instance;
-        if (recovery != null && recovery.haveDestination) recovery.passwordRequired = __1;
-        if (recovery != null && recovery.startup.State == StartupJoinState.Connecting && __1 && string.IsNullOrEmpty(recovery.password))
-        { recovery.Reject("Startup server requires a configured password file", "configuration"); recovery.reject("Startup password is unavailable"); return; }
-        if (recovery == null || (!recovery.Recovering && recovery.startup.State != StartupJoinState.Connecting) || !__1 || string.IsNullOrEmpty(recovery.password) ||
-            !__instance.InPasswordDialog() || !ReferenceEquals(__instance.GetServerRPC(), __0) || recovery.passwordSubmittedTo == __instance) return;
-        // The original handler displayed the normal password dialog and stored its
-        // RPC. Submit through that same handler; normal password hashing/auth runs.
-        try { recovery.passwordSubmittedTo = __instance; PasswordEntered!.Invoke(__instance, new object[] { recovery.password! }); }
+        if (recovery == null || !recovery.haveDestination || recovery.manualStopped || __instance != ZNet.instance || __instance.IsServer()) return;
+        recovery.passwordRequired = __1;
+        if (!__1 || (!recovery.Recovering && recovery.startup.State != StartupJoinState.Connecting)) return;
+        // During the challenge GetServerRPC() cannot return an admitted peer.
+        // Use the same pending RPC the native dialog will authenticate. It is
+        // cleared if Valheim already submitted its own password in the original.
+        if (!__instance.InPasswordDialog() || !ReferenceEquals(PendingPasswordRpc!.GetValue(__instance), __0) ||
+            !__0.IsConnected() || recovery.passwordSubmittedTo == __instance) return;
+        if (string.IsNullOrEmpty(recovery.password))
+        { recovery.Reject("Server requested a password but none is available", "configuration"); recovery.reject("Server password is unavailable"); return; }
+        try
+        {
+            recovery.passwordSubmittedTo = __instance;
+            PasswordEntered!.Invoke(__instance, new object[] { recovery.password! });
+            recovery.log("Submitted the configured observer password to the native server challenge; awaiting admission.");
+        }
         catch { recovery.Reject("Saved connection password could not be submitted"); }
     }
 
@@ -299,19 +312,16 @@ internal sealed class ConnectionRecovery
         }
         // The native menu has already loaded profiles. Never create a character or
         // substitute a display-name match, a different save source, or the last profile.
-        var profiles = Profiles!.GetValue(readyMenu) as List<PlayerProfile>;
+        if (now < nextProfileCheck) return;
+        // UpdateCharacterList redraws m_profiles once populated and can keep an
+        // early empty/local-only list while Steam Cloud mounts. Read the native
+        // save catalogue on retries without changing the user's menu selection.
+        var profiles = nextProfileCheck == 0 ? Profiles!.GetValue(readyMenu) as List<PlayerProfile> :
+            SaveSystem.GetAllPlayerProfiles();
         PlayerProfile[] matches = profiles == null ? Array.Empty<PlayerProfile>() : profiles.Where(p =>
             p.GetFilename() == profile && p.m_fileSource == profileSource).ToArray();
         if (matches.Length == 0 && now < profileDeadline)
-        {
-            if (now >= nextProfileCheck)
-            {
-                nextProfileCheck = now + 2;
-                // Refresh the native menu cache while Steam/cloud saves settle.
-                AccessTools.Method(typeof(FejdStartup), "UpdateCharacterList", Type.EmptyTypes)?.Invoke(readyMenu, null);
-            }
-            return;
-        }
+        { nextProfileCheck = now + 2; return; }
         if (matches.Length != 1 || !matches[0].Load() || matches[0].m_fileSource != profileSource || matches[0].HaveIncompatiblPlayerData())
         { Reject("Configured startup character is missing, ambiguous, unreadable or incompatible", "configuration"); return; }
         if (CinematicInstance?.GetValue(null) is CinematicsManager cinematic && cinematic && CinematicsManager.IsPlaying())

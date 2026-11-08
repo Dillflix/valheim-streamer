@@ -194,7 +194,7 @@ jobs:
         run: |
           mkdir -p supervisor-artifacts
           cp tools/broadcaster-supervisor/supervisor.py tools/broadcaster-supervisor/sandboxie.py \
-            tools/broadcaster-supervisor/example-config.json \
+            tools/broadcaster-supervisor/startup_setup.py tools/broadcaster-supervisor/example-config.json \
             docs/UNATTENDED-UPDATES.md docs/UPDATER-0.8.48-AUDIT.md supervisor-artifacts/
       - name: Upload unattended supervisor and setup guide
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

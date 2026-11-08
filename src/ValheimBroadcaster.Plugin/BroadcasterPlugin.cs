@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.66";
+    public const string PluginVersion = "0.8.67";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -1352,7 +1352,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         supervisor.Tick(state, authorized, observing, stream?.IsPublishing == true, category,
             stopped ? "operator_stopped" : category == "none" ? "none" : category, stream?.EncoderProcessId ?? 0, pictureLive,
             new[] { stream?.EncoderProcessId ?? 0, diagnosticCapture?.EncoderProcessId ?? 0, timelapseCapture?.EncoderProcessId ?? 0 }
-                .Where(value => value > 0).Distinct().ToArray());
+                .Where(value => value > 0).Distinct().ToArray(), connection?.StartupPhase ?? "");
         if (!supervisor.ShutdownRequested) return false;
         CancelIntent();
         diagnosticCapture?.StopCapture(); timelapseCapture?.StopCapture("Supervisor shutdown");

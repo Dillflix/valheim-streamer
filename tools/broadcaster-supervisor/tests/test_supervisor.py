@@ -37,7 +37,7 @@ class Fixture(unittest.TestCase):
                                       game_dir=self.game, game_executable=self.game / "valheim.exe",
                                       platform="linux", launch_command=[str(self.game / "valheim.exe")],
                                       shutdown_timeout_seconds=5, health_timeout_seconds=30, stable_seconds=5,
-                                      require_publishing=True, poll_seconds=30)
+                                      require_publishing=True, poll_seconds=30, branch="main")
         self.s = sup.Supervisor(self.config, github=SimpleNamespace(candidate=lambda *_: None))
         self.s.state = {"schema": 1, "active": {"source_sha": "b" * 40, "run_number": 1, "version": "0.8.19"},
                         "quarantined": [], "paused": False, "restart_failures": 0}
@@ -395,6 +395,23 @@ class LoopTests(Fixture):
         self.s.run()
         self.assertEqual(len(self.launches), 1)
         self.assertTrue(self.s.state["paused"])
+
+    def test_manual_baseline_adopts_only_after_stable_health(self):
+        new = {"version": "0.8.20", "source_sha": "a" * 40, "run_number": 0}
+        old = dict(self.s.state["active"])
+        self.s.installed_baseline = lambda path: dict(new)
+        def launch(version, source_sha=None):
+            self.assertEqual((version, source_sha), (new["version"], new["source_sha"]))
+            self.s.record = {"pid": 123}
+        self.s.launch = launch
+        def ready():
+            self.assertEqual(self.s.state["active"], old)
+            return self.s.heartbeat()
+        self.s.wait_healthy = ready
+        with patch.object(sup.time, "sleep", side_effect=lambda _: setattr(self.s, "stopping", True)):
+            self.s.run(self.root / "release-manifest.json")
+        self.assertEqual(self.s.state["active"], new)
+        self.assertEqual(self.s.state["last_update_check"]["result"], "no_eligible_build")
 
     def test_short_healthy_restart_does_not_reset_crash_budget(self):
         self.s.state["restart_failures"] = 2

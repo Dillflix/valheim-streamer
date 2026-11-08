@@ -8,6 +8,7 @@ processes by name. See docs/UNATTENDED-UPDATES.md before enabling it.
 from __future__ import annotations
 
 import argparse
+import configparser
 import contextlib
 from dataclasses import dataclass
 import hashlib
@@ -813,17 +814,25 @@ class Supervisor:
 
     def wait_healthy(self) -> dict:
         deadline = time.monotonic() + self.config.health_timeout_seconds
+        last_phase = None
         healthy_since = None
         while time.monotonic() < deadline:
             if self.stopping or self.requested_pause():
                 raise ManualStop("Operator stopped or paused the supervisor")
             status = self.heartbeat(allow_final=True)
             if status:
+                phase = status.get("startup_phase")
+                if phase in ("waiting_for_menu", "selecting_character", "joining_server", "password_submitted", "authorized") and phase != last_phase:
+                    last_phase = phase
+                    self.report("starting", "Game startup: " + phase)
                 if status.get("state") == "stopped":
                     raise ManualStop("Broadcaster was stopped by the operator")
                 if status.get("state") == "blocked":
                     # Reason text is intentionally not copied; native third-party messages can contain secrets.
-                    raise TerminalBlock("Broadcaster startup was blocked; inspect its local diagnostics")
+                    category = status.get("failure_category")
+                    if category not in ("authentication", "configuration", "adapter", "connection", "observer_authorization", "streaming"):
+                        category = "unknown"
+                    raise TerminalBlock("Broadcaster startup blocked (" + category + "); inspect its local diagnostics")
                 healthy = (status.get("observer_authorized") is True and status.get("observer_active") is True and
                            status.get("picture_live") is True and status.get("state") == "broadcasting" and
                            (not self.config.require_publishing or status.get("publishing") is True))
@@ -1103,7 +1112,20 @@ class Supervisor:
                 raise
             raise
 
-    def run(self) -> None:
+    def installed_baseline(self, manifest_path: Path) -> dict:
+        """Explicit hand-off after a manual install. Never install from the supplied manifest."""
+        manifest = read_json(manifest_path)
+        sha = manifest.get("source_sha") if isinstance(manifest, dict) else None
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            raise Failure("Provide the release-manifest.json from the installed client ZIP")
+        files = validate_manifest(manifest, sha)
+        verify_inventory(self.config.plugin_dir, {name: {"sha256": row["sha256"], "size": row["size"]}
+                                                 for name, row in files.items()})
+        if sha in self.state.get("quarantined", []):
+            raise Failure("The installed baseline source is quarantined")
+        return {"source_sha": sha, "version": manifest["version"], "run_number": 0}
+
+    def run(self, installed_manifest: Path | None = None) -> None:
         self.setup()
         with InstanceLock(self.config.state_dir / "supervisor.lock"):
             # A supervisor crash may leave its exactly recorded child alive.
@@ -1114,6 +1136,7 @@ class Supervisor:
                 self.stop()
             self.recover_transaction()
             self.preflight()
+            baseline = self.installed_baseline(installed_manifest) if installed_manifest else None
             next_poll, next_restart = 0.0, 0.0
             degraded_since, healthy_since = None, None
             try:
@@ -1121,7 +1144,7 @@ class Supervisor:
                     self.require_reconciled()
                     if self.requested_pause():
                         self.stop()
-                        if self.state.get("status") != "paused":
+                        if self.state.get("status") not in {"paused", "blocked"}:
                             self.report("paused", "Paused until an explicit resume")
                         time.sleep(1)
                         continue
@@ -1130,23 +1153,28 @@ class Supervisor:
                             time.sleep(1)
                             continue
                         try:
-                            self.launch((self.state.get("active") or {}).get("version"), (self.state.get("active") or {}).get("source_sha"))
+                            expected = baseline or self.state.get("active") or {}
+                            if baseline and self.installed_baseline(installed_manifest) != baseline:
+                                raise Failure("The supplied baseline manifest changed during startup")
+                            self.launch(expected.get("version"), expected.get("source_sha"))
                             status = self.wait_healthy()
                             self.record["version"] = status["version"]
                             self.record["source_sha"] = status["source_sha"]
                             atomic_json(self.config.state_dir / "process.json", self.record)
-                            if self.state.get("active") is None:
+                            if self.state.get("active") is None or (baseline and
+                                    (self.state.get("active") or {}).get("source_sha") != baseline["source_sha"]):
                                 self.state["active"] = {"version": status["version"], "run_number": 0, "source_sha": status["source_sha"]}
+                            baseline = None
                             self.report("broadcasting", "Authorized observer and output are healthy")
                             degraded_since, healthy_since = None, time.monotonic()
                         except ManualStop:
                             self.state["paused"] = True
                             self.save()
                             continue
-                        except TerminalBlock:
+                        except TerminalBlock as error:
                             self.stop()
                             self.state["paused"] = True
-                            self.report("blocked", "Startup reported a terminal block; inspect local diagnostics and explicitly resume")
+                            self.report("blocked", str(error))
                             continue
                         except (Failure, OSError):
                             self.stop()
@@ -1188,6 +1216,10 @@ class Supervisor:
                         try:
                             active = self.state.get("active") or {}
                             candidate = self.github.candidate(active.get("run_number", 0), set(self.state.get("quarantined", [])), active.get("source_sha"))
+                            self.state["last_update_check"] = {"at": int(time.time()), "branch": self.config.branch,
+                                "result": "qualified" if candidate else "no_eligible_build",
+                                "candidate_sha": candidate["source_sha"] if candidate else None}
+                            self.save()
                             if candidate and candidate["source_sha"] != active.get("source_sha"):
                                 candidate, transaction = self.prepare(candidate)
                                 try:
@@ -1199,7 +1231,9 @@ class Supervisor:
                             self.save()
                         except RecoveryRequired:
                             raise
-                        except (Failure, SandboxieError, OSError, zipfile.BadZipFile):
+                        except (Failure, SandboxieError, OSError, zipfile.BadZipFile) as error:
+                            self.state["last_update_check"] = {"at": int(time.time()), "branch": self.config.branch,
+                                "result": "deferred", "reason": str(error) if isinstance(error, Failure) else type(error).__name__}
                             # Download/validation errors leave the live game untouched. Failed update rolls back.
                             self.report("update_deferred", "Update check failed or build was rejected; retrying on the next poll")
                     time.sleep(1)
@@ -1212,8 +1246,11 @@ class Supervisor:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("command", choices=["check", "run", "status", "pause", "resume"])
+    parser.add_argument("command", choices=["check", "configure-startup", "run", "status", "pause", "resume"])
+    parser.add_argument("--installed-manifest", type=Path, help="run: verify an explicitly installed client before adopting its healthy session")
     args = parser.parse_args(argv)
+    if args.installed_manifest and args.command != "run":
+        parser.error("--installed-manifest is only valid with run")
     try:
         config = Config.load(args.config)
         if config.platform == "windows-sandboxie" and os.name != "nt":
@@ -1231,6 +1268,21 @@ def main(argv=None) -> int:
         if os.name != "nt" and os.geteuid() == 0:
             raise Failure("Run as the dedicated Steam desktop user, never root")
         supervisor = Supervisor(config)
+        if args.command == "configure-startup":
+            if config.platform != "windows-sandboxie":
+                raise Failure("Startup setup requires the Windows Sandboxie profile")
+            from startup_setup import configure
+            supervisor.setup()
+            with InstanceLock(config.state_dir / "supervisor.lock"):
+                supervisor.require_reconciled()
+                supervisor.preflight()
+                try:
+                    configure(config, no_symlinks, private_dir, private_file)
+                except (configparser.Error, UnicodeError):
+                    raise Failure("Sandbox BepInEx configuration could not be parsed; original settings retained") from None
+                except ValueError as error:
+                    raise Failure(str(error)) from None
+            return 0
         if args.command == "check":
             supervisor.setup()
             with InstanceLock(config.state_dir / "supervisor.lock"):
@@ -1245,7 +1297,7 @@ def main(argv=None) -> int:
             return 0
         signal.signal(signal.SIGINT, lambda *_: setattr(supervisor, "stopping", True))
         signal.signal(signal.SIGTERM, lambda *_: setattr(supervisor, "stopping", True))
-        supervisor.run()
+        supervisor.run(args.installed_manifest)
         return 0
     except (Failure, SandboxieError, OSError, zipfile.BadZipFile) as error:
         # Only authored Failure messages are safe; OS errors can contain private arguments/paths.
