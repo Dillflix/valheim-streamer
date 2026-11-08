@@ -59,8 +59,10 @@ internal static class ProceduralCameraGeometryTests
     {
         AutonomyPosition wide = ProceduralCameraGeometry.Offset(0, 80, 40, 90, true);
         Near(6, wide.X); Near(1.8, wide.Y); Near(0, wide.Z);
+        // Compact interior views honour the clamped height fraction directly:
+        // there is no artificial lift floor re-hoisting low follow coverage.
         AutonomyPosition close = ProceduralCameraGeometry.Offset(6, 80, 40, 90, true);
-        Near(3, close.X); Near(.5, close.Y); Near(0, close.Z);
+        Near(3, close.X); Near(.45, close.Y); Near(0, close.Z);
         Near(0, ProceduralCameraGeometry.RequiredDisplacement(-6, -1.3, 0, 80, 40, 90, true));
     }
 

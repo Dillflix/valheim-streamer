@@ -18,6 +18,25 @@ internal static class ShotTrajectoryPolicyTests
         yield return ("World trajectory resets only for explicit lifecycle and discontinuity boundaries", ResetBoundaries);
         yield return ("Every holding trajectory family pursues a receding subject so it cannot escape in depth", DepthPursuit);
         yield return ("Depth pressure closes the gap to a receding subject faster than relaxed framing", DepthPressureCloses);
+        yield return ("A blocked path sheds momentum but never parks the anchor behind a walking subject", BlockedNeverParksAnchor);
+    }
+
+    private static void BlockedNeverParksAnchor()
+    {
+        // The camera is a virtual body: world clutter beside the route must
+        // not immobilize the follow anchor. A reported constraint stops the
+        // momentum that drove into it, then pursuit resumes immediately even
+        // while the constraint keeps being reported; the adapter's deoccluder
+        // and visibility scoring negotiate the actual obstacle.
+        var policy = new ShotTrajectoryPolicy();
+        ShotTrajectoryState state = Tick(policy, 0, 0, 7);
+        for (int i = 1; i <= 60; i++) state = Tick(policy, i / 60d, i * 7d / 60, 7);
+        double before = state.Anchor.X;
+        for (int i = 61; i <= 240; i++) state = Tick(policy, i / 60d, i * 7d / 60, 7, blocked: true);
+        Check(state.Anchor.X > before + 1,
+            "A persistently blocked swept path parked the follow anchor while the subject walked on.");
+        Check(state.Lag < 2.5 * 8,
+            "A blocked path let the subject escape the lag envelope instead of continuing pursuit.");
     }
 
     private static double RecedingLag(ShotTrajectoryKind kind, CinematicActivity activity,
@@ -64,8 +83,8 @@ internal static class ShotTrajectoryPolicyTests
     { if (!condition) throw new Exception(message); }
     private static ShotTrajectoryState Tick(ShotTrajectoryPolicy policy, double now, double x, double speed,
         ShotTrajectoryKind kind = ShotTrajectoryKind.Tracking, CinematicActivity activity = CinematicActivity.Travel,
-        long shot = 0, float lag = 8, double dt = 1d / 60, float pressure = 0, float freedom = 1) =>
-        policy.Step(now, dt, P(x), P(x), P(speed), activity, kind, shot, lag, pressure, freedom);
+        long shot = 0, float lag = 8, double dt = 1d / 60, float pressure = 0, float freedom = 1, bool blocked = false) =>
+        policy.Step(now, dt, P(x), P(x), P(speed), activity, kind, shot, lag, pressure, freedom, blocked);
 
     private static void MovementOnset()
     {

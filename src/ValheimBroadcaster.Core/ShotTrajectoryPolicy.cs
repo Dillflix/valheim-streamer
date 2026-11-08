@@ -84,6 +84,7 @@ namespace ValheimBroadcaster.Core
             center = new Vector(sceneCenter);
             sceneVelocity = new Vector(commonVelocity).Limited(20);
             lagBudget = Math.Max(0.5, Math.Min(24, allowableLag));
+            bool wasBlocked = this.blocked;
             pressure = framingPressure; freedom = availableFreedom; this.blocked = blocked;
             this.locomotion = locomotion;
             ShotTrajectoryKind nextMode = currentActivity == CinematicActivity.Combat ? ShotTrajectoryKind.Tracking : kind;
@@ -100,7 +101,12 @@ namespace ValheimBroadcaster.Core
             }
             mode = nextMode; activity = currentActivity; shotId = currentShotId;
             previousSubject = subjectPoint; lastNow = now;
-            if (blocked) state.Velocity = default;
+            // The camera is a virtual body: a reported constraint sheds the
+            // momentum that drove into it, but it never parks the anchor. Live
+            // steps keep pursuing the subject (the adapter's deoccluder and
+            // visibility scoring negotiate obstacles); only read-only previews
+            // of the unapproved path stay pinned until a fresh step rules.
+            if (blocked && !wasBlocked) state.Velocity = default;
             if (!reset && elapsed > 0)
                 Integrate(ref state, center, sceneVelocity, Math.Min(elapsed, MaximumGapSeconds), false);
             return Result(state, center, reset);
@@ -155,7 +161,9 @@ namespace ValheimBroadcaster.Core
         private void Integrate(ref Dynamics value, Vector target, Vector targetVelocity,
             double elapsed, bool predictTarget)
         {
-            if (blocked || elapsed <= 0) return;
+            // Blocked freezes predictions only: a rejected path may not run
+            // ahead invisibly, but the live anchor always keeps advancing.
+            if (elapsed <= 0 || blocked && predictTarget) return;
             // Small substeps make sparse standby updates behave like live camera
             // updates, without accumulating several missed frames into a snap.
             int steps = Math.Max(1, (int)Math.Ceiling(elapsed / 0.02));

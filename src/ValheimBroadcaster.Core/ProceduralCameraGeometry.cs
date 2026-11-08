@@ -20,7 +20,10 @@ namespace ValheimBroadcaster.Core
                 throw new ArgumentException("Procedural camera dimensions and azimuth must be finite and dimensions nonnegative.");
             double radians = ((azimuth + Angles[index]) % 360) * Math.PI / 180;
             double radius = Math.Max(1.5, (interior ? Math.Min(horizontal, 6) : horizontal) * Distances[index]);
-            double lift = Math.Max(.5, (interior ? Math.Min(height, 1.8) : height) * Heights[index]);
+            // No artificial lift floor: shoulder-height follow coverage rests
+            // near the anchor, and recovery views already go below it. Terrain
+            // and obstacle clearance belong to the adapter's checks, not here.
+            double lift = Math.Max(0, (interior ? Math.Min(height, 1.8) : height) * Heights[index]);
             return new AutonomyPosition((float)(Math.Sin(radians) * radius), (float)lift, (float)(Math.Cos(radians) * radius));
         }
 
