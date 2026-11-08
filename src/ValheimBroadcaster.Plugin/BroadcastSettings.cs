@@ -15,7 +15,7 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<float> ScenicJourneyDistance, ScenicJourneySpeed;
     internal readonly ConfigEntry<float> EnvironmentCycleSeconds;
     internal readonly ConfigEntry<string> EnvironmentWeather;
-    internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, ObserverConnection, ProceduralPlayers;
+    internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, DebugOverlay, ObserverConnection, ProceduralPlayers;
     internal readonly ConfigEntry<bool> SimpleFollow;
     internal readonly ConfigEntry<float> SimpleFollowDistance;
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
@@ -118,6 +118,7 @@ internal sealed class BroadcastSettings
             "Include distant players sharing a public map position and change network reference position. " +
             "UNVERIFIED: may affect streaming, simulation ownership, and the parked observer. Test on a disposable world.");
         HideHud = config.Bind("Display", "HideHud", true, "Hide the normal HUD while broadcasting; restore its prior state on stop.");
+        DebugOverlay = config.Bind("Streaming", "DebugOverlay", false, "Burn the director status and capture reference into the RTMP video sent to every viewer.");
         ShowStatus = config.Bind("Display", "ShowStatus", true, "Show target and director status in the upper-left corner.");
         Toggle = config.Bind("Controls", "Toggle", new KeyboardShortcut(KeyCode.F8), "Start/stop broadcasting.");
         SelfTest = config.Bind("Controls", "SelfTest", new KeyboardShortcut(KeyCode.F10), "Start self-follow camera testing with your own character; F8 stops.");

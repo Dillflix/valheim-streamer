@@ -37,6 +37,7 @@ internal static class Program
             new StreamOptions { Url = "rtmps://localhost/live/key?token=abc" }.Validate();
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", Width = 321 }.Validate(), "reject odd width");
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", SampleRate = 96000 }.Validate(), "reject unsupported audio rate");
+            CheckStreamPanel();
             EncoderSettingsAndDiagnostics();
             RecoveryChecks.Run(Check);
             var ring = new AudioRing(8);
@@ -71,6 +72,28 @@ internal static class Program
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static void CheckStreamPanel()
+    {
+        const int width = 320, height = 180;
+        var panel = new StreamStatusPanel();
+        panel.Prepare(new string('Z', 4500), width, height);
+        var normal = new byte[width * height * 4];
+        panel.Composite(normal, width, height, false);
+        Check(normal[4 * width * 120] == 0, "long overlay fits inside the upper part of the smallest stream");
+        panel.Prepare("f", width, height);
+        Array.Clear(normal, 0, normal.Length);
+        panel.Composite(normal, width, height, false);
+        Check(normal[(2 * width + 6) * 4] == 244 && normal[(8 * width + 6) * 4] == 15 &&
+            normal[16 * 4] == 0, "shorter status replaces old panel and F renders upright");
+        var flipped = new byte[normal.Length];
+        panel.Composite(flipped, width, height, true);
+        bool matches = true;
+        for (int row = 0; row < height; row++)
+            matches &= normal.AsSpan(row * width * 4, width * 4).SequenceEqual(
+                flipped.AsSpan((height - 1 - row) * width * 4, width * 4));
+        Check(matches, "manual encoder vertical flip yields the same top-left panel");
     }
 
     private static Process Start(string executable, string arguments)

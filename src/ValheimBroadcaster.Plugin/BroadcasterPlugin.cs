@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.63";
+    public const string PluginVersion = "0.8.64";
     private SupervisorBridge? supervisor;
     private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
@@ -136,6 +136,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             connection.Install(harmony);
             harmony.Patch(cameraMethod, postfix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(AfterCameraUpdate)));
             stream = gameObject.AddComponent<StreamCapture>();
+            stream.OverlayEnabled = () => settings.DebugOverlay.Value;
+            stream.DescribeStatus = Status;
             diagnosticCapture = gameObject.AddComponent<DiagnosticCapture>();
             diagnosticCapture.Configure(frameHold,
                 () => enabled && director.IsEnabled && settings.DiagnosticVideo.Value && ScenicTrace.Enabled &&
@@ -1509,7 +1511,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     {
         public override string Name => "broadcast";
         public override string Help => "broadcast journey start|stop|on|off|status|distance <metres>|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
-            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|startup profiles|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|startup profiles|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics|overlay on|off|status";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1561,14 +1563,26 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                         plugin.ProbeCommand(args, context);
                         return;
                     case "stream":
-                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status|diagnostics"); return; }
+                        if (args.Length >= 2 && args[1].Equals("overlay", StringComparison.OrdinalIgnoreCase))
+                        {
+                            switch (args.Length == 3 ? args[2].ToLowerInvariant() : "")
+                            {
+                                case "on": plugin.settings.DebugOverlay.Value = true; break;
+                                case "off": plugin.settings.DebugOverlay.Value = false; break;
+                                case "status": break;
+                                default: context?.AddString("broadcast stream overlay on|off|status"); return;
+                            }
+                            context?.AddString("RTMP debug overlay: " + (plugin.settings.DebugOverlay.Value ? "on" : "off"));
+                            return;
+                        }
+                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status|diagnostics|overlay on|off|status"); return; }
                         switch (args[1].ToLowerInvariant())
                         {
                             case "on": plugin.StartStream(); break;
                             case "off": plugin.output?.RequestStop(); break;
                             case "status": break;
                             case "diagnostics": context?.AddString(plugin.output?.Diagnostics); return;
-                            default: context?.AddString("broadcast stream on|off|status|diagnostics"); return;
+                            default: context?.AddString("broadcast stream on|off|status|diagnostics|overlay on|off|status"); return;
                         }
                         context?.AddString("RTMP: " + (plugin.output?.Status ?? "Stopped"));
                         return;

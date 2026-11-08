@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 
 spec = importlib.util.spec_from_file_location("review", Path(__file__).resolve().parents[2] / "tools" / "review-footage.py")
 review = importlib.util.module_from_spec(spec)
@@ -28,6 +29,24 @@ class ReviewTests(unittest.TestCase):
 
     def write(self, rows):
         self.mapping.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    def test_viewer_window_exports_only_matching_records_and_closed_segments(self):
+        session = self.frame["traceSession"]
+        trace = self.root / f"scenic-{session}-00001.jsonl"
+        trace.write_text("\n".join(json.dumps({"time": t, "seq": t}) for t in (1, 2, 3)))
+        (self.footage / self.header["video"]).write_bytes(b"test mp4")
+        archive = self.root / "window.zip"
+        self.assertEqual((2, 1), review.export_window(self.footage, archive, session.upper(), 1, 2))
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertIn("footage-review.html", bundle.namelist())
+            times = [json.loads(row)["time"] for row in bundle.read(f"scenic-{session}-window.jsonl").splitlines()]
+            self.assertEqual([1, 2], times)
+        self.write([self.header, self.frame])
+        self.assertEqual((1, 0), review.export_window(self.footage, archive, session, 1, 1))
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertEqual([f"scenic-{session}-window.jsonl"], bundle.namelist())
+        with self.assertRaises(ValueError):
+            review.export_window(self.footage, archive, session, 30, 31)
 
     def test_complete_and_incomplete(self):
         self.assertTrue(review.read_segment(self.mapping)["complete"])

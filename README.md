@@ -271,6 +271,7 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 | `Idle / CreatureSeconds` | `25` | Usable creature footage before returning to scenery |
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
+| `Streaming / DebugOverlay` | `false` | Burn the operator status and trace reference into the RTMP feed. Toggle live with `broadcast stream overlay on\|off\|status`. See [remote footage review](docs/EDITORIAL-CAPTURE.md#reviewing-a-moment-from-the-live-feed). |
 | `Display / ShowStatus` | `true` | Show the director overlay |
 | `Multiplayer / ObserverConnection` | `false` | Select the read-only connection before joining; requires matching companion authorization |
 | `Automation / Enabled`, `ScenicTravel` | `true`, `true` | Acquire players and traverse generated scenic regions in a read-only session |
