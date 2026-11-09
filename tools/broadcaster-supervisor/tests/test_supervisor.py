@@ -74,6 +74,83 @@ class TransactionTests(Fixture):
         self.assertFalse(self.s.journal_path.exists())
         self.assertEqual(self.launches, ["0.8.20"])
 
+    def test_sandbox_update_with_pinned_plugin_directory_keeps_backup_and_identity(self):
+        self.config.platform = "windows-sandboxie"
+        original_move = sup.os.replace
+        def pinned_root(src, dest):
+            if self.plugin in (Path(src), Path(dest)):
+                raise PermissionError("plugin directory is in use")
+            return original_move(src, dest)
+        identity = self.plugin.stat().st_ino
+        with patch.object(sup.os, "replace", side_effect=pinned_root):
+            self.s.update(self.candidate, self.tx)
+        self.s.cleanup_staging(self.tx)
+        self.assertEqual(self.plugin.stat().st_ino, identity)
+        self.assertEqual(sup.inventory(self.plugin), self.new)
+        self.assertEqual(sup.inventory(self.tx / "backup"), self.old)
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows directory sharing")
+    def test_real_directory_handle_does_not_block_sandbox_update(self):
+        self.config.platform = "windows-sandboxie"
+        handle = sup._kernel.CreateFileW(str(self.plugin), 0x80, 3, None, 3, 0x02000000, None)
+        self.assertNotEqual(handle, sup.ctypes.c_void_p(-1).value)
+        try:
+            with self.assertRaises(PermissionError):
+                os.replace(self.plugin, self.tx / "blocked-rename")
+            self.s.update(self.candidate, self.tx)
+        finally:
+            sup._kernel.CloseHandle(handle)
+        self.assertEqual(sup.inventory(self.plugin), self.new)
+
+    def test_failed_dll_swap_restores_only_changed_files_and_can_retry_same_build(self):
+        self.config.platform = "windows-sandboxie"
+        broken = self.plugin / "ValheimBroadcaster.dll"
+        rename = sup.os.replace
+        def locked(src, dst):
+            if Path(dst) == broken:
+                self.assertNotEqual(sup.digest(self.plugin / "ValheimBroadcaster.Core.dll"),
+                                    self.old["ValheimBroadcaster.Core.dll"]["sha256"])
+                raise PermissionError(errno.EACCES, "secret fixture path")
+            return rename(src, dst)
+        with patch.object(sup.os, "replace", side_effect=locked):
+            with self.assertRaisesRegex(sup.Failure, "ValheimBroadcaster.dll"):
+                self.s.update(self.candidate, self.tx)
+        self.assertNotIn("secret fixture path", str(self.s.state["last_update_failure"]))
+        self.assertEqual(self.s.state["quarantined"], [])
+        self.assertEqual(self.launches, [])
+        self.assertFalse(self.s.journal_path.exists())
+        self.assertEqual(sup.inventory(self.plugin), self.old)
+
+    def test_crash_mid_file_update_cleans_partial_copy_and_reconciles_mixed_build(self):
+        journal = self.journal()
+        journal["method"] = "files"
+        sup.atomic_json(self.s.journal_path, journal)
+        new_name = "ThirdParty/Cinemachine/license.txt"
+        # Simulate an older installation without this notice and a partially
+        # applied update which has added it and changed one existing DLL.
+        del journal["before"][new_name]
+        (self.tx / "backup" / new_name).unlink()
+        sup.atomic_json(self.s.journal_path, journal)
+        for name in (new_name, "ValheimBroadcaster.dll"):
+            (self.plugin / name).write_bytes((self.tx / "new" / name).read_bytes())
+        (self.plugin / (".vb-" + self.tx.name + ".tmp")).write_bytes(b"partial")
+        self.s.recover_transaction()
+        self.assertEqual(sup.inventory(self.plugin), journal["before"])
+        self.assertFalse(self.s.journal_path.exists())
+        self.assertEqual(self.s.state["quarantined"], [])
+
+    def test_legacy_prepared_journal_verifies_untouched_install_without_directory_move(self):
+        self.journal()
+        rename = sup.os.replace
+        def blocked(src, dst):
+            if Path(src) == self.plugin:
+                raise PermissionError("pinned directory")
+            return rename(src, dst)
+        with patch.object(sup.os, "replace", side_effect=blocked):
+            self.s.recover_transaction()
+        self.assertFalse(self.s.journal_path.exists())
+        self.assertEqual(self.s.state["quarantined"], [])
+
     def test_failed_health_restores_verified_prior_bytes_and_quarantines_source(self):
         self.s.wait_healthy = lambda: (_ for _ in ()).throw(sup.HealthFailure("fixture"))
         with self.assertRaises(sup.HealthFailure):
@@ -189,6 +266,8 @@ class TransactionTests(Fixture):
         self.assertTrue(self.s.journal_path.exists())
         self.assertTrue(self.s.state["paused"])
         self.assertEqual(self.s.state["status"], "recovery_required")
+        self.assertIn("verify candidate startup: candidate failed", self.s.state["last_update_failure"]["update"])
+        self.assertIn("verify rollback backup", self.s.state["last_update_failure"]["rollback"])
         saved = self.s.journal_path.read_bytes()
         with self.assertRaises(sup.RecoveryRequired):
             sup.Supervisor.launch(self.s, "0.8.19", "b" * 40)
