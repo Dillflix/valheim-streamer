@@ -38,6 +38,13 @@ internal static class WorldInterestTests
     private static void GraveAge()
     {
         long death = TimeSpan.FromHours(16).Ticks;
+        const int window = 48 * 60;
+        long expires = death + TimeSpan.FromHours(48).Ticks;
+        Eq(46 * 3600d, RecentGravestones<int>.Remaining(death + TimeSpan.FromHours(2).Ticks, death, window));
+        Eq(24 * 3600d, RecentGravestones<int>.Remaining(death + TimeSpan.FromHours(24).Ticks, death, window));
+        Eq(1d, RecentGravestones<int>.Remaining(expires - TimeSpan.TicksPerSecond, death, window));
+        Eq(0d, RecentGravestones<int>.Remaining(expires, death, window));
+        Eq(0d, RecentGravestones<int>.Remaining(expires + TimeSpan.TicksPerSecond, death, window));
         Eq(7200d, RecentGravestones<int>.Remaining(death, death, 120));
         Eq(1d, RecentGravestones<int>.Remaining(death + TimeSpan.FromSeconds(7199).Ticks, death, 120));
         Eq(0d, RecentGravestones<int>.Remaining(death + TimeSpan.FromHours(2).Ticks, death, 120));

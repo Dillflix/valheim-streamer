@@ -1,6 +1,6 @@
 # Valheim Broadcaster
 
-**0.8.71 adds recent player gravestone areas to Scenic discovery.** The updated server companion can offer outdoor locations with a recent, still-existing grave. The client occasionally visits the surrounding scenery alongside other destination types. Run `broadcast destinations` on the observer to see the count. [Server configuration and coverage](docs/WORLD-DESTINATIONS.md#recent-player-gravestones)
+**Server companion 0.8.72 extends Scenic gravestone coverage to 48 hours on the server’s world clock.** If 0.8.71 already wrote your server config, set `[Observer] RecentGravestoneMinutes` to `2880` when upgrading. The updated server companion can offer outdoor locations with a recent, still-existing grave. The client occasionally visits the surrounding scenery alongside other destination types. Run `broadcast destinations` on the observer to see the count. [Server configuration and coverage](docs/WORLD-DESTINATIONS.md#recent-player-gravestones)
 
 **0.8.70 changes Scenic Journey flight through forests.** When an obstacle blocks cruising height, the guide checks for a gap on either side, including passages that need a bend between staggered rows. Closed stands can still prompt an overflight. Longer journeys ease between low, mid-height and elevated views with distance travelled. Journey traces include the chosen corridor and preferred height above the local surface. The existing supervisor distributes this client update. The protocol-3 server companion and existing configuration are compatible.
 
