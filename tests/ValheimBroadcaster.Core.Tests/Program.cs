@@ -190,6 +190,7 @@ internal static class Program
             .Concat(FrameRetentionPolicyTests.Cases())
             .Concat(FollowDistanceInvariantTests.Cases())
             .Concat(FinalFrameClampTests.Cases())
+            .Concat(OcclusionRecoveryPolicyTests.Cases())
             .Concat(ObserverContextTests.Cases()).ToArray();
 
         int failed = 0;
