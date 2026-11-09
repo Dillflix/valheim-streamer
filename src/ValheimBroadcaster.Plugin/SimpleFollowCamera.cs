@@ -61,16 +61,17 @@ internal sealed class SimpleFollowCamera : IDisposable
     private const float SoloScreenX = -0.08f;
     private const float SoloScreenY = 0.05f;          // Unchanged headroom; combat only moves X.
     private const float ThirdsScreenX = 1f / 6f;      // +/-1/6: the enemy's opposite thirds line.
-    // Combat holds BOTH actors, so it eases to a WIDER lens than solo. A full-
-    // frame focal length maps to a vertical fov by 2*atan(12/mm): solo defaults
-    // to 45 mm (29.8628 deg, tighter), combat to 24 mm (53.1301 deg, wider).
-    private const float CombatLensMm = 24f;           // Full-frame 24 mm: 2*atan(12/24) = 53.1301 deg.
+    // Combat eases to a LONGER lens than solo for a compressed, pulled-in
+    // battle look; the thirds solve fits both actors at any fov. A full-frame
+    // focal length maps to a vertical fov by 2*atan(12/mm): solo defaults to
+    // 50 mm (26.9915 deg), combat to 75 mm (18.1805 deg, tighter).
+    private const float CombatLensMm = 75f;           // Full-frame 75 mm: 2*atan(12/75) = 18.1805 deg.
     private static float LensFov(float mm) => 2f * Mathf.Atan(12f / Mathf.Max(1f, mm)) * Mathf.Rad2Deg;
     private readonly CombatFramingPolicy combat = new CombatFramingPolicy();
     private readonly List<CombatCandidate> combatCandidates = new List<CombatCandidate>(16);
     private readonly Dictionary<int, string> combatNames = new Dictionary<int, string>(16);
     // One eased 0..1 blend drives BOTH the thirds screen-X move and the lens
-    // change, so the enemy slide and the 24 mm widen share the same weighted
+    // change, so the enemy slide and the 75 mm tighten share the same weighted
     // feel. combatFov holds the blended lens so the TrySolve lens assignment and
     // the thirds-separation solve read the identical value (no snaps, no
     // read-back from camera.Lens between the two).
@@ -92,7 +93,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         out Vector3 position, out Quaternion rotation, out float fov)
     {
         // The failure-path default is the simple camera's own solo lens fov (the
-        // 45 mm default), not settings.FieldOfView (the dormant directed knob).
+        // 50 mm default), not settings.FieldOfView (the dormant directed knob).
         position = default; rotation = Quaternion.identity;
         fov = LensFov(Mathf.Clamp(settings.FollowLensMm.Value, 12f, 135f));
         if (!actor) return Fail("Camera subject unavailable");
@@ -114,13 +115,13 @@ internal sealed class SimpleFollowCamera : IDisposable
         orbit.TargetOffset = new Vector3(0f, aimHeight, 0f);
         if (output) camera!.Lens.PullInheritedPropertiesFromCamera(output);
         camera!.Lens.ModeOverride = LensSettings.OverrideModes.Perspective;
-        // Solo lens fov from the full-frame focal length (45 mm default =
-        // 29.8628 deg). The lens clamp [12,135] mm already bounds fov to roughly
+        // Solo lens fov from the full-frame focal length (50 mm default =
+        // 26.9915 deg). The lens clamp [12,135] mm already bounds fov to roughly
         // [10.1, 90] deg; the fov guard below is only a non-finite backstop.
         float soloFov = Mathf.Clamp(LensFov(Mathf.Clamp(settings.FollowLensMm.Value, 12f, 135f)), 10f, 100f);
         // The lens reads the blended combat fov (previous frame's blend). It is
         // seeded to soloFov on create/reset and whenever combat framing is off,
-        // so outside combat this is exactly soloFov and eases to 24 mm in combat.
+        // so outside combat this is exactly soloFov and eases to 75 mm in combat.
         if (combatFov <= 0f) combatFov = soloFov;
         camera.Lens.FieldOfView = combatFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
@@ -200,9 +201,9 @@ internal sealed class SimpleFollowCamera : IDisposable
     {
         if (!settings.CombatFraming.Value) { combatFov = soloFov; if (combatTargetId != 0) ResetCombat(); return; }
         // The thirds separation must be solved from the SAME blended fov the lens
-        // carries this frame, never a read-back - as the lens widens to 24 mm the
-        // thirds lines spread in lockstep so the enemy stays pinned on its line
-        // through the whole move.
+        // carries this frame, never a read-back - as the lens tightens to 75 mm
+        // the thirds lines narrow in lockstep so the enemy stays pinned on its
+        // line through the whole move.
         float combatFovTarget = LensFov(CombatLensMm);
         float blendedFov = Mathf.Lerp(soloFov, combatFovTarget, combatBlend);
         float separation = CombatFramingPolicy.ThirdsSeparationDegrees(

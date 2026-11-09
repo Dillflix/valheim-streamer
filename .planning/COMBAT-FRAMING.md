@@ -71,14 +71,14 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
    - Writing HorizontalAxis cancels native recentering that frame (proven Layer 1
      pattern, SimpleFollowCamera.cs:114-147); on exit we stop writing and native
      stay-behind recentering resumes — continuous by construction.
-   - **Lens model — solo 45 mm / combat 24 mm (updated 2026-11-09, was 50-deg
+   - **Lens model — solo 50 mm / combat 75 mm (updated 2026-11-09, was 50-deg
      solo / 35 mm combat):** full-frame vertical fov = 2*atan(12/focalMm) deg.
-     Solo = 45 mm -> **29.8628 deg** (tighter). Combat = 24 mm -> **53.1301 deg**
+     Solo = 50 mm -> **26.9915 deg**. Combat = 75 mm -> **18.1805 deg** (longer,
      (WIDER, so it holds both actors). Combat is now wider than solo, not tighter.
      - `SimpleFollowCamera.LensFov(mm) = 2*atan(12/max(1,mm))*Rad2Deg`;
        `CombatLensMm = 24f`. soloFov = LensFov(clamp(settings.FollowLensMm, 12, 135)),
        clamped to [10,100] as a non-finite backstop (the [12,135] mm clamp already
-       bounds fov to ~[10.1, 90]). combatFovTarget = LensFov(24) = 53.1301.
+       bounds fov to ~[10.1, 90]). combatFovTarget = LensFov(75) = 18.1805.
      - One eased 0..1 blend (combatBlend, SmoothDamp ~0.8s toward the policy
        Weight) drives BOTH the thirds screen-X slide AND the lens change together:
        fov = Lerp(soloFov, combatFovTarget, combatBlend); screenX = Lerp(SoloScreenX,
@@ -93,7 +93,7 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
    - **`Camera.FollowLensMm` is a NEW config key (migration, same reason as
      FollowFieldOfView):** the deployed broadcast machine's BepInEx cfg has
      persisted values under old keys (Config.Bind keeps saved values), so a new
-     key is required to force the 45 mm default to actually apply. Default 45f,
+     key is required to force the lens default to actually apply. Default 50f,
      range [12,135] mm. `Camera.FollowFieldOfView` is LEFT BOUND unchanged — it
      feeds the dormant directed/scenic system (CameraRig/CinemachineShotRig/
      ScenicProduction); the simple-follow camera no longer reads it.

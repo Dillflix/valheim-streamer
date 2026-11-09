@@ -93,7 +93,7 @@ internal sealed class BroadcastSettings
         SimpleFollowDistance = config.Bind("Camera", "SimpleFollowDistance", 6f, Range("Simple follow orbit distance from the subject in metres.", 2f, 30f));
         CombatFraming = config.Bind("Camera", "CombatFraming", true, "Two-shot thirds framing while the player fights; the enemy rides the opposite thirds from the player.");
         CombatRange = config.Bind("Camera", "CombatRange", 30f, Range("Forward-cone range in metres within which a hostile qualifies for combat two-shot framing.", 5f, 80f));
-        FollowLensMm = config.Bind("Camera", "FollowLensMm", 45f, Range("Full-frame lens focal length in millimetres for the simple-follow camera outside combat (vertical fov = 2*atan(12/mm)). Combat eases to a 24 mm lens.", 12f, 135f));
+        FollowLensMm = config.Bind("Camera", "FollowLensMm", 50f, Range("Full-frame lens focal length in millimetres for the simple-follow camera outside combat (vertical fov = 2*atan(12/mm)). Combat eases to a 75 mm lens.", 12f, 135f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use the shared Cinemachine pipeline for player, creature and scenic coverage. False selects legacy fixed framing for comparison. This existing config key is retained for compatibility.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
         PredictiveShots = config.Bind("Camera", "PredictiveShots", true, "Prefer presently readable viewpoints expected to remain useful during observed movement. Prediction is bounded, uncertain evidence stays neutral, and it never requests travel.");
