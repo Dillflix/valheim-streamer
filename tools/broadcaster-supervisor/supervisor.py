@@ -975,6 +975,13 @@ class Supervisor:
             self.operator_read_error = str(error)
             return self.state.get("paused", False)
 
+    @staticmethod
+    def block_category(status):
+        # Only surface known categories; raw third-party reason text can contain credentials.
+        category = status.get("failure_category")
+        return category if category in ("authentication", "configuration", "adapter", "connection",
+                                         "observer_authorization", "streaming") else "unknown"
+
     def serving(self, status) -> bool:
         return bool(status and status.get("observer_authorized") is True and
                     (status.get("publishing") is True if self.config.require_publishing
@@ -1006,11 +1013,7 @@ class Supervisor:
                 if status.get("state") == "stopped":
                     raise ManualStop("Broadcaster was stopped by the operator")
                 if status.get("state") == "blocked":
-                    # Reason text is intentionally not copied; native third-party messages can contain secrets.
-                    category = status.get("failure_category")
-                    if category not in ("authentication", "configuration", "adapter", "connection", "observer_authorization", "streaming"):
-                        category = "unknown"
-                    raise TerminalBlock("Broadcaster startup blocked (" + category + "); inspect its local diagnostics")
+                    raise TerminalBlock("Broadcaster startup blocked (" + self.block_category(status) + "); inspect its local diagnostics")
                 # Stable service and evidence of an actual live picture answer two
                 # different questions. A camera cut or travel need not restart the encoder.
                 now = time.monotonic()
@@ -1454,7 +1457,14 @@ class Supervisor:
                     status = self.heartbeat(allow_final=True)
                     if status and status.get("state") in {"stopped", "blocked"}:
                         self.state["paused"] = True
-                        self.report("paused", "Game reported an operator stop or blocked startup; explicit resume required")
+                        if status["state"] == "blocked":
+                            category = self.block_category(status)
+                            self.state["last_runtime_block"] = {"at": int(time.time()), "category": category,
+                                "session_id": self.record.get("session_id"), "source_sha": self.record.get("source_sha")}
+                            self.preserve_log(self.config.state_dir, "last-runtime-block.log")
+                            self.report("blocked", f"Broadcaster reported a runtime block ({category}); explicit resume required")
+                        else:
+                            self.report("paused", "Broadcaster reported a stop; explicit resume required")
                         continue
                     healthy = self.serving(status)
                     if not healthy:

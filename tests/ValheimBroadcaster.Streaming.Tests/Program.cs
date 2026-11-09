@@ -60,6 +60,7 @@ internal static class Program
             Loopback(VideoEncoderKind.libx264, overload: true);
             if (!OperatingSystem.IsWindows())
             {
+                DelayedWriterCleanup();
                 string delayed = Path.Combine(Path.GetTempPath(), "valheim-delayed-ffmpeg-" + Guid.NewGuid().ToString("N"));
                 File.WriteAllText(delayed, "#!/bin/sh\nsleep 1\nexec ffmpeg \"$@\"\n");
                 File.SetUnixFileMode(delayed, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -169,6 +170,37 @@ internal static class Program
         var denied = new EncoderDiagnostics(url);
         denied.AddLine("Server error: 403 Forbidden");
         Check(denied.PermanentFailure, "known authorization rejection requires operator correction");
+    }
+
+    // Recreate a process that exits while an inherited pipe is still open.
+    // Its real OS pipe holds the video writer until we explicitly release it.
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static void DelayedWriterCleanup()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "encoder-cleanup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string launcher = Path.Combine(root, "encoder"), release = Path.Combine(root, "release");
+        EncoderSession? encoder = null;
+        try
+        {
+            File.WriteAllText(launcher, "#!/bin/sh\ncd \"$(dirname \"$0\")\" || exit 2\nexec 3<&0\n" +
+                "(i=0; while [ ! -f release ] && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done) <&3 &\nexit 7\n");
+            File.SetUnixFileMode(launcher, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            encoder = new EncoderSession(new StreamOptions { Executable = launcher, Url = "rtmp://127.0.0.1/live/test" });
+            Check(SpinWait.SpinUntil(() => encoder.CleanupStatus.Contains("video writer stopped=False"), 12000),
+                "late cleanup identifies the blocked video writer");
+            Check(!encoder.IsClosed && encoder.ProcessId == 0 && encoder.FailureDetails.StartsWith("FFmpeg exited."),
+                "late cleanup retains the original failure and prevents overlap after process exit");
+            File.WriteAllText(release, "");
+            Check(SpinWait.SpinUntil(() => encoder.IsClosed, 10000) && !encoder.PermanentFailure &&
+                encoder.FailureDetails.Contains("FFmpeg exit: 7"), "late writer completion releases the session for retry");
+        }
+        finally
+        {
+            File.WriteAllText(release, "");
+            encoder?.Stop();
+            Directory.Delete(root, true);
+        }
     }
 
     private static void Loopback(VideoEncoderKind videoEncoder, string executable = "ffmpeg", bool overload = false)

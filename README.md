@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**Client 0.8.74 recovers from delayed RTMP encoder shutdown.** The observer keeps filming while it waits for the previous FFmpeg process and writers to finish. The log retains the initial stream failure and identifies which part of cleanup is still pending.
+
 **Client 0.8.73 shows the loaded client version and short Git commit in the operator status and optional RTMP debug overlay.** The same label appears on live, held and recovery pictures. Builds without an embedded commit show the version alone.
 
 **Client 0.8.72 restores the Scenic Journey flight behavior from 0.8.69.** The Windows supervisor can install this update from main. The existing dedicated server and configuration are compatible.

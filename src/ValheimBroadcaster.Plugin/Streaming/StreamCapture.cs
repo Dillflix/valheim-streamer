@@ -44,7 +44,7 @@ internal sealed class StreamCapture : MonoBehaviour
     internal bool IsPublishing => active && session?.IsPublishing == true;
     internal bool HasCompletedFailure => preflightFailure.Length != 0 || session?.IsClosed == true && session.FailureDetails.Length != 0;
     internal bool PermanentFailure => preflightPermanent || session?.PermanentFailure == true;
-    internal bool CleanupBlocked => session?.CleanupBlocked == true;
+    internal string CleanupStatus => session?.CleanupStatus ?? "";
     internal long Generation { get; private set; }
     internal bool CanStart => !active && !pending && orientation?.Pending != true && (session == null || session.IsClosed);
     internal string Status => awaitingCalibration != null ? "Calibrating video orientation" :
