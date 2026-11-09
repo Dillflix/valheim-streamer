@@ -16,6 +16,7 @@ internal static class CombatFramingPolicyTests
         yield return ("The enemy screen side is fixed per target and never flips", SideStickiness);
         yield return ("Thirds separation matches the lens exactly", ThirdsSeparationExact);
         yield return ("The orbit azimuth solve is exact on both sides", OrbitSolveExact);
+        yield return ("The solved axis frames the enemy on the requested side at separation", OrbitSolveInvariant);
         yield return ("An infeasibly close enemy clamps to the achievable maximum", OrbitSolveClamp);
         yield return ("A clock rollback resets the state machine", ClockRollbackResets);
         yield return ("The policy rejects non-finite and out-of-range inputs", ContractValidation);
@@ -157,15 +158,16 @@ internal static class CombatFramingPolicyTests
     {
         var policy = new CombatFramingPolicy();
         double now = 0;
-        // Camera azimuth 0 -> cam->player forward is 180. An enemy bearing 170
-        // is to one side of forward; engage fixes that side.
+        // Camera azimuth 0 -> cam->player forward is 0 (the axis value IS the
+        // cam->player azimuth). An enemy bearing 170 is to one side of forward
+        // (signed +170 -> side +1); engage fixes that side.
         var engaged = Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
             new[] { E(1, 170f, 8f) });
         Check(engaged.Phase == CombatFramingPhase.Combat, "Setup failed to engage.");
         int side = engaged.PlayerScreenSide;
-        Check(side == 1 || side == -1, "Side must be +/-1 while engaged.");
-        // The same target drifts across to the other side of forward; the side
-        // must NOT flip mid-target.
+        Check(side == 1, "Enemy at signed +170 must take side +1.");
+        // The same target drifts to the other side of forward (bearing 190,
+        // signed DeltaAngle(0,190) = -170); the side must NOT flip mid-target.
         var drifted = Drive(policy, ref now, 0.5, 0f, new[] { E(1, 190f, 8f) });
         Check(drifted.TargetId == 1 && drifted.PlayerScreenSide == side,
             "The screen side flipped mid-target.");
@@ -188,28 +190,52 @@ internal static class CombatFramingPolicyTests
     private static void OrbitSolveExact()
     {
         float sep = CombatFramingPolicy.ThirdsSeparationDegrees(50f, 16f / 9f); // 30.894195
-        // Enemy dead ahead (bearing 0), d=10, r=6. delta = sep + asin((r/d)sin sep),
-        // camForward = -side*delta, azimuth = norm(camForward+180).
+        // Enemy dead ahead (bearing 0), d=10, r=6. delta = sep + asin((r/d)sin sep)
+        // = 48.837309. The axis IS the cam->player azimuth: axis = bearing - side*delta.
         float right = CombatFramingPolicy.SolveOrbitAzimuth(0f, 10f, 6f, sep, +1);
         float left = CombatFramingPolicy.SolveOrbitAzimuth(0f, 10f, 6f, sep, -1);
-        Near(131.162691f, right, "azimuth side+1");
-        Near(-131.162691f, left, "azimuth side-1");
-        // The two sides mirror across the 180 cam->player baseline.
+        Near(-48.837309f, right, "axis side+1");
+        Near(48.837309f, left, "axis side-1");
+        // The two sides mirror across the cam->player baseline (bearing 0).
         Near(right, -left, "sides mirror");
         // A bearing offset rotates the solution rigidly.
         float offset = CombatFramingPolicy.SolveOrbitAzimuth(90f, 10f, 6f, sep, +1);
         Near(CombatFramingPolicy.DeltaAngle(right, offset), 90f, "bearing offset rotates the solve");
     }
 
+    // Regression invariant for the 180-degree sign bug: feeding the SOLVED axis
+    // back through the cam-apparent angle must put the enemy on the requested
+    // side at exactly the separation. Violated by the old +180 flip, which
+    // framed the enemy on the SAME side as the player.
+    private static void OrbitSolveInvariant()
+    {
+        float sep = CombatFramingPolicy.ThirdsSeparationDegrees(50f, 16f / 9f); // 30.894195
+        const float d = 10f, r = 6f;
+        foreach (float bearing in new[] { 0f, 90f, -120f, 175f })
+            foreach (int side in new[] { +1, -1 })
+            {
+                float axis = CombatFramingPolicy.SolveOrbitAzimuth(bearing, d, r, sep, side);
+                // apparent = atan2(d*sin(bearing-axis), r + d*cos(bearing-axis)):
+                // the cam-apparent player->enemy angle. Its sign is the enemy's
+                // screen side; its magnitude is the achieved separation.
+                double delta = (bearing - axis) * Math.PI / 180.0;
+                double apparent = Math.Atan2(d * Math.Sin(delta), r + d * Math.Cos(delta)) * 180.0 / Math.PI;
+                Check(Math.Sign(apparent) == side, $"Enemy landed on the wrong side (bearing {bearing}, side {side}): apparent {apparent}.");
+                Near(sep, (float)Math.Abs(apparent), $"separation off (bearing {bearing}, side {side})");
+            }
+    }
+
     private static void OrbitSolveClamp()
     {
         // d=2 < r=6, sep=30: (r/d)sin30 = 1.5 >= 1 -> infeasible. delta clamps to
         // acos(-d/r) = 109.47122, the tangent realising asin(d/r) = 19.47122.
+        // axis = bearing - side*delta = 0 - 109.47122 = -109.47122.
         float az = CombatFramingPolicy.SolveOrbitAzimuth(0f, 2f, 6f, 30f, +1);
-        Near(70.528779f, az, "clamped azimuth");
-        // Degenerate zero distance parks behind the player (delta = 180 -> az 0).
+        Near(-109.471221f, az, "clamped axis");
+        // Degenerate zero distance parks behind the player: delta = 180,
+        // axis = 0 - 180 = -180 (the cam->player azimuth directly behind).
         float onTop = CombatFramingPolicy.SolveOrbitAzimuth(0f, 0f, 6f, 30f, +1);
-        Near(0f, onTop, "zero-distance parks behind the player");
+        Near(-180f, onTop, "zero-distance parks behind the player");
         Throws(() => CombatFramingPolicy.SolveOrbitAzimuth(0f, -1f, 6f, 30f, +1));
         Throws(() => CombatFramingPolicy.SolveOrbitAzimuth(0f, 10f, 0f, 30f, +1));
         Throws(() => CombatFramingPolicy.SolveOrbitAzimuth(0f, 10f, 6f, 30f, 0));

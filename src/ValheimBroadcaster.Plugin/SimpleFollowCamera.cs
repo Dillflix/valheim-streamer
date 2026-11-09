@@ -61,11 +61,18 @@ internal sealed class SimpleFollowCamera : IDisposable
     private const float SoloScreenX = -0.08f;
     private const float SoloScreenY = 0.05f;          // Unchanged headroom; combat only moves X.
     private const float ThirdsScreenX = 1f / 6f;      // +/-1/6: the enemy's opposite thirds line.
+    private const float CombatFovDegrees = 37.849f;   // Full-frame 35 mm: 2*atan(12/35).
     private readonly CombatFramingPolicy combat = new CombatFramingPolicy();
     private readonly List<CombatCandidate> combatCandidates = new List<CombatCandidate>(16);
     private readonly Dictionary<int, string> combatNames = new Dictionary<int, string>(16);
-    private float combatScreenX = SoloScreenX;
-    private float combatScreenXVelocity;
+    // One eased 0..1 blend drives BOTH the thirds screen-X move and the lens
+    // tightening, so the enemy slide and the 35 mm push share the same weighted
+    // feel. combatFov holds the blended lens so the TrySolve lens assignment and
+    // the thirds-separation solve read the identical value (no snaps, no
+    // read-back from camera.Lens between the two).
+    private float combatBlend;
+    private float combatBlendVelocity;
+    private float combatFov;
     private int combatSide;
     private int combatTargetId;
     private float combatDistance;
@@ -100,10 +107,15 @@ internal sealed class SimpleFollowCamera : IDisposable
         orbit.TargetOffset = new Vector3(0f, aimHeight, 0f);
         if (output) camera!.Lens.PullInheritedPropertiesFromCamera(output);
         camera!.Lens.ModeOverride = LensSettings.OverrideModes.Perspective;
-        camera.Lens.FieldOfView = Mathf.Clamp(settings.FieldOfView.Value, 30f, 110f);
+        float soloFov = Mathf.Clamp(settings.FieldOfView.Value, 30f, 110f);
+        // The lens reads the blended combat fov (previous frame's blend). It is
+        // seeded to soloFov on create/reset and whenever combat framing is off,
+        // so outside combat this is exactly soloFov and eases to 35 mm in combat.
+        if (combatFov <= 0f) combatFov = soloFov;
+        camera.Lens.FieldOfView = combatFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
         UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, radius, dt);
-        UpdateCombatFraming(actor, settings, subjectPosition, radius, dt);
+        UpdateCombatFraming(actor, settings, subjectPosition, radius, soloFov, dt);
         // ManualCameraUpdate owns exact elapsed time and native skipped-frame compensation.
         ManualCameraUpdate.Update(camera, Vector3.up, dt);
         CameraState state = camera.State;
@@ -174,11 +186,16 @@ internal sealed class SimpleFollowCamera : IDisposable
     // frame, exactly like Layer 1; on release we stop writing and recentering
     // resumes. No cuts, ever.
     private void UpdateCombatFraming(Character actor, BroadcastSettings settings, Vector3 subjectPosition,
-        float radius, float dt)
+        float radius, float soloFov, float dt)
     {
-        if (!settings.CombatFraming.Value) { if (combatTargetId != 0) ResetCombat(); return; }
+        if (!settings.CombatFraming.Value) { combatFov = soloFov; if (combatTargetId != 0) ResetCombat(); return; }
+        // The thirds separation must be solved from the SAME blended fov the lens
+        // carries this frame, never a read-back - as the lens tightens to 35 mm
+        // the thirds lines narrow in lockstep so the enemy stays pinned on its
+        // line through the whole push.
+        float blendedFov = Mathf.Lerp(soloFov, CombatFovDegrees, combatBlend);
         float separation = CombatFramingPolicy.ThirdsSeparationDegrees(
-            Mathf.Clamp(camera!.Lens.FieldOfView, 30f, 110f), Mathf.Max(0.1f, camera.Lens.Aspect));
+            Mathf.Clamp(blendedFov, 30f, 110f), Mathf.Max(0.1f, camera!.Lens.Aspect));
         SenseHostiles(actor, settings, subjectPosition);
         double now = Time.unscaledTimeAsDouble;
         float cameraAzimuth = orbit!.HorizontalAxis.Value;
@@ -207,17 +224,19 @@ internal sealed class SimpleFollowCamera : IDisposable
                 orbit.HorizontalAxis.Value = next;
             }
         }
-        // Ease the player across the frame toward its thirds (enemy opposite).
-        // SmoothDamp gives the critically damped ~0.8s settle; weight collapses
-        // the target back to solo as the policy releases.
+        // One critically-damped ~0.8s blend toward the policy weight drives the
+        // whole engage/release feel. The thirds screen-X slide (player opposite
+        // the enemy) and the 35 mm lens push are both lerped off this single
+        // blend, so they move together and collapse back to solo in lockstep as
+        // the policy releases. No snaps.
+        combatBlend = Mathf.SmoothDamp(combatBlend, decision.Weight, ref combatBlendVelocity, 0.8f, Mathf.Infinity, Mathf.Max(dt, 0f));
+        combatFov = Mathf.Lerp(soloFov, CombatFovDegrees, combatBlend);
         float sideSign = combatSide >= 0 ? 1f : -1f;
         float engagedX = -sideSign * ThirdsScreenX; // Enemy on side => player opposite.
-        float targetX = Mathf.Lerp(SoloScreenX, engagedX, decision.Weight);
-        float eased = Mathf.SmoothDamp(combatScreenX, targetX, ref combatScreenXVelocity, 0.8f, Mathf.Infinity, Mathf.Max(dt, 0f));
-        if (eased != combatScreenX)
+        float combatScreenX = Mathf.Lerp(SoloScreenX, engagedX, combatBlend);
+        ScreenComposerSettings composition = aim!.Composition; // Struct: mutate a copy and reassign.
+        if (composition.ScreenPosition.x != combatScreenX)
         {
-            combatScreenX = eased;
-            ScreenComposerSettings composition = aim!.Composition; // Struct: mutate a copy and reassign.
             composition.ScreenPosition = new Vector2(combatScreenX, SoloScreenY);
             aim.Composition = composition;
         }
@@ -268,7 +287,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     private void ResetCombat()
     {
         combat.Reset(); combatCandidates.Clear(); combatNames.Clear();
-        combatScreenX = SoloScreenX; combatScreenXVelocity = 0f;
+        combatBlend = 0f; combatBlendVelocity = 0f; combatFov = 0f; // 0 reseeds to solo fov next solve.
         combatSide = 0; combatTargetId = 0; combatDistance = 0f;
         if (aim != null)
         {

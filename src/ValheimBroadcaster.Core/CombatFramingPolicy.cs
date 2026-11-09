@@ -90,7 +90,7 @@ namespace ValheimBroadcaster.Core
 
         /// <summary>Observe one frame. now is a monotonic clock (a rollback is a
         /// world reload and resets the machine); cameraAzimuthDegrees is the orbit
-        /// horizontal axis this frame (the player-&gt;camera direction azimuth) used
+        /// horizontal axis this frame (the cam-&gt;player direction azimuth) used
         /// to pick a sticky side and solve the desired orbit azimuth;
         /// separationDegrees is the live thirds separation (see
         /// <see cref="ThirdsSeparationDegrees"/>); orbitRadius is the follow
@@ -185,9 +185,11 @@ namespace ValheimBroadcaster.Core
             float orbitRadius)
         {
             targetId = target.Id;
-            // Camera forward is the cam->player direction: the opposite of the
-            // player->camera azimuth the orbit axis carries.
-            float cameraForward = Normalize(cameraAzimuthDegrees + 180f);
+            // The orbit horizontal axis value IS the cam->player azimuth: the
+            // offset is Euler(elev,h,0)*(0,0,-r), so the planar cam->player
+            // direction is dir(h). No 180 flip - the axis already carries the
+            // camera-forward azimuth.
+            float cameraForward = Normalize(cameraAzimuthDegrees);
             float signed = DeltaAngle(cameraForward, target.BearingDegrees);
             // Enemy already left of forward (negative signed) -> it keeps the
             // left; player takes the right. Side is +1 when the enemy rides
@@ -280,8 +282,9 @@ namespace ValheimBroadcaster.Core
             return (float)(2.0 * sepHalf * Rad2Deg);
         }
 
-        /// <summary>The desired orbit azimuth (player-&gt;camera direction, degrees)
-        /// that places an enemy at +/-separation from the cam-&gt;player direction.
+        /// <summary>The desired orbit azimuth (the cam-&gt;player direction the orbit
+        /// horizontal axis carries, degrees) that places an enemy at +/-separation
+        /// from the cam-&gt;player direction.
         /// The cam-apparent player-to-enemy angle is
         /// apparent(delta) = atan2(d*sin(delta), r + d*cos(delta)), with delta the
         /// angle between the cam-&gt;player direction and the enemy bearing. Setting
@@ -319,10 +322,11 @@ namespace ValheimBroadcaster.Core
                 if (arg >= 1.0 || arg <= -1.0) delta = Math.Acos(-enemyDistance / orbitRadius);
                 else delta = sep + Math.Asin(arg);
             }
-            // cam->player direction is the enemy bearing rotated back by
-            // side*delta; player->camera azimuth is its opposite.
-            double camForward = enemyBearingDegrees - side * delta * Rad2Deg;
-            return Normalize((float)(camForward + 180.0));
+            // The cam->player direction is the enemy bearing rotated back by
+            // side*delta. The orbit horizontal axis value IS that cam->player
+            // azimuth (offset = Euler(elev,h,0)*(0,0,-r)), so this is the axis
+            // to request directly - no 180 flip.
+            return Normalize((float)(enemyBearingDegrees - side * delta * Rad2Deg));
         }
 
         /// <summary>Shortest signed arc from one azimuth to another, degrees.</summary>
