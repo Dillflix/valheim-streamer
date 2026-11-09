@@ -29,17 +29,36 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
    - Follow/LookAt anchor stays the PLAYER (lookPoint at 0.8x height). Never-out-of-
      frame guarantee (hard limits 0.6/0.55, deadzone, deoccluder) unchanged.
    - Player thirds: composer ScreenPosition.X eases from solo -0.08 to +/-1/6
-     (0.167) via critically-damped smoothing (~0.8s settle). Y stays 0.05.
+     (0.167). Y stays 0.05.
    - Enemy opposite thirds: steer orbit.HorizontalAxis so the horizontal angle
      between cam->player and cam->enemy equals the thirds separation angle:
-     sep = 2 * atan(2 * 0.167 * tan(hFov/2)), hFov from live lens fov + aspect.
+     sep = 2 * atan(2 * 0.167 * tan(hFov/2)), hFov from the BLENDED lens fov + aspect.
      Solve desired orbit azimuth from enemy bearing (from player), enemy distance d,
      orbit radius r: angle(delta) = atan2(d*sin(delta), r + d*cos(delta)); invert for
      delta, clamp to best-achievable when infeasible (enemy too close/far). This
      solve is PURE MATH in Core (testable), the Plugin feeds live values.
+   - **Azimuth convention (CORRECTED — was a 180-degree bug):** the orbit
+     HorizontalAxis value h IS the cam->player azimuth. The camera offset is
+     Euler(elev,h,0)*(0,0,-r), so the planar cam->player direction is dir(h). The
+     solved axis is therefore `axis = normalize(enemyBearing - side*delta)` with NO
+     +180 flip, and the sticky side is chosen from `DeltaAngle(h, enemyBearing)`
+     directly (not against h+180). The earlier code added 180 in both the side pick
+     (Engage) and the solve (SolveOrbitAzimuth), which framed the enemy on the SAME
+     side as the player on live footage. Invariant now regression-tested: feeding the
+     solved axis back through apparent = atan2(d*sin(bearing-axis), r+d*cos(bearing-axis))
+     yields sign(apparent) == side and |apparent| == separation.
    - Writing HorizontalAxis cancels native recentering that frame (proven Layer 1
      pattern, SimpleFollowCamera.cs:114-147); on exit we stop writing and native
      stay-behind recentering resumes — continuous by construction.
+   - **35 mm combat lens:** one eased 0..1 blend (combatBlend, SmoothDamp ~0.8s
+     toward the policy Weight) drives BOTH the thirds screen-X slide AND the lens
+     push together. fov = Lerp(soloFov, CombatFovDegrees=37.849 (full-frame 35mm,
+     2*atan(12/35)), combatBlend); screenX = Lerp(SoloScreenX, -side*1/6, combatBlend).
+     The thirds separation is solved from this SAME blended fov (passed in, never
+     read back from the lens) so the enemy stays pinned on its thirds line as the
+     lens tightens. combatFov is stored in a field; the TrySolve lens assignment
+     reads it (seeded to soloFov on create/reset/out-of-combat). Eases out in
+     lockstep on release; no snaps, no cuts.
 4. **Side rule**: enemy takes the screen side it is ALREADY nearer (sign of current
    signed bearing of enemy relative to camera forward at engage/retarget time);
    player gets the opposite. Side is sticky per target: re-evaluated only on
@@ -53,6 +72,13 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
    suppressed.
 7. **Config** (BroadcastSettings, Camera section): CombatFraming bool default TRUE;
    CombatRange float default 30 (5-80). Nothing else configurable in v1.
+   - **FollowFieldOfView rename:** the follow-fov config key was renamed from
+     `Camera.FieldOfView` to `Camera.FollowFieldOfView` (default 50, range 30-110).
+     The deployed broadcast machine's BepInEx cfg had persisted FieldOfView=75 from
+     the old default, so Config.Bind kept the saved 75 and the new 50 default never
+     applied. Renaming the key forces a fresh entry at the correct default. The C#
+     property name `FieldOfView` is unchanged (every other file references it).
+     Solo follow uses this fov; combat eases from it to the 35 mm combat lens.
 8. **Diagnostics**: Simple-follow line gains "; combat: <targetName> <d>m, enemy <L|R>
    thirds" while in Combat (0.25s cadence line already exists).
 9. Wildlife cutaways already suppressed in simple mode; directed system untouched.
