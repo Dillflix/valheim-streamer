@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.68 fixes the four-minute restart of a working broadcaster.** The client reports the most recent completed live render to the supervisor. The supervisor keeps an authorized, publishing baseline online while it verifies the picture and logs the individual health signals. Install both the client and supervisor for this fix.
+
 **0.8.67 restores unattended password submission during dedicated-server admission.** The Windows supervisor can configure an existing sandboxed installation, adopt a manually installed build after verifying its manifest and live broadcast, and show startup progress and update-poll results. The existing protocol-3 server companion is compatible. [Windows setup and restart rehearsal](docs/UNATTENDED-UPDATES.md#existing-broadcaster-quick-start-0867)
 
 **0.8.63 addresses flicker in the observer’s Valheim window after Journey arrival.** During a brief held frame the game camera retains its last captured broadcast pose. A stationary arrival picture can continue through a pending foliage refresh and earn dwell for its displayed frames.

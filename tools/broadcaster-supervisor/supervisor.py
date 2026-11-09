@@ -779,6 +779,8 @@ class Supervisor:
             raise HealthFailure("Foreground launcher exited before the game started")
         self.record = {"schema": 1, "session_id": session, "pid": self.process.pid, "identity": identity,
                        "version": version, "source_sha": source_sha, "plugin_sha256": plugin_hash, "started_at": time.time()}
+        if transaction_id is not None:
+            self.record["transaction_id"] = transaction_id
         atomic_json(self.config.state_dir / "process.json", self.record)
         self.sequence, self.last_progress = -1, time.monotonic()
         self.report("starting", "Launched the configured broadcaster in its selected process environment")
@@ -909,12 +911,26 @@ class Supervisor:
             self.operator_read_error = str(error)
             return self.state.get("paused", False)
 
+    def serving(self, status) -> bool:
+        return bool(status and status.get("observer_authorized") is True and
+                    (status.get("publishing") is True if self.config.require_publishing
+                     else status.get("observer_active") is True))
+
+    def ready_for_handoff(self, status) -> bool:
+        return (self.serving(status) and status.get("state") == "broadcasting" and
+                status.get("observer_active") is True and status.get("picture_live") is True)
+
     def wait_healthy(self) -> dict:
         deadline = time.monotonic() + self.config.health_timeout_seconds
         self.startup_phase = None
         self.status_read_error = None
-        healthy_since = None
-        while time.monotonic() < deadline:
+        healthy_since = last_serving = None
+        last_report = None
+        next_report = 0.0
+        extended = False
+        trial = bool(self.record and self.record.get("transaction_id"))
+        detail = "no validated heartbeat"
+        while True:
             if self.stopping or self.observe_pause():
                 raise ManualStop("Operator stopped or paused the supervisor")
             status = self.heartbeat(allow_final=True)
@@ -931,22 +947,35 @@ class Supervisor:
                     if category not in ("authentication", "configuration", "adapter", "connection", "observer_authorization", "streaming"):
                         category = "unknown"
                     raise TerminalBlock("Broadcaster startup blocked (" + category + "); inspect its local diagnostics")
-                healthy = (status.get("observer_authorized") is True and status.get("observer_active") is True and
-                           status.get("picture_live") is True and status.get("state") == "broadcasting" and
-                           (not self.config.require_publishing or status.get("publishing") is True))
-                if healthy:
-                    healthy_since = healthy_since or time.monotonic()
-                    if time.monotonic() - healthy_since >= self.config.stable_seconds:
+                # Stable service and evidence of an actual live picture answer two
+                # different questions. A camera cut or travel need not restart the encoder.
+                now = time.monotonic()
+                if self.serving(status):
+                    healthy_since = now if healthy_since is None else healthy_since
+                    last_serving = now
+                    if self.ready_for_handoff(status) and now - healthy_since >= self.config.stable_seconds:
                         return status
                 else:
                     healthy_since = None
-            elif not self.status_read_error or time.monotonic() - self.last_progress > 10:
-                healthy_since = None
+                detail = ", ".join(f"{key}={status.get(key) is True}" for key in
+                                   ("observer_authorized", "observer_active", "publishing", "picture_live"))
+                if detail != last_report and now >= next_report:
+                    self.report("verifying", detail)
+                    last_report, next_report = detail, now + 5
+            else:
+                detail = self.status_read_error or "no fresh validated heartbeat"
+                if not self.status_read_error or time.monotonic() - self.last_progress > 10:
+                    healthy_since = None
             if not self.is_running():
                 raise HealthFailure("Broadcaster process exited during startup")
+            now = time.monotonic()
+            if now >= deadline:
+                if trial or last_serving is None or now - last_serving >= self.config.health_timeout_seconds:
+                    raise HealthFailure("Broadcaster did not establish stable authorized output before the health deadline: " + detail)
+                if not extended:
+                    self.report("verifying", "Preserving the existing broadcast while verifying startup: " + detail)
+                    extended = True
             time.sleep(1)
-        reason = "Broadcaster did not establish stable authorized output before the health deadline"
-        raise HealthFailure(f"{reason}: {self.status_read_error}" if self.status_read_error else reason)
 
     def capture_startup_failure(self, error, attempt):
         # Capture *before* stop() can send a shutdown or change the process exit code.
@@ -1178,9 +1207,7 @@ class Supervisor:
         if self.stopping or self.requested_pause():
             raise ManualStop("Update deferred by operator request")
         status = self.heartbeat()
-        if (not status or status.get("state") != "broadcasting" or status.get("picture_live") is not True or
-                status.get("observer_authorized") is not True or status.get("observer_active") is not True or
-                self.config.require_publishing and status.get("publishing") is not True):
+        if not self.ready_for_handoff(status):
             raise Failure("Broadcast health changed while staging; leaving current installation in place")
         # Refuse unknown files/duplicate plugins BEFORE interrupting the broadcast.
         scan_duplicates(self.config)
@@ -1324,7 +1351,7 @@ class Supervisor:
                         self.state["paused"] = True
                         self.report("paused", "Game reported an operator stop or blocked startup; explicit resume required")
                         continue
-                    healthy = status and status.get("observer_authorized") is True and status.get("observer_active") is True and (not self.config.require_publishing or status.get("publishing") is True)
+                    healthy = self.serving(status)
                     if not healthy:
                         healthy_since = None
                         degraded_since = degraded_since or time.monotonic()

@@ -313,6 +313,32 @@ class HeartbeatTests(Fixture):
         self.assertGreaterEqual(clock[0], 106)
         self.assertLess(clock[0], 110)
 
+    def test_publishing_baseline_survives_deadline_and_verifies_first_live_picture(self):
+        self.config.health_timeout_seconds, self.config.stable_seconds = 240, 20
+        clock = [0.]
+        def advance(seconds):
+            clock[0] += seconds
+        def sample(**_):
+            return dict(self.status, startup_phase="authorized", picture_live=clock[0] >= 255)
+        with patch.object(self.s, "heartbeat", side_effect=sample), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            self.assertTrue(self.s.wait_healthy()["picture_live"])
+        self.assertEqual(clock[0], 255)
+
+    def test_update_candidate_requires_live_render_by_its_deadline(self):
+        self.s.record["transaction_id"] = "e" * 32
+        self.config.health_timeout_seconds, self.config.stable_seconds = 240, 20
+        clock = [0.]
+        def advance(seconds):
+            clock[0] += seconds
+        with patch.object(self.s, "heartbeat", return_value=dict(self.status, picture_live=False)), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            with self.assertRaisesRegex(sup.HealthFailure, "health deadline.*picture_live=False"):
+                self.s.wait_healthy()
+        self.assertEqual(clock[0], 240)
+
     def test_unreadable_status_never_satisfies_health(self):
         self.status.update(startup_phase="authorized", picture_live=True)
         self.write()

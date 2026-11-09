@@ -44,6 +44,9 @@ internal sealed class FrameHold
     // belongs to the captured source, including when that source is held.
     internal FramePresentation CurrentPresentation => program.Select(Time.unscaledTime, Time.frameCount, active(), hardFailure(),
         renderer && renderer.isActiveAndEnabled && frame && frame.IsCreated() && !captureFailed).Presentation;
+    internal bool CompletedLiveProgramPicture => active() && !hardFailure() &&
+        renderer && renderer.isActiveAndEnabled && frame && frame.IsCreated() && !captureFailed &&
+        program.HasCompletedLiveRender(Time.unscaledTime, Time.frameCount);
     internal DiagnosticPictureContext OperatorPicture => sourceContext;
     internal string OperatorSubject => sourceSubject;
     internal bool HasRecentLiveFrame => renderer && renderedFrame >= Time.frameCount - 1 && renderedPresentation == FramePresentation.Live;

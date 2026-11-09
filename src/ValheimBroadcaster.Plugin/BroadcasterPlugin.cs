@@ -21,9 +21,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.67";
+    public const string PluginVersion = "0.8.68";
     private SupervisorBridge? supervisor;
-    private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -1338,11 +1337,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         if (supervisor == null) return false;
         bool authorized = remote.Isolated && remote.Approved;
         bool observing = authorized && observer.Active && observer.Phase == ObserverPhase.Watching && director.IsEnabled && activeWorld == ZNet.instance;
-        if (!observing) supervisorLiveAt = float.NegativeInfinity;
-        else if (cameraReady && Time.frameCount - presentedFrame <= 2 && frameHold.CurrentPresentation == FramePresentation.Live && frameHold.HasRecentLiveFrame &&
-            (presentedMode == CoverageMode.Player ? presentedPlayerUsable : presentedIdleUsable))
-            supervisorLiveAt = Time.realtimeSinceStartup;
-        bool pictureLive = observing && cameraReady && Time.realtimeSinceStartup - supervisorLiveAt <= 5;
+        bool pictureLive = observing && frameHold.CompletedLiveProgramPicture;
         bool blocked = connection?.Blocked == true || output?.Blocked == true;
         bool stopped = connection?.StoppedByOperator == true || output?.ManualSuppressed == true;
         bool configured = settings.StartupEnabled.Value && settings.ObserverConnection.Value && WantsUnattended;

@@ -6,6 +6,7 @@ internal static class ProgramFramePolicyTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
+        yield return ("Startup observes the last completed live render before the next camera pass", StartupEvidence);
         yield return ("Clean program refuses a previous-frame picture when camera rendering stops", MissingCamera);
         yield return ("Clean program uses only the compositor-selected bounded held picture", Hold);
         yield return ("Clean program never exposes live footage while inactive or travelling", Boundaries);
@@ -27,6 +28,28 @@ internal static class ProgramFramePolicyTests
         Check(value.Select(1.01, 11, true, false, true).Presentation == FramePresentation.Slate);
         Check(value.Select(1.1, 15, true, false, true).Presentation == FramePresentation.Slate);
     }
+    private static void StartupEvidence()
+    {
+        var policy = new ProgramFramePolicy();
+        for (int frame = 0; frame < 1800; frame++)
+        {
+            double now = frame / 60.0;
+            Check(policy.HasCompletedLiveRender(now, frame) == (frame > 0));
+            Check(policy.Select(now, frame, true, false, true).Presentation == FramePresentation.Slate);
+            policy.Rendered(now, frame, FramePresentation.Live);
+            Check(policy.Select(now, frame, true, false, true).Presentation == FramePresentation.Live);
+        }
+        Check(!policy.HasCompletedLiveRender(32, 1800));
+        Check(!policy.HasCompletedLiveRender(30, 1810));
+        policy.Rendered(32, 1810, FramePresentation.Hold);
+        Check(!policy.HasCompletedLiveRender(32, 1811));
+        policy.Rendered(33, 1811, FramePresentation.Slate);
+        Check(!policy.HasCompletedLiveRender(33, 1812));
+        policy.Rendered(34, 1812, FramePresentation.Live);
+        policy.Invalidate();
+        Check(!policy.HasCompletedLiveRender(34, 1813));
+    }
+
     private static void Hold()
     {
         var value = Live();
