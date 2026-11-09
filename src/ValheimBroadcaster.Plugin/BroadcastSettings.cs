@@ -18,6 +18,8 @@ internal sealed class BroadcastSettings
     internal readonly ConfigEntry<bool> RemoteTargets, HideHud, ShowStatus, DebugOverlay, DebugOverlayShowTrace, ReviewMarker, ObserverConnection, ProceduralPlayers;
     internal readonly ConfigEntry<bool> SimpleFollow;
     internal readonly ConfigEntry<float> SimpleFollowDistance;
+    internal readonly ConfigEntry<bool> CombatFraming;
+    internal readonly ConfigEntry<float> CombatRange;
     internal readonly ConfigEntry<bool> DynamicShots, GroupFraming, DeliberateComposition;
     internal readonly ConfigEntry<bool> PredictiveShots, ShotSequences, ShotScales, RenderedPictureEvaluation;
     internal readonly ConfigEntry<bool> NativeConfiner, NativeSplineDolly, NativeClearShot;
@@ -88,6 +90,8 @@ internal sealed class BroadcastSettings
         AcquisitionCooldown = config.Bind("Director", "AcquisitionCooldownSeconds", 30f, Range("Local-interest cooldown between experimental distant loading attempts.", 5f, 300f));
         SimpleFollow = config.Bind("Camera", "SimpleFollow", true, "Minimal single-camera follow baseline: one native camera follows the covered player directly, framed slightly center-left and settling behind their facing. Disables the directed multi-camera editorial system until the baseline is trusted.");
         SimpleFollowDistance = config.Bind("Camera", "SimpleFollowDistance", 6f, Range("Simple follow orbit distance from the subject in metres.", 2f, 30f));
+        CombatFraming = config.Bind("Camera", "CombatFraming", true, "Two-shot thirds framing while the player fights; the enemy rides the opposite thirds from the player.");
+        CombatRange = config.Bind("Camera", "CombatRange", 30f, Range("Forward-cone range in metres within which a hostile qualifies for combat two-shot framing.", 5f, 80f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use the shared Cinemachine pipeline for player, creature and scenic coverage. False selects legacy fixed framing for comparison. This existing config key is retained for compatibility.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
         PredictiveShots = config.Bind("Camera", "PredictiveShots", true, "Prefer presently readable viewpoints expected to remain useful during observed movement. Prediction is bounded, uncertain evidence stays neutral, and it never requests travel.");
