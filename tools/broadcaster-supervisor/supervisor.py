@@ -98,6 +98,27 @@ def access_conflict(error):
     return getattr(error, "winerror", None) in (5, 32, 33) or error.errno == errno.EACCES
 
 
+def move_payload(source: Path, destination: Path) -> None:
+    # Immediately after game exit, Windows may briefly deny a file or directory rename.
+    for delay in (.1, .25, .5, 1, 2, 0):
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as error:
+            if getattr(error, "winerror", None) not in (5, 32, 33) or not delay:
+                raise
+            time.sleep(delay)
+
+
+def transaction_error(error: BaseException) -> str:
+    if isinstance(error, (Failure, SandboxieError)):
+        return str(error)
+    if isinstance(error, OSError):
+        code = getattr(error, "winerror", None)
+        return f"{type(error).__name__} (WinError {code})" if code is not None else f"{type(error).__name__} (errno {error.errno})"
+    return type(error).__name__
+
+
 def atomic_json(path: Path, value: dict) -> None:
     temporary = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -589,6 +610,45 @@ def verify_inventory(directory: Path, expected: dict) -> None:
         raise Failure("Installed or backup payload differs from its recorded inventory")
 
 
+def install_owned_files(live: Path, source: Path, previous: dict, desired: dict, txid: str) -> None:
+    # The journal and a verified backup are durable before this is called. Keep
+    # the plugin directory in place; Explorer/Sandboxie can pin its directory
+    # handle even when all individual DLLs are replaceable. A sibling temporary
+    # file inherits the game directory's ACL rather than the private backup ACL.
+    if not re.fullmatch(r"[0-9a-f]{32}", txid) or not (set(previous) | set(desired)) <= OWNED_FILES:
+        raise Failure("Invalid journal file inventory")
+    temporary = live / (".vb-" + txid + ".tmp")
+    no_symlinks(temporary)
+    temporary.unlink(missing_ok=True)  # An interrupted copy is never an active DLL.
+    current = inventory(live, require_complete=False)
+    for name, entry in current.items():
+        if entry not in (previous.get(name), desired.get(name)):
+            raise Failure("An installed file differs from both recorded builds: " + name)
+    for name in sorted(set(current) | set(desired)):
+        if current.get(name) == desired.get(name):
+            continue
+        target = live / name
+        no_symlinks(target)
+        if name not in desired:
+            # Only possible on rollback of a file added by the candidate.
+            target.unlink()
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with (source / name).open("rb") as src, temporary.open("xb") as dst:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+            if digest(temporary) != desired[name]["sha256"] or temporary.stat().st_size != desired[name]["size"]:
+                raise Failure("Staged copy differs from the recorded file: " + name)
+            move_payload(temporary, target)
+        except OSError as error:
+            raise Failure("Replacing " + name + ": " + transaction_error(error)) from error
+        finally:
+            temporary.unlink(missing_ok=True)
+    verify_inventory(live, desired)
+
+
 def flush_tree(directory: Path) -> None:
     for root, dirs, files in os.walk(directory, topdown=False):
         for name in files:
@@ -686,6 +746,7 @@ class Supervisor:
         self.startup_phase = None
         self.status_read_error = None
         self.operator_read_error = None
+        self.transaction_step = ""
         self.adapter = None
 
     @property
@@ -749,7 +810,10 @@ class Supervisor:
     def require_reconciled(self) -> None:
         if self.journal_path.exists():
             self.state["paused"] = True
-            self.report("recovery_required", "Unresolved update transaction; no further launch or update is permitted. Restart supervision to reconcile it.")
+            failure = self.state.get("last_update_failure") or {}
+            detail = " | ".join(failure[key] for key in ("update", "rollback") if failure.get(key))
+            self.report("recovery_required", "Unresolved update transaction. Restart supervision to reconcile it." +
+                        (" " + detail if detail else ""))
             raise RecoveryRequired("An unresolved update transaction requires recovery before continuing")
 
     def launch(self, version: str | None, source_sha: str | None = None, transaction_id: str | None = None) -> None:
@@ -1107,26 +1171,40 @@ class Supervisor:
             self.save()
             self.journal_path.unlink()
             return
-        self.rollback(journal, "Interrupted update restored from its verified backup")
+        self.rollback(journal, "Interrupted update reconciled to the verified previous build",
+                      quarantine=journal.get("phase") == "installed")
 
     def rollback(self, journal: dict, reason: str, quarantine=True) -> None:
         transaction = self.config.transactions / journal["transaction_id"]
         backup = transaction / "backup"
+        self.transaction_step = "verify rollback backup"
         verify_inventory(backup, journal["before"])
+        self.transaction_step = "stop candidate and check process ownership"
         self.stop()
         if self.running_games():
             raise Failure("An unmanaged game process prevents rollback")
         self.preserve_log(transaction, "failed-game.log")
-        restore = transaction / ("restore-" + uuid.uuid4().hex)
-        shutil.copytree(backup, restore)
-        verify_inventory(restore, journal["before"])
-        flush_tree(restore)
-        if self.config.plugin_dir.exists():
-            # A changed live payload might be a manual edit; never discard it.
-            os.replace(self.config.plugin_dir, transaction / ("rejected-" + uuid.uuid4().hex))
-        os.replace(restore, self.config.plugin_dir)
-        fsync_dir(self.config.plugin_dir.parent)
+        self.transaction_step = "verify or restore previous files"
+        # If the first rename was denied, rollback previously attempted a
+        # second rename of the same locked, still-correct installation.
+        untouched = ((transaction / "new").is_dir() and not (transaction / "retired").exists()
+                     and self.config.plugin_dir.is_dir())
+        if journal.get("method") == "files":
+            self.transaction_step = "reconcile installed plugin files"
+            install_owned_files(self.config.plugin_dir, backup, journal["after"], journal["before"], transaction.name)
+        elif not untouched:
+            restore = transaction / ("restore-" + uuid.uuid4().hex)
+            shutil.copytree(backup, restore)
+            verify_inventory(restore, journal["before"])
+            flush_tree(restore)
+            if self.config.plugin_dir.exists():
+                self.transaction_step = "preserve replaced plugin directory"
+                move_payload(self.config.plugin_dir, transaction / ("rejected-" + uuid.uuid4().hex))
+            self.transaction_step = "restore previous plugin directory"
+            move_payload(restore, self.config.plugin_dir)
+            fsync_dir(self.config.plugin_dir.parent)
         verify_inventory(self.config.plugin_dir, journal["before"])
+        self.transaction_step = "commit rollback"
         self.state["active"] = journal.get("previous")
         if quarantine:
             self.state["quarantined"] = sorted(set(self.state.get("quarantined", [])) | {journal["candidate"]["source_sha"]})
@@ -1219,29 +1297,45 @@ class Supervisor:
         # Existing config/save files are outside this explicit owned-directory mapping.
         journal = {"schema": 1, "transaction_id": transaction.name, "phase": "prepared", "before": before,
                    "after": after, "previous": self.state.get("active"), "candidate": candidate}
+        if self.config.platform == "windows-sandboxie":
+            journal["method"] = "files"
         atomic_json(self.journal_path, journal)
         try:
+            self.transaction_step = "stop owned broadcaster and encoders"
             self.report("updating", "Validated build staged; stopping the owned broadcaster")
             self.stop()
             if self.stopping or self.requested_pause():
                 raise ManualStop("Update cancelled while stopping the broadcaster")
             if self.running_games():
                 raise Failure("An unmanaged game process prevents installation")
+            self.transaction_step = "verify installed files before replacement"
             self.preserve_log(transaction, "previous-game.log")
             verify_inventory(self.config.plugin_dir, before)
-            os.replace(self.config.plugin_dir, transaction / "retired")
-            fsync_dir(self.config.plugin_dir.parent)
-            os.replace(transaction / "new", self.config.plugin_dir)
-            fsync_dir(self.config.plugin_dir.parent)
+            if journal.get("method") == "files":
+                self.transaction_step = "install verified plugin files"
+                source = transaction / "candidate-files"
+                move_payload(transaction / "new", source)
+                install_owned_files(self.config.plugin_dir, source, before, after, transaction.name)
+            else:
+                self.transaction_step = "retire previous plugin directory"
+                move_payload(self.config.plugin_dir, transaction / "retired")
+                fsync_dir(self.config.plugin_dir.parent)
+                self.transaction_step = "activate staged plugin directory"
+                move_payload(transaction / "new", self.config.plugin_dir)
+                fsync_dir(self.config.plugin_dir.parent)
+            self.transaction_step = "verify installed candidate"
             verify_inventory(self.config.plugin_dir, after)
             journal["phase"] = "installed"
             atomic_json(self.journal_path, journal)
             if self.stopping or self.requested_pause():
                 raise ManualStop("Update cancelled before launching the new build")
+            self.transaction_step = "launch installed candidate"
             self.launch(candidate["version"], candidate["source_sha"], transaction.name)
+            self.transaction_step = "verify candidate startup"
             self.wait_healthy()
+            self.transaction_step = "record candidate acceptance"
+            atomic_json(self.journal_path, {**journal, "phase": "accepted"})
             journal["phase"] = "accepted"
-            atomic_json(self.journal_path, journal)
             self.state["active"], self.state["restart_failures"] = candidate, 0
             self.save()
             self.journal_path.unlink()
@@ -1252,18 +1346,29 @@ class Supervisor:
             except (Failure, OSError):
                 # Retention maintenance must not roll back an accepted build.
                 pass
-        except ManualStop:
-            self.state["paused"] = True
-            try:
-                self.rollback(journal, "Operator stop during update; previous payload restored and supervision paused", quarantine=False)
-            except BaseException:
-                self.require_reconciled()
+        except BaseException as error:
+            manual = isinstance(error, ManualStop)
+            if manual:
+                self.state["paused"] = True
+            detail = f"{self.transaction_step}: {transaction_error(error)}"
+            evidence = {"transaction_id": transaction.name, "phase": journal["phase"],
+                        "candidate_sha": candidate["source_sha"], "update": detail}
+            self.state["last_update_failure"] = evidence
+            print("Update interrupted:", detail, flush=True)
+            if journal["phase"] == "accepted":
+                # The acceptance journal is durable. Finish that commit on restart.
+                if self.journal_path.exists():
+                    self.require_reconciled()
                 raise
-            raise
-        except BaseException:
+            quarantine = not manual and journal["phase"] == "installed"
+            reason = ("Operator stopped update" if manual else detail) + "; previous build verified"
+            if quarantine:
+                reason += "; candidate quarantined"
             try:
-                self.rollback(journal, "New build failed health or installation checks; previous payload restored and build quarantined")
-            except BaseException:
+                self.rollback(journal, reason, quarantine=quarantine)
+            except BaseException as restore_error:
+                evidence["rollback"] = f"{self.transaction_step}: {transaction_error(restore_error)}"
+                print("Rollback interrupted:", evidence["rollback"], flush=True)
                 self.require_reconciled()
                 raise
             raise
