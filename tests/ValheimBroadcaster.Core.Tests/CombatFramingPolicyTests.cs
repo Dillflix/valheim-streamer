@@ -13,6 +13,9 @@ internal static class CombatFramingPolicyTests
         yield return ("A 20%+1m closer challenger steals the target", StrongChallengerSteals);
         yield return ("A dead target promotes the next closest qualifying enemy", DeathPromotesNext);
         yield return ("Out-of-cone hostiles never qualify", ForwardConeFilter);
+        yield return ("A fleeing player retains the enemy behind them", FleeingRetainsBehindTarget);
+        yield return ("A behind-only candidate never acquires from Solo", BehindNeverAcquires);
+        yield return ("A behind challenger cannot steal or be promoted", BehindNeverStealsOrPromotes);
         yield return ("The enemy screen side is fixed per target and never flips", SideStickiness);
         yield return ("Thirds separation matches the lens exactly", ThirdsSeparationExact);
         yield return ("The orbit azimuth solve is exact on both sides", OrbitSolveExact);
@@ -152,6 +155,78 @@ internal static class CombatFramingPolicyTests
         var p2 = new CombatFramingPolicy(); now = 0;
         var solo = Drive(p2, ref now, 1.0, 0f, new[] { E(1, 160f, 4f, false, true) });
         Check(solo.Phase == CombatFramingPhase.Solo, "An out-of-cone hostile engaged Combat.");
+    }
+
+    // The forward cone is an ACQUISITION filter only: once engaged, the current
+    // target is retained while alive even after it falls behind the player (the
+    // player flees), and its opposite-thirds azimuth keeps being solved from the
+    // live geometry - the camera looks back instead of starving and recentering.
+    private static void FleeingRetainsBehindTarget()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        // Engage an in-front enemy dead ahead at 8 m (camera azimuth 0 -> side +1).
+        var engaged = Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { E(1, 0f, 8f, true, true) });
+        Check(engaged.Phase == CombatFramingPhase.Combat && engaged.TargetId == 1, "Setup failed to engage.");
+        int side = engaged.PlayerScreenSide;
+        // The player turns and flees: the SAME enemy is now behind the cone
+        // (InFront=false) but still alive and in range. Hold Combat well past the
+        // 2.5s release gate - retention never starves while the target lives.
+        var fleeing = Drive(policy, ref now, CombatFramingPolicy.ReleaseSustainSeconds + 1.0, 0f,
+            new[] { E(1, 0f, 8f, false, true) });
+        Check(fleeing.Phase == CombatFramingPhase.Combat && fleeing.TargetId == 1,
+            "A behind-the-player (fleeing) target was released instead of retained.");
+        Check(fleeing.PlayerScreenSide == side, "The retained target's screen side flipped while behind.");
+        // The azimuth is still solved for opposite-thirds framing from the live
+        // geometry, exactly as if the enemy were in front.
+        float expected = CombatFramingPolicy.SolveOrbitAzimuth(0f, 8f, Radius, Sep, side);
+        Near(expected, fleeing.TargetAzimuthDegrees, "retained-behind azimuth");
+        // And once the enemy finally leaves range (the adapter drops it from the
+        // list), with nothing in front, the release gate fires.
+        var released = Drive(policy, ref now, CombatFramingPolicy.ReleaseSustainSeconds + 0.2, 0f,
+            Array.Empty<CombatCandidate>());
+        Check(released.Phase == CombatFramingPhase.Solo && released.TargetId == 0,
+            "An absent target never released after retention ended.");
+    }
+
+    // Acquisition stays gated: from Solo a behind-only hostile never engages, no
+    // matter how long it is sustained - the cone still guards new targets.
+    private static void BehindNeverAcquires()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        var solo = Drive(policy, ref now, CombatFramingPolicy.ReleaseSustainSeconds + 2.0, 0f,
+            new[] { E(1, 180f, 6f, false, true) });
+        Check(solo.Phase == CombatFramingPhase.Solo && solo.TargetId == 0,
+            "A sustained behind-only hostile engaged Combat from Solo.");
+    }
+
+    // A behind candidate can neither steal from a live front target nor be
+    // promoted after that target dies: promotion requires InFront. With no front
+    // candidate left, the policy starves and releases after the 2.5s gate.
+    private static void BehindNeverStealsOrPromotes()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        // Engage a front target at 10 m; a much closer enemy sits behind (6 m).
+        Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { E(1, 0f, 10f, true, true), E(2, 180f, 6f, false, true) });
+        Check(policy.TargetId == 1, "Setup failed to engage the front target.");
+        // The behind enemy is 40% + 4 m closer but out of cone: it must NOT steal.
+        var held = Drive(policy, ref now, 0.5, 0f,
+            new[] { E(1, 0f, 10f, true, true), E(2, 180f, 6f, false, true) });
+        Check(held.TargetId == 1, "A behind challenger stole the live front target.");
+        // The front target dies; only the behind enemy remains. It cannot be
+        // promoted (acquisition is InFront-gated), so Combat bridges then releases.
+        var brief = Drive(policy, ref now, CombatFramingPolicy.ReleaseSustainSeconds - 0.3, 0f,
+            new[] { E(1, 0f, 10f, true, false), E(2, 180f, 6f, false, true) });
+        Check(brief.Phase == CombatFramingPhase.Combat && brief.TargetId != 2,
+            "A behind-only survivor was promoted after the front target died.");
+        var released = Drive(policy, ref now, 0.6, 0f,
+            new[] { E(1, 0f, 10f, true, false), E(2, 180f, 6f, false, true) });
+        Check(released.Phase == CombatFramingPhase.Solo && released.TargetId == 0,
+            "The policy never released with only a behind-only survivor.");
     }
 
     private static void SideStickiness()

@@ -11,8 +11,12 @@ namespace ValheimBroadcaster.Core
     /// <summary>One caller-sensed hostile: a stable identity, its world azimuth
     /// from the player, planar distance, whether it sits inside the player's
     /// forward cone (the caller applies the dot&gt;=cos(cone) test), and whether
-    /// it is still alive. Only qualifying (in-cone, alive) candidates can ever
-    /// be engaged; the rest are passed so death and cone-exit are observable.</summary>
+    /// it is still alive. InFront is an ACQUISITION filter: only qualifying
+    /// (in-cone, alive) candidates can be newly engaged, stolen to or promoted.
+    /// The CURRENT target is retained while alive and present even when it falls
+    /// behind (InFront=false), so a fleeing player keeps the enemy framed; the
+    /// caller must therefore still pass behind-the-player enemies (within range,
+    /// alive) with InFront=false so death and range-exit remain observable.</summary>
     public readonly struct CombatCandidate
     {
         public readonly int Id;
@@ -140,12 +144,21 @@ namespace ValheimBroadcaster.Core
         private CombatFramingDecision ObserveCombat(double now, float cameraAzimuthDegrees, float separationDegrees,
             float orbitRadius, IReadOnlyList<CombatCandidate>? candidates)
         {
-            bool haveCurrent = TryFind(candidates, targetId, out CombatCandidate current) && current.Qualifies;
+            // The forward cone is an ACQUISITION filter only. A target is RETAINED
+            // while it is alive and present, even behind the player: when the
+            // player flees the enemy falls out of the cone, and we keep the camera
+            // looking back at it instead of starving and recentering. The adapter
+            // drops out-of-range enemies from the list, so retention still ends
+            // naturally at range (the current target simply goes absent).
+            bool haveCurrent = TryFind(candidates, targetId, out CombatCandidate current) && current.Alive;
+            // A challenger or promotion must be InFront (Closest only ranks
+            // qualifying candidates), so new targets never acquire from behind.
             bool haveChallenger = Closest(candidates, out CombatCandidate best);
-            if (!haveChallenger)
+            if (!haveCurrent && !haveChallenger)
             {
-                // No qualifying enemy at all: run the release gate while holding
-                // the last solved azimuth so the shot never snaps.
+                // The current target is dead/absent and nothing in front can take
+                // over: run the release gate while holding the last solved azimuth
+                // so the shot never snaps.
                 if (starvedSince < 0) starvedSince = now;
                 if (now - starvedSince >= ReleaseSustainSeconds)
                 {
@@ -156,16 +169,24 @@ namespace ValheimBroadcaster.Core
                 return Steer(now, "bridging kill");
             }
             starvedSince = -1;
-            // Retarget when the current target is gone/invalid, or a challenger
-            // clears the hysteresis margin. A fresh target re-fixes its side and
-            // resolves a new azimuth; the adapter eases the orbit to it.
-            if (!haveCurrent || ShouldReplace(current, best))
+            // Retarget when the current target is gone (dead/out-of-range) and a
+            // front candidate can take over, or a front challenger clears the
+            // hysteresis margin against a still-live current. A fresh target
+            // re-fixes its side and azimuth; the adapter eases the orbit to it.
+            if (!haveCurrent)
             {
                 Engage(best, cameraAzimuthDegrees, separationDegrees, orbitRadius);
-                return Steer(now, haveCurrent ? "retarget" : "retarget on loss");
+                return Steer(now, "retarget on loss");
+            }
+            if (haveChallenger && ShouldReplace(current, best))
+            {
+                Engage(best, cameraAzimuthDegrees, separationDegrees, orbitRadius);
+                return Steer(now, "retarget");
             }
             // Hold the current target: refresh its desired azimuth against its
-            // live bearing/distance, keeping the fixed side.
+            // live bearing/distance, keeping the fixed side. Geometry does not
+            // care about the player's facing, so a retained-behind enemy is solved
+            // for opposite-thirds framing exactly as when it was in front.
             targetAzimuth = SolveOrbitAzimuth(current.BearingDegrees, current.Distance,
                 orbitRadius, separationDegrees, targetSide);
             return Steer(now, "combat");

@@ -61,12 +61,17 @@ internal sealed class SimpleFollowCamera : IDisposable
     private const float SoloScreenX = -0.08f;
     private const float SoloScreenY = 0.05f;          // Unchanged headroom; combat only moves X.
     private const float ThirdsScreenX = 1f / 6f;      // +/-1/6: the enemy's opposite thirds line.
-    private const float CombatFovDegrees = 37.849f;   // Full-frame 35 mm: 2*atan(12/35).
+    // Combat eases to a LONGER lens than solo for a compressed, pulled-in
+    // battle look; the thirds solve fits both actors at any fov. A full-frame
+    // focal length maps to a vertical fov by 2*atan(12/mm): solo defaults to
+    // 50 mm (26.9915 deg), combat to 75 mm (18.1805 deg, tighter).
+    private const float CombatLensMm = 75f;           // Full-frame 75 mm: 2*atan(12/75) = 18.1805 deg.
+    private static float LensFov(float mm) => 2f * Mathf.Atan(12f / Mathf.Max(1f, mm)) * Mathf.Rad2Deg;
     private readonly CombatFramingPolicy combat = new CombatFramingPolicy();
     private readonly List<CombatCandidate> combatCandidates = new List<CombatCandidate>(16);
     private readonly Dictionary<int, string> combatNames = new Dictionary<int, string>(16);
     // One eased 0..1 blend drives BOTH the thirds screen-X move and the lens
-    // tightening, so the enemy slide and the 35 mm push share the same weighted
+    // change, so the enemy slide and the 75 mm tighten share the same weighted
     // feel. combatFov holds the blended lens so the TrySolve lens assignment and
     // the thirds-separation solve read the identical value (no snaps, no
     // read-back from camera.Lens between the two).
@@ -87,7 +92,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     internal bool TrySolve(Character actor, BroadcastSettings settings, Camera output, float dt,
         out Vector3 position, out Quaternion rotation, out float fov)
     {
-        position = default; rotation = Quaternion.identity; fov = settings.FieldOfView.Value;
+        // The failure-path default is the simple camera's own solo lens fov (the
+        // 50 mm default), not settings.FieldOfView (the dormant directed knob).
+        position = default; rotation = Quaternion.identity;
+        fov = LensFov(Mathf.Clamp(settings.FollowLensMm.Value, 12f, 135f));
         if (!actor) return Fail("Camera subject unavailable");
         EnsureCreated();
         float radius = Mathf.Max(1f, settings.SimpleFollowDistance.Value);
@@ -107,10 +115,13 @@ internal sealed class SimpleFollowCamera : IDisposable
         orbit.TargetOffset = new Vector3(0f, aimHeight, 0f);
         if (output) camera!.Lens.PullInheritedPropertiesFromCamera(output);
         camera!.Lens.ModeOverride = LensSettings.OverrideModes.Perspective;
-        float soloFov = Mathf.Clamp(settings.FieldOfView.Value, 30f, 110f);
+        // Solo lens fov from the full-frame focal length (50 mm default =
+        // 26.9915 deg). The lens clamp [12,135] mm already bounds fov to roughly
+        // [10.1, 90] deg; the fov guard below is only a non-finite backstop.
+        float soloFov = Mathf.Clamp(LensFov(Mathf.Clamp(settings.FollowLensMm.Value, 12f, 135f)), 10f, 100f);
         // The lens reads the blended combat fov (previous frame's blend). It is
         // seeded to soloFov on create/reset and whenever combat framing is off,
-        // so outside combat this is exactly soloFov and eases to 35 mm in combat.
+        // so outside combat this is exactly soloFov and eases to 75 mm in combat.
         if (combatFov <= 0f) combatFov = soloFov;
         camera.Lens.FieldOfView = combatFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
@@ -190,12 +201,13 @@ internal sealed class SimpleFollowCamera : IDisposable
     {
         if (!settings.CombatFraming.Value) { combatFov = soloFov; if (combatTargetId != 0) ResetCombat(); return; }
         // The thirds separation must be solved from the SAME blended fov the lens
-        // carries this frame, never a read-back - as the lens tightens to 35 mm
+        // carries this frame, never a read-back - as the lens tightens to 75 mm
         // the thirds lines narrow in lockstep so the enemy stays pinned on its
-        // line through the whole push.
-        float blendedFov = Mathf.Lerp(soloFov, CombatFovDegrees, combatBlend);
+        // line through the whole move.
+        float combatFovTarget = LensFov(CombatLensMm);
+        float blendedFov = Mathf.Lerp(soloFov, combatFovTarget, combatBlend);
         float separation = CombatFramingPolicy.ThirdsSeparationDegrees(
-            Mathf.Clamp(blendedFov, 30f, 110f), Mathf.Max(0.1f, camera!.Lens.Aspect));
+            Mathf.Clamp(blendedFov, 10f, 100f), Mathf.Max(0.1f, camera!.Lens.Aspect));
         SenseHostiles(actor, settings, subjectPosition);
         double now = Time.unscaledTimeAsDouble;
         float cameraAzimuth = orbit!.HorizontalAxis.Value;
@@ -230,7 +242,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         // blend, so they move together and collapse back to solo in lockstep as
         // the policy releases. No snaps.
         combatBlend = Mathf.SmoothDamp(combatBlend, decision.Weight, ref combatBlendVelocity, 0.8f, Mathf.Infinity, Mathf.Max(dt, 0f));
-        combatFov = Mathf.Lerp(soloFov, CombatFovDegrees, combatBlend);
+        combatFov = Mathf.Lerp(soloFov, combatFovTarget, combatBlend);
         float sideSign = combatSide >= 0 ? 1f : -1f;
         float engagedX = -sideSign * ThirdsScreenX; // Enemy on side => player opposite.
         float combatScreenX = Mathf.Lerp(SoloScreenX, engagedX, combatBlend);
