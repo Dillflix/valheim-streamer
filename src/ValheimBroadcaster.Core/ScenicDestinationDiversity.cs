@@ -5,7 +5,7 @@ using System.Linq;
 namespace ValheimBroadcaster.Core;
 
 public enum ScenicLandscape : byte { Unknown = 0, Inland = 1, Coast = 2, Highland = 3 }
-public enum ScenicDestinationKind : byte { Landscape = 0, Base = 1, Landmark = 2 }
+public enum ScenicDestinationKind : byte { Landscape = 0, Base = 1, Landmark = 2, Gravestone = 3 }
 
 // Editorial memory records actual scenery, separately from trips that merely
 // attempted acquisition. Candidate multiplicity never enters a category's share.
@@ -96,7 +96,7 @@ public sealed class ScenicDestinationDiversity
         return best;
     }
     private double Count(Func<ScenicRegion, bool> predicate) => history.Count(predicate) + .25 * attempts.Count(predicate);
-    private static double Weight(ScenicDestinationKind kind) => kind == ScenicDestinationKind.Landscape ? 3 : 1;
+    private static double Weight(ScenicDestinationKind kind) => kind == ScenicDestinationKind.Landscape ? 3 : kind == ScenicDestinationKind.Gravestone ? .35 : 1;
     private static double Weight(ScenicLandscape landscape) => landscape == ScenicLandscape.Unknown ? .25 : landscape == ScenicLandscape.Highland ? .5 : 1;
     public static string Describe(ScenicRegion r) => r.Kind + " / " + (r.Biome.Length == 0 ? "biome unknown" : r.Biome) + " / " + r.Landscape;
     public static string BiomeName(string? value)

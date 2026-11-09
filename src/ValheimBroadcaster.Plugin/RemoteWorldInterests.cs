@@ -32,7 +32,8 @@ internal sealed partial class RemoteObserverClient
         var text = new StringBuilder(InterestStatus);
         text.Append("\nBases/areas: ").Append(sites.Count(s => s.Kind == WorldInterestKind.Base || s.Kind == WorldInterestKind.BaseArea))
             .Append("; placed landmarks: ").Append(sites.Count(s => s.Kind == WorldInterestKind.Landmark))
-            .Append("; natural landscapes: ").Append(sites.Count(s => s.Kind == WorldInterestKind.Natural))
+            .Append("; recent gravestone areas: ").Append(sites.Count(s => s.IsGravestoneArea))
+            .Append("; natural landscapes: ").Append(sites.Count(s => s.Kind == WorldInterestKind.Natural && !s.IsGravestoneArea))
             .Append("; coasts: ").Append(sites.Count(s => s.Landscape == ScenicLandscape.Coast))
             .Append(". Top 12 by preference; travel distance and revisit rules still apply.");
         foreach (WorldInterestSite s in sites.OrderByDescending(s => s.Priority).ThenBy(s => s.Id, StringComparer.Ordinal).Take(12))

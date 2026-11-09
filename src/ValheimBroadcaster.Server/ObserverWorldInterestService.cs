@@ -24,6 +24,8 @@ internal sealed class ObserverWorldInterestService
     private readonly Dictionary<string, WorldInterestSite> landmarks = new Dictionary<string, WorldInterestSite>(StringComparer.Ordinal);
     private readonly Dictionary<ZNetPeer, Reader> readers = new Dictionary<ZNetPeer, Reader>();
     private readonly Dictionary<ZNetPeer, Reader> readers2 = new Dictionary<ZNetPeer, Reader>();
+    private readonly RecentGravestones<ZDOID> graves = new RecentGravestones<ZDOID>();
+    private readonly Func<int> graveMinutes;
     private readonly Func<IReadOnlyList<WorldInterestSite>> naturalProvider;
     private readonly Dictionary<string, int> preparationGroups = new Dictionary<string, int>(StringComparer.Ordinal);
     private readonly DestinationFeedbackLedger history = new DestinationFeedbackLedger();
@@ -43,7 +45,7 @@ internal sealed class ObserverWorldInterestService
     private float proposedAt;
     private bool proposedComplete;
     private string? historyPath;
-    private sealed class Record { internal WorldInterestSite Site = null!; internal float At; }
+    private sealed class Record { internal WorldInterestSite Site = null!; internal float At; internal RecentGravestones<ZDOID>.Marker? Grave; }
     private sealed class Reader
     {
         internal float NextRequest, NextFeedback;
@@ -53,12 +55,13 @@ internal sealed class ObserverWorldInterestService
         internal Record[] Sites = Array.Empty<Record>();
         internal readonly Dictionary<string, float> Issued = new Dictionary<string, float>(StringComparer.Ordinal);
     }
-    internal ObserverWorldInterestService(Action<string> log, Func<IReadOnlyList<WorldInterestSite>> naturalProvider) { this.log = log; this.naturalProvider = naturalProvider; }
-    internal string Status => $"World interests: {catalogue.Count} destinations; {bases.Count} construction cells; {objects} objects examined; " +
+    internal ObserverWorldInterestService(Action<string> log, Func<IReadOnlyList<WorldInterestSite>> naturalProvider, Func<int> graveMinutes)
+    { this.log = log; this.naturalProvider = naturalProvider; this.graveMinutes = graveMinutes; }
+    internal string Status => $"World interests: {catalogue.Count} destinations; {bases.Count} construction cells; {graves.Count} recent gravestone areas observed; {objects} objects examined; " +
         $"{(collecting ? "indexing" : complete ? "survey complete" : "partial survey")}; {rejectedApproaches} approaches outside eligible generated dry land; feedback history {history.Count}";
     internal void Reset()
     {
-        Save(); locations?.Dispose(); locations = null; bases.Clear(); prefabKinds.Clear(); catalogue.Clear(); landmarks.Clear(); readers.Clear(); readers2.Clear(); preparationGroups.Clear(); history.Clear();
+        Save(); locations?.Dispose(); locations = null; bases.Clear(); graves.Clear(); prefabKinds.Clear(); catalogue.Clear(); landmarks.Clear(); readers.Clear(); readers2.Clear(); preparationGroups.Clear(); history.Clear();
         manager = null; zones = null; sectors = null; generated = null; historyPath = null; worldId = sequence = cycle = 0;
         collecting = complete = mutated = haveSweep = historyDirty = false; nextTick = nextSweep = nextPublish = nextSave = 0;
         sector = item = expectedCount = objects = scannedLocations = 0;
@@ -88,24 +91,37 @@ internal sealed class ObserverWorldInterestService
             // Array identity can change after a world reload; never keep a stale inventory.
             sectors = Sectors!.GetValue(manager) as List<ZDO>[];
             if (sectors == null) return;
-            bases.Clear(); landmarks.Clear(); sector = item = expectedCount = objects = scannedLocations = 0;
+            bases.Clear(); graves.Clear(); landmarks.Clear(); sector = item = expectedCount = objects = scannedLocations = 0;
             mutated = false; collecting = true; sweepAt = now; nextPublish = now + 5;
             locations?.Dispose(); locations = zones!.GetLocationList().GetEnumerator();
         }
         long began = Stopwatch.GetTimestamp(); int work = 0, emptyBudget = 2048;
+        int window = graveMinutes();
+        long worldTicks = ZNet.instance.GetTime().Ticks;
         while (sector < sectors.Length && work < 512 && emptyBudget-- > 0)
         {
             List<ZDO>? bucket = sectors[sector];
             if (bucket == null || item >= bucket.Count) { sector++; item = expectedCount = 0; continue; }
             if (item == 0) expectedCount = bucket.Count; else if (expectedCount != bucket.Count) mutated = true;
             ZDO zdo = bucket[item++]; work++; objects++;
-            if (zdo != null && zdo.IsValid() && zdo.GetLong(ZDOVars.s_creator, 0) != 0)
+            if (zdo != null && zdo.IsValid())
             {
-                Vector3 p = zdo.GetPosition();
-                if (Finite(p) && p.y < 990 && p.y > -1000)
+                long death = window > 0 ? zdo.GetLong(ZDOVars.s_timeOfDeath, 0L) : 0;
+                bool recent = RecentGravestones<ZDOID>.Remaining(worldTicks, death, window) > 0;
+                bool placed = zdo.GetLong(ZDOVars.s_creator, 0L) != 0;
+                if (recent || placed)
                 {
-                    int kind = Kind(zdo.GetPrefab());
-                    if (kind != 0) bases.Add(Point(p), kind == 2);
+                    Vector3 p = zdo.GetPosition();
+                    if (Finite(p) && p.y < 990 && p.y > -1000)
+                    {
+                        int kind = Kind(zdo.GetPrefab());
+                        if (recent && kind == 3 && zdo.GetLong(ZDOVars.s_owner, 0L) != 0)
+                        {
+                            var zone = ZoneSystem.GetZone(p);
+                            graves.Observe(zone.x, zone.y, Point(p), death, zdo.m_uid);
+                        }
+                        else if (placed && (kind == 1 || kind == 2)) bases.Add(Point(p), kind == 2);
+                    }
                 }
             }
             if ((Stopwatch.GetTimestamp() - began) / (double)Stopwatch.Frequency >= .002) break;
@@ -148,20 +164,17 @@ internal sealed class ObserverWorldInterestService
         if (prefabKinds.TryGetValue(hash, out int k)) return k;
         GameObject? prefab = ZNetScene.instance.GetPrefab(hash);
         if (!prefab) return 0; // A not-yet-loaded prefab remains eligible next sweep.
-        k = prefab!.GetComponent<Piece>() ? (prefab.GetComponent<Bed>() || prefab.GetComponent<CraftingStation>() ? 2 : 1) : 0;
+        k = prefab!.GetComponent<TombStone>() ? 3 : prefab.GetComponent<Piece>() ? (prefab.GetComponent<Bed>() || prefab.GetComponent<CraftingStation>() ? 2 : 1) : 0;
         if (prefabKinds.Count < 8192) prefabKinds[hash] = k;
         return k;
     }
     private void Publish(float now, bool full)
     {
-        proposals = bases.Build().Concat(landmarks.Values).OrderByDescending(s => s.Priority).ThenBy(s => s.Id, StringComparer.Ordinal).ToArray();
+        var graveSites = graves.Markers.Select(m => new WorldInterestSite(m.Id, "", "Recent gravestone area",
+            WorldInterestKind.Natural, m.Position, new ObserverPoint(8, 3, 8), m.Position, 0, 24));
+        proposals = bases.Build().Concat(landmarks.Values).Concat(graveSites).OrderByDescending(s => s.Priority).ThenBy(s => s.Id, StringComparer.Ordinal).ToArray();
         preparing.Clear(); proposalIndex = baseCount = landmarkCount = rejectedApproaches = 0;
         proposedAt = sweepAt; proposedComplete = full; preparationGroups.Clear();
-        // These approaches were already sampled by the generated-terrain survey.
-        IReadOnlyList<WorldInterestSite> natural = naturalProvider();
-        if (natural.Count > 512) proposedComplete = false;
-        foreach (WorldInterestSite site in WorldInterestDistribution.Take(natural, 512))
-            preparing.Add(site.Id, new Record { At = now, Site = site });
     }
     private bool PublishStep()
     {
@@ -172,17 +185,25 @@ internal sealed class ObserverWorldInterestService
         {
             WorldInterestSite s = proposals[proposalIndex++]; bool landmark = s.Kind == WorldInterestKind.Landmark;
             string biome = WorldGenerator.instance.GetBiome(Vector(s.Arrival)).ToString();
-            string group = (landmark ? "landmark:" : "base:") + biome;
+            string group = (s.IsGravestoneArea ? "grave:" : landmark ? "landmark:" : "base:") + biome;
             preparationGroups.TryGetValue(group, out int retained);
             if (retained >= 128) { proposedComplete = false; continue; }
             checks++;
             if (!Arrival(s, out ObserverPoint arrival)) { rejectedApproaches++; continue; }
-            if (landmark) landmarkCount++; else baseCount++;
+            if (landmark) landmarkCount++; else if (!s.IsGravestoneArea) baseCount++;
             preparationGroups[group] = retained + 1;
-            preparing.Add(s.Id, new Record { At = proposedAt, Site = new WorldInterestSite(s.Id, s.ParentId, s.Name, s.Kind, s.Center, s.Extents, arrival, s.Pieces, s.Priority, biome: biome) });
+            preparing.Add(s.Id, new Record {
+                At = proposedAt, Grave = graves.Find(s.Id),
+                Site = new WorldInterestSite(s.Id, s.ParentId, s.Name, s.Kind, s.Center, s.Extents, arrival, s.Pieces, s.Priority, biome: biome)
+            });
         }
         if (proposalIndex < proposals.Length) return false;
         catalogue.Clear();
+        int naturalSlots = 512 - preparing.Values.Count(r => r.Grave != null);
+        var natural = naturalProvider();
+        if (natural.Count > naturalSlots) proposedComplete = false;
+        foreach (var site in WorldInterestDistribution.Take(natural, naturalSlots))
+            preparing.Add(site.Id, new Record { At = Time.realtimeSinceStartup, Site = site });
         if (baseCount > 256 || landmarkCount > 256) proposedComplete = false;
         var chosen = preparing.Values.Where(r => r.Site.Kind == WorldInterestKind.Natural).Select(r => r.Site)
             .Concat(WorldInterestDistribution.Take(preparing.Values.Where(r => r.Site.Kind == WorldInterestKind.Base || r.Site.Kind == WorldInterestKind.BaseArea).Select(r => r.Site), 256))
@@ -206,7 +227,7 @@ internal sealed class ObserverWorldInterestService
             if (!known) continue;
             float height = WorldGenerator.instance.GetHeight(p);
             if (float.IsNaN(height) || float.IsInfinity(height) || height <= zones!.m_waterLevel + 2 || height >= 990) continue;
-            p.y = Mathf.Max(height + 8, site.Kind == WorldInterestKind.Landmark ? height + 8 : center.y);
+            p.y = Mathf.Max(height + 8, site.Kind == WorldInterestKind.Base || site.Kind == WorldInterestKind.BaseArea ? center.y : height + 8);
             if (!Finite(p) || p.y >= 998) continue;
             arrival = Point(p); return true;
         }
@@ -225,9 +246,25 @@ internal sealed class ObserverWorldInterestService
         }
         int pages = Math.Max(1, (reader.Sites.Length + WorldInterestProtocol.PageSize - 1) / WorldInterestProtocol.PageSize);
         var rows = new List<WorldInterestSite>(); double utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        int window = graveMinutes();
+        long worldTicks = ZNet.instance.GetTime().Ticks;
         foreach (var r in reader.Sites.Skip(reader.Page * WorldInterestProtocol.PageSize).Take(WorldInterestProtocol.PageSize))
         {
-            rows.Add(r.Site.WithReport(Mathf.Clamp(now - r.At, 0, 86400), Mathf.Clamp(r.Site.Priority + history.Adjustment(r.Site.Id, utc), 0, 100), history.RetryAfter(r.Site.Id, utc)));
+            float age = Mathf.Clamp(now - r.At, 0, 86400);
+            if (r.Grave != null)
+            {
+                // Readers page through a snapshot. Never reissue an expired or
+                // destroyed (looted) grave just because it was in that snapshot.
+                var grave = r.Grave;
+                double remaining = RecentGravestones<ZDOID>.Remaining(worldTicks, grave.DeathTicks, window);
+                ZDO? live = manager?.GetZDO(grave.Handle);
+                if (remaining <= 0 || live == null || !live.IsValid() ||
+                    live.GetLong(ZDOVars.s_timeOfDeath, 0L) != grave.DeathTicks) continue;
+                // v2 peers already expire reports at SiteSeconds. Shorten the
+                // final report's lifetime to the remaining death window.
+                age = Mathf.Max(0, (float)(WorldInterestProtocol.SiteSeconds - remaining));
+            }
+            rows.Add(r.Site.WithReport(age, Mathf.Clamp(r.Site.Priority + history.Adjustment(r.Site.Id, utc), 0, 100), history.RetryAfter(r.Site.Id, utc)));
             reader.Issued[r.Site.Id] = now;
         }
         foreach (string id in reader.Issued.Where(p => now - p.Value > 600).Select(p => p.Key).ToArray()) reader.Issued.Remove(id);

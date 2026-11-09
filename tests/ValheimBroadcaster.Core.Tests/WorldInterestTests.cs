@@ -8,6 +8,9 @@ internal static class WorldInterestTests
 {
     internal static IEnumerable<(string Name, Action Run)> Cases()
     {
+        yield return ("Gravestones expire by the saved death time on the same world clock", GraveAge);
+        yield return ("Gravestones keep the newest marker in each zone within a global bound", GraveZones);
+        yield return ("Gravestone areas survive v2, receive occasional Scenic coverage and disappear on removal", GraveCoverage);
         yield return ("World interests round-trip full bounded pages and immutable subject extents", PageRoundTrip);
         yield return ("World interests reject malformed and truncated wire payloads", PacketValidation);
         yield return ("World interests reject invalid identities extents counts and flags", SubjectValidation);
@@ -31,6 +34,51 @@ internal static class WorldInterestTests
         yield return ("Destination merge respects independent local and remote cooldowns", MergeCooldown);
         yield return ("Scenic selection prefers eligible server subjects without weakening travel bounds", PrioritySelection);
         yield return ("Destination cooldowns yield to generated scenery and player priority", PriorityFallback);
+    }
+    private static void GraveAge()
+    {
+        long death = TimeSpan.FromHours(16).Ticks;
+        Eq(7200d, RecentGravestones<int>.Remaining(death, death, 120));
+        Eq(1d, RecentGravestones<int>.Remaining(death + TimeSpan.FromSeconds(7199).Ticks, death, 120));
+        Eq(0d, RecentGravestones<int>.Remaining(death + TimeSpan.FromHours(2).Ticks, death, 120));
+        Eq(0d, RecentGravestones<int>.Remaining(death - 1, death, 120));
+        Eq(0d, RecentGravestones<int>.Remaining(death, 0, 120));
+        Eq(0d, RecentGravestones<int>.Remaining(death, death, 0));
+    }
+    private static void GraveZones()
+    {
+        var index = new RecentGravestones<int>();
+        for (int i = 60; i >= 1; i--) index.Observe(-i, 3, default, i, i);
+        Eq(16, index.Count);
+        Assert(index.Markers.Min(m => m.DeathTicks) == 45);
+        index.Observe(-59, 3, new ObserverPoint(2, 5, 3), 89, 129);
+        index.Observe(-59, 3, default, 58, 100);
+        Eq(129, index.Find("grave:-59:3")!.Handle);
+        Eq(16, index.Count);
+        index.Clear(); Eq(0, index.Count);
+    }
+    private static void GraveCoverage()
+    {
+        var area = new WorldInterestSite("grave:-5:3", "", "Recent gravestone area", WorldInterestKind.Natural,
+            new ObserverPoint(-310, 5, 203), default, new ObserverPoint(-300, 10, 215), 0, 24, biome: "Swamp");
+        var cache = new WorldInterestCache();
+        var page = P(1, 1, sites: new[] { area });
+        cache.Accept(WorldInterestProtocol.DecodeV2(WorldInterestProtocol.EncodeV2(page)), 0);
+        var land = new ScenicRegion("land", "Coast", new AutonomyPosition(3, 4, 500), landscape: ScenicLandscape.Coast);
+        var regions = WorldDestinationPlanner.Merge(new[] { land }, cache.Available(1), new DestinationFeedbackLedger(), 1);
+        Eq(ScenicDestinationKind.Gravestone, regions.Single(r => r.Id == area.Id).Kind);
+        var diversity = new ScenicDestinationDiversity();
+        int visits = 0;
+        for (int i = 0; i < 24; i++)
+        {
+            var next = diversity.Choose(regions, default, _ => 0)!;
+            if (next.Kind == ScenicDestinationKind.Gravestone) visits++;
+            diversity.Begin(next);
+            for (int sec = 0; sec < 15; sec++) diversity.Observe(1, true);
+        }
+        Assert(visits > 0 && visits < 6);
+        cache.Accept(P(2, 2), 4);
+        Assert(!WorldDestinationPlanner.Merge(new[] { land }, cache.Available(4), new DestinationFeedbackLedger(), 4).Any(r => r.Id == area.Id));
     }
     private static WorldInterestSite S(string id = "base:0:0:0", float x = 500, float age = 0, float retry = 0, float priority = 60) =>
         new WorldInterestSite(id, "", "A base", WorldInterestKind.Base, new ObserverPoint(x, 30, 0), new ObserverPoint(10, 5, 10), new ObserverPoint(x + 24, 40, 0), 20, priority, age, retry);

@@ -20,7 +20,7 @@ public static class WorldDestinationPlanner
         foreach (WorldInterestSite s in sites)
         {
             if (s.Age >= WorldInterestProtocol.SiteSeconds) continue;
-            ScenicDestinationKind kind = s.Kind == WorldInterestKind.Natural ? ScenicDestinationKind.Landscape :
+            ScenicDestinationKind kind = s.IsGravestoneArea ? ScenicDestinationKind.Gravestone : s.Kind == WorldInterestKind.Natural ? ScenicDestinationKind.Landscape :
                 s.Kind == WorldInterestKind.Landmark ? ScenicDestinationKind.Landmark : ScenicDestinationKind.Base;
             // Natural entries deliberately share generated-region IDs. The
             // classified approach replaces, rather than duplicates, that row.

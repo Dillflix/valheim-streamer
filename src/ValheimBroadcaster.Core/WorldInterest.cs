@@ -13,6 +13,9 @@ public enum DestinationOutcome : byte { UsableFootage = 1, PictureUnavailable = 
 public sealed class WorldInterestSite
 {
     public string Id { get; }
+    // v2 already carries natural areas and stable source-prefixed IDs. Older
+    // clients can cover the surroundings without a new wire discriminator.
+    public bool IsGravestoneArea => Kind == WorldInterestKind.Natural && Id.StartsWith("grave:", StringComparison.Ordinal);
     public string ParentId { get; }
     public string Name { get; }
     public WorldInterestKind Kind { get; }

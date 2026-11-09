@@ -456,7 +456,7 @@ namespace ValheimBroadcaster.Core
                     CurrentRegionId = nearest.Id; CurrentRegionName = nearest.Name; Remember(nearest.Id, now);
                     // Proximity cannot prove that an initial base/landmark is
                     // framed; explicit visits carry the adapter's subject gate.
-                    if (nearest.Kind == ScenicDestinationKind.Landscape) scenicDiversity.Begin(nearest);
+                    if (nearest.Kind == ScenicDestinationKind.Landscape || nearest.Kind == ScenicDestinationKind.Gravestone) scenicDiversity.Begin(nearest);
                 }
             }
             State = available ? AutonomyState.Scenic : AutonomyState.Waiting;
@@ -599,7 +599,7 @@ namespace ValheimBroadcaster.Core
                 Remember(localRegion.Id, now);
                 // Proximity identifies the ending area, not proof that a
                 // structure was framed during a partial journey.
-                if (localRegion.Kind == ScenicDestinationKind.Landscape || destinationPresented)
+                if (localRegion.Kind == ScenicDestinationKind.Landscape || localRegion.Kind == ScenicDestinationKind.Gravestone || destinationPresented)
                     scenicDiversity.Begin(localRegion);
             }
             idleActive = true; idleDwell = 0; idleUnreadyBegan = -1;
