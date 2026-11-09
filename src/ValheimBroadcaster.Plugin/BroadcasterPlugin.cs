@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.69";
+    public const string PluginVersion = "0.8.70";
     private SupervisorBridge? supervisor;
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;

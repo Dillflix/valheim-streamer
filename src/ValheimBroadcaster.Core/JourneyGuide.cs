@@ -24,6 +24,9 @@ public sealed partial class JourneyGuide
     private readonly double cruise, arrivalRadius;
     private double scanIn, altitude, yaw, pitch, speedLimit, sideMemory;
     private int detourSide;
+    private double horizontalMetres, previousScanMetres;
+    public double PreferredHeight => altitude;
+    public string CorridorChoice { get; private set; } = "Terrain course";
     private Candidate selected;
     private bool initialized, lifting;
     private AutonomyPosition progressTarget;
@@ -92,6 +95,7 @@ public sealed partial class JourneyGuide
                 yaw = bearing;
                 initialized = true;
             }
+            UpdateCruiseHeight();
             UpdateEscapeHeight(world, steeringTarget, bearing);
             ObserveFlightCorridor(world, bearing, floor);
             SelectCourse(world, floor, bearing);
@@ -125,10 +129,28 @@ public sealed partial class JourneyGuide
             Speed = 0;
             return;
         }
+        horizontalMetres += Position.HorizontalDistance(next);
         RememberTravel(Position, next);
         Position = next;
+        if (passageExit.HasValue &&
+            Position.HorizontalDistance(passageBend ?? passageExit.Value) <= Math.Max(1, Speed * dt))
+            scanIn = 0;
         Travelled += requested;
         CheckArrival();
+    }
+
+    private void UpdateCruiseHeight()
+    {
+        // Low tracking, mid-height travel, a shorter reveal, then a descent.
+        // Scale the beat by cruise speed so faster flights still sustain a view.
+        // Only measured horizontal motion advances it, never a hold or escape lift.
+        double leg = Math.Max(85, cruise * 13);
+        double phase = horizontalMetres % (leg * 4) / leg;
+        double targetHeight = phase < 1.25 ? 5.5 : phase < 2.25 ? 11 : phase < 3 ? 22 : 9;
+        if (passageExit.HasValue) targetHeight = Math.Min(altitude, targetHeight);
+        double allowance = .16 * (horizontalMetres - previousScanMetres);
+        altitude += Clamp(targetHeight - altitude, -allowance, allowance);
+        previousScanMetres = horizontalMetres;
     }
 
     private void UpdateEscapeHeight(IJourneyGuideWorld world, AutonomyPosition target, double bearing)
@@ -181,11 +203,12 @@ public sealed partial class JourneyGuide
             Status = speedLimit > 0 ? "Rising above the local surface" : "Waiting for vertical clearance";
             return;
         }
-        Candidate direct = Probe(world, bearing, 0, horizon, 0);
+        bool passage = TryPassageCourse(world, bearing, out Candidate passageCourse);
+        Candidate direct = passage ? passageCourse : Probe(world, bearing, 0, horizon, 0);
         frontier = direct.Frontier;
-        if (TryClimbTerrain(world, direct, horizon, floor)) return;
+        if (!passage && TryClimbTerrain(world, direct, horizon, floor)) return;
         Candidate best = direct;
-        if (extraHeight > 0 && !direct.Frontier &&
+        if (!passage && extraHeight > 0 && !direct.Frontier &&
             direct.Clear < horizon * .55 && Position.Y + 1 < floor + altitude + extraHeight)
         {
             // Inside a concavity, repeatedly rotating toward lateral rays can
@@ -202,15 +225,20 @@ public sealed partial class JourneyGuide
                 return;
             }
         }
-        if (!direct.Frontier && direct.Clear < horizon - Margin)
+        if (!passage && !direct.Frontier && direct.Clear < horizon - Margin)
         {
-            // Look above a blocking object as well as along its sides. Prefer a
-            // shallow climb to orbiting an obstacle; retain the detour side when
-            // two paths of equivalent length pass opposite sides of a trunk.
-            if (Position.Y - floor < altitude + 36)
-                Consider(ref best, Probe(world, bearing, 0, horizon, 27));
+            // The coarse corridor observation is optional. Even without it a
+            // fully open forward side lane takes precedence over a new climb.
+            bool forwardLane = false;
             foreach (int angle in DetourAngles)
-                Consider(ref best, Probe(world, bearing, angle, horizon, 0));
+            {
+                Candidate side = Probe(world, bearing, angle, horizon, 0);
+                if (Math.Abs(angle) <= 58 && !side.Frontier && side.Clear >= horizon - Margin)
+                    forwardLane = true;
+                Consider(ref best, side);
+            }
+            if (!forwardLane && Position.Y - floor < altitude + 36)
+                Consider(ref best, Probe(world, bearing, 0, horizon, 27));
             if (best.Clear < Math.Min(horizon * .45, 6) && Position.Y - floor < altitude + 36)
             {
                 Consider(ref best, Probe(world, bearing, 0, horizon, 55));
@@ -238,7 +266,7 @@ public sealed partial class JourneyGuide
         // v * scanTime + v^2 / (2 * brake) <= clear - margin.
         double reaction = Brake * ScanInterval;
         speedLimit = Math.Min(cruise, Math.Sqrt(reaction * reaction + 2 * Brake * (best.Clear - Margin)) - reaction);
-        Status = best.Pitch > 18 ? "Climbing through the route" :
+        Status = passage ? "Following a swept lateral passage" : best.Pitch > 18 ? "Climbing through the route" :
             best.Side != 0 ? "Steering around terrain or obstacles" : "Travelling toward destination";
     }
 
