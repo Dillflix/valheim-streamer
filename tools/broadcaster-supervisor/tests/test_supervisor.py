@@ -92,7 +92,9 @@ class TransactionTests(Fixture):
     @unittest.skipUnless(os.name == "nt", "requires Windows directory sharing")
     def test_real_directory_handle_does_not_block_sandbox_update(self):
         self.config.platform = "windows-sandboxie"
-        handle = sup._kernel.CreateFileW(str(self.plugin), 0x80, 3, None, 3, 0x02000000, None)
+        # Attribute-only opens do not participate in Windows share checks.
+        # Request directory read access and omit FILE_SHARE_DELETE.
+        handle = sup._kernel.CreateFileW(str(self.plugin), 0x80000000, 3, None, 3, 0x02000000, None)
         self.assertNotEqual(handle, sup.ctypes.c_void_p(-1).value)
         try:
             with self.assertRaises(PermissionError):
