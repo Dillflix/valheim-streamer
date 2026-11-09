@@ -21,7 +21,11 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.72";
+    public const string PluginVersion = "0.8.73";
+    internal static readonly string SourceRevision = SupervisorIdentity.SourceSha(
+        typeof(BroadcasterPlugin).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
+    private static readonly string ClientBuildLabel = "Client v" + PluginVersion +
+        (SourceRevision.Length == 0 ? "" : " (" + SourceRevision.Substring(0, 7) + ")");
     private SupervisorBridge? supervisor;
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
@@ -1068,12 +1072,12 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         {
             if (connection?.Recovering == true)
             {
-                GUI.Box(new Rect(12, 12, Mathf.Max(200, Screen.width - 24), 80), connection.Status);
+                GUI.Box(new Rect(12, 12, Mathf.Max(200, Screen.width - 24), 80), ClientBuildLabel + " | " + connection.Status);
                 if (GUI.Button(new Rect(24, 55, 180, 28), "Cancel reconnection"))
                 { connection.OnManualStop(true); CancelIntent(); UpdateBackground(); }
             }
             else if (remote.Isolated) GUI.Box(new Rect(12, 12, Mathf.Max(200, Screen.width - 24), 54),
-                observer.Phase == ObserverPhase.Parked ? "Read-only observer parked. F8 resumes coverage; disconnect to leave the observer role." : remote.Status);
+                ClientBuildLabel + " | " + (observer.Phase == ObserverPhase.Parked ? "Read-only observer parked. F8 resumes coverage; disconnect to leave the observer role." : remote.Status));
             return;
         }
         FramePresentation presentation = frameHold.Present();
@@ -1125,6 +1129,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         DiagnosticPictureContext shown = frameHold.OperatorPicture;
         string state = presentation == FramePresentation.Live ? "LIVE" : presentation == FramePresentation.Hold ? "HELD" :
             frameHold.ScenicTransition ? "SCENIC TRANSITION" : "RECOVERY SLATE";
+        string header = ClientBuildLabel + " | ON AIR: " + state + " | ";
         string onAir = presentation == FramePresentation.Slate ?
             frameHold.ScenicTransition ? "Preparing the next landscape" : StatusText(frameHold.LastFailure) :
             StatusText(shown.Mode) + (frameHold.OperatorSubject.Length > 0 ? " — " + StatusText(frameHold.OperatorSubject) : "") +
@@ -1163,10 +1168,10 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             if (!director.IsHolding && tracked > 1 && coverage.Mode == CoverageMode.Player && presentation == FramePresentation.Live)
                 rosterStatus += " | " + (automatic?.ControlsSelection == true ? automatic.FollowDwell :
                     $"{director.ReadyDwellSeconds:F0}/{director.DwellSeconds:F0}s usable dwell");
-            return $"ON AIR: {state} | {player} | {shown.Perspective}\n" + shown.FollowDetails +
+            return header + $"{player} | {shown.Perspective}\n" + shown.FollowDetails +
                 "\nDIRECTOR: " + StatusText(directing) + " | " + rosterStatus + " | RTMP: " + StatusText(output?.Status ?? "Stopped");
         }
-        return "ON AIR: " + state + " | " + onAir + "\nMODE: " + coverage.Preference + " | " +
+        return header + onAir + "\nMODE: " + coverage.Preference + " | " +
             CoveragePreferences.Describe(coverage.Preference, coverage.Mode) + "\nDIRECTOR: " + StatusText(directing) + journeyDetails + planning +
             "\nSESSION: " + session + " | " + StatusText(discovery) + "\nRTMP: " + StatusText(output?.Status ?? "Stopped");
     }
