@@ -70,6 +70,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     private readonly CombatFramingPolicy combat = new CombatFramingPolicy();
     private readonly List<CombatCandidate> combatCandidates = new List<CombatCandidate>(16);
     private readonly Dictionary<int, string> combatNames = new Dictionary<int, string>(16);
+    // Live Character refs for this frame's candidates, so the fit floor can read the
+    // engaged enemy's REAL height/base. Cleared and rebuilt every SenseHostiles so no
+    // dead/destroyed Character is ever retained across frames.
+    private readonly Dictionary<int, Character> combatCharacters = new Dictionary<int, Character>(16);
     // One eased 0..1 blend drives BOTH the thirds screen-X move and the lens
     // change, so the enemy slide and the 75 mm tighten share the same weighted
     // feel. combatFov holds the blended lens so the TrySolve lens assignment and
@@ -81,6 +85,23 @@ internal sealed class SimpleFollowCamera : IDisposable
     private int combatSide;
     private int combatTargetId;
     private float combatDistance;
+    // Full-body fit floor. The mm lens targets are AESTHETIC; the presented fov
+    // takes a widening-only floor solved from each actor's REAL body span so the
+    // player's feet (rule 1, hard) and the enemy's body (rule 2, best-effort) stay
+    // in frame. fitFov eases toward the solved floor (~0.5s) and is the value the
+    // lens carries AND the thirds-separation solve reads this frame.
+    private const float FeetMarginMetres = 0.25f;   // Breathing room below the player's feet.
+    private const float HeadMarginMetres = 0.35f;   // Breathing room above the player's head.
+    private const float EnemyFeetMarginMetres = 0.15f;
+    private const float EnemyHeadMarginMetres = 0.25f;
+    private const float AimScreenY = 0.05f;          // Composer Y (Cinemachine Y-down: aim below centre).
+    private const float EnemyFitCapDegrees = 85f;    // Enemy need is best-effort, bounded here.
+    private const float FitCapDegrees = 85f;         // Overall widening ceiling (fisheye guard).
+    private const float FitEaseSeconds = 0.5f;       // Settle time within the user's 1-2s allowance.
+    private Character? combatTargetCharacter;
+    private float fitFov;
+    private float fitFovVelocity;
+    private float fitWiden;                           // fitFov - lensBlendedFov this frame, for diagnostics.
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
 
@@ -123,10 +144,20 @@ internal sealed class SimpleFollowCamera : IDisposable
         // seeded to soloFov on create/reset and whenever combat framing is off,
         // so outside combat this is exactly soloFov and eases to 75 mm in combat.
         if (combatFov <= 0f) combatFov = soloFov;
-        camera.Lens.FieldOfView = combatFov;
+        // The presented lens is the full-body FIT fov: the combat lens blend floored
+        // (widening-only) by the solved body-fit requirement and eased ~0.5s. Seeded
+        // to soloFov so it is exactly the lens outside combat until a body span needs
+        // more room. UpdateCombatFraming advances fitFov from this frame's geometry.
+        if (fitFov <= 0f) fitFov = soloFov;
+        camera.Lens.FieldOfView = fitFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
         UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, radius, dt);
         UpdateCombatFraming(actor, settings, subjectPosition, radius, soloFov, dt);
+        // Full-body fit floor: eased widening-only fov that keeps the player's feet
+        // (always) and the engaged enemy's body (best-effort) in frame. Runs in both
+        // Solo and Combat (the feet rule is universal). combatFov carries the LENS
+        // blend only; fitFov is what the lens and the thirds solve actually use.
+        UpdateFitFloor(actor, subjectPosition, aimHeight, radius, dt);
         // ManualCameraUpdate owns exact elapsed time and native skipped-frame compensation.
         ManualCameraUpdate.Update(camera, Vector3.up, dt);
         CameraState state = camera.State;
@@ -147,7 +178,10 @@ internal sealed class SimpleFollowCamera : IDisposable
                 $"screen ({ScreenPosition.x:F2}, {ScreenPosition.y:F2}); recentering behind subject; fov {fov:F0}; " +
                 $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
-                    ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "");
+                    ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
+                // Surface the fit floor only when it is actually widening (>0.3 deg)
+                // so footage review can see the full-body constraint doing work.
+                (fitWiden > 0.3f ? $"; fit +{fitWiden:F1}°" : "");
         }
         LastFailure = "none";
         return true;
@@ -205,9 +239,14 @@ internal sealed class SimpleFollowCamera : IDisposable
         // the thirds lines narrow in lockstep so the enemy stays pinned on its
         // line through the whole move.
         float combatFovTarget = LensFov(CombatLensMm);
-        float blendedFov = Mathf.Lerp(soloFov, combatFovTarget, combatBlend);
+        // The thirds separation is solved from the SAME fov the lens carries this
+        // frame - which is fitFov (the full-body floor), not the raw lens blend - so
+        // as the floor widens for feet/enemy the thirds lines widen in lockstep and
+        // the enemy stays pinned on its line. fitFov holds last frame's eased value
+        // here (UpdateFitFloor advances it after this), matching the lens assignment.
+        float lensNow = fitFov > 0f ? fitFov : soloFov;
         float separation = CombatFramingPolicy.ThirdsSeparationDegrees(
-            Mathf.Clamp(blendedFov, 10f, 100f), Mathf.Max(0.1f, camera!.Lens.Aspect));
+            Mathf.Clamp(lensNow, 10f, 100f), Mathf.Max(0.1f, camera!.Lens.Aspect));
         SenseHostiles(actor, settings, subjectPosition);
         double now = Time.unscaledTimeAsDouble;
         float cameraAzimuth = orbit!.HorizontalAxis.Value;
@@ -220,6 +259,9 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (combatTargetId != 0)
             for (int i = 0; i < combatCandidates.Count; i++)
                 if (combatCandidates[i].Id == combatTargetId) { combatDistance = combatCandidates[i].Distance; break; }
+        // The engaged enemy's live Character for the fit floor (null when its id is
+        // absent from this frame's candidates, e.g. bridging a kill); never retained.
+        combatTargetCharacter = combatTargetId != 0 && combatCharacters.TryGetValue(combatTargetId, out Character? tgt) ? tgt : null;
         // Occlusion recovery wins the orbit while it steers; the combat policy
         // still ran above so its state keeps flowing (spec priority rule).
         if (!steering && decision.Phase == CombatFramingPhase.Combat)
@@ -254,6 +296,76 @@ internal sealed class SimpleFollowCamera : IDisposable
         }
     }
 
+    // Full-body fit floor. Rule 1 (hard): the player's feet are always in frame.
+    // Rule 2 (best-effort): the engaged enemy's body fits too, capped. The mm lens
+    // (combatFov) is the aesthetic target; the presented fov only ever WIDENS off it
+    // to the solved body-span requirement, then eases ~0.5s so brief feet loss while
+    // the camera catches up stays within the user's 1-2s allowance. Distances use the
+    // PRESENTED camera pose (last frame's actual position incl. deoccluder push) so
+    // the floor reacts to where the shot really is, not the ideal orbit point.
+    private void UpdateFitFloor(Character actor, Vector3 subjectPosition, float aimHeight, float radius, float dt)
+    {
+        // Planar camera->player distance from the presented pose; fall back to the
+        // ideal orbit radius before the first presented frame exists.
+        Vector3 camPos = hasPresented ? presentedPosition : subjectPosition - Vector3.forward * radius;
+        float dPlayer = Mathf.Max(1f, PlanarDistance(camPos, subjectPosition));
+        float h = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
+        // Player spans around the aim point (aim at 0.8*h). Feet rule is hard.
+        float belowAim = aimHeight + FeetMarginMetres;
+        float aboveAim = Mathf.Max(0f, h - aimHeight) + HeadMarginMetres;
+        float playerNeed = FrameFitPolicy.RequiredVerticalFovDegrees(AimScreenY, belowAim, aboveAim, dPlayer);
+
+        float enemyNeed = 0f;
+        // Enemy best-effort: only while engaged and the target Character is live.
+        if (combatTargetId != 0 && combatTargetCharacter)
+        {
+            Character enemy = combatTargetCharacter!;
+            Vector3 ePos = enemy.transform.position;
+            float dEnemy = PlanarDistance(camPos, ePos);
+            float he = Mathf.Clamp(enemy.GetHeight(), 0.3f, 16f) * Mathf.Max(0.1f, enemy.transform.lossyScale.y);
+            if (dEnemy > 0.5f && TargetRoster.Finite(ePos))
+            {
+                // Vertical angle of the player aim point from the presented camera.
+                float aimAngle = VerticalAngle(camPos, subjectPosition + Vector3.up * aimHeight, PlanarDistance(camPos, subjectPosition));
+                // Enemy base (feet - margin) and top (head + margin) vertical angles.
+                float baseAngle = VerticalAngle(camPos, ePos + Vector3.up * (-EnemyFeetMarginMetres), dEnemy);
+                float topAngle = VerticalAngle(camPos, ePos + Vector3.up * (he + EnemyHeadMarginMetres), dEnemy);
+                // Relative to the aim direction, clamped to the policy's [0,85] input.
+                float angleBelowAim = Mathf.Clamp(aimAngle - baseAngle, 0f, 85f);
+                float angleAboveAim = Mathf.Clamp(topAngle - aimAngle, 0f, 85f);
+                if (IsFinite(angleBelowAim) && IsFinite(angleAboveAim))
+                    enemyNeed = FrameFitPolicy.RequiredVerticalFovFromAnglesDegrees(AimScreenY, angleBelowAim, angleAboveAim);
+            }
+        }
+
+        // playerNeed is NOT capped by the enemy cap; enemyNeed is. The floor is the
+        // widening demand; the presented target maxes it with the lens blend and
+        // clamps to the overall fisheye ceiling. A pathological playerNeed above the
+        // cap (deoccluder jammed against the player) still clamps to FitCapDegrees.
+        float fitFloor = Mathf.Max(playerNeed, Mathf.Min(enemyNeed, EnemyFitCapDegrees));
+        float lensBlendedFov = combatFov; // combatFov carries the mm lens blend this frame.
+        float finalFovTarget = Mathf.Clamp(Mathf.Max(lensBlendedFov, fitFloor), 10f, FitCapDegrees);
+        if (!IsFinite(finalFovTarget)) finalFovTarget = lensBlendedFov;
+        fitFov = Mathf.SmoothDamp(fitFov, finalFovTarget, ref fitFovVelocity, FitEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
+        fitWiden = fitFov - lensBlendedFov; // For diagnostics: how much the floor widened.
+    }
+
+    private static float PlanarDistance(Vector3 a, Vector3 b)
+    {
+        float dx = a.x - b.x, dz = a.z - b.z;
+        return Mathf.Sqrt(dx * dx + dz * dz);
+    }
+
+    // Signed vertical angle (degrees) from camera forward-plane to a world point:
+    // positive means the point is ABOVE the camera's horizontal through its own
+    // height, using the planar distance as the run. atan2(dy, planar).
+    private static float VerticalAngle(Vector3 camera, Vector3 point, float planar)
+    {
+        return Mathf.Atan2(point.y - camera.y, Mathf.Max(0.01f, planar)) * Mathf.Rad2Deg;
+    }
+
+    private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
+
     // Build the hostile candidate list with no per-frame allocations: a pooled
     // list of value structs and a name cache populated only on first sight.
     // Hostile = loaded MonsterAI the game treats as the player's enemy, alive,
@@ -262,6 +374,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     private void SenseHostiles(Character actor, BroadcastSettings settings, Vector3 subjectPosition)
     {
         combatCandidates.Clear();
+        combatCharacters.Clear();
         var player = actor as Player;
         if (!player) return;
         Vector3 forward = actor.transform.forward; forward.y = 0f;
@@ -282,6 +395,7 @@ internal sealed class SimpleFollowCamera : IDisposable
             float bearing = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg; // World azimuth (+Z = 0), matches orbit axis.
             int id = enemy.GetInstanceID();
             if (!combatNames.ContainsKey(id)) combatNames[id] = CombatName(enemy);
+            combatCharacters[id] = enemy; // Live ref for this frame's fit floor only.
             combatCandidates.Add(new CombatCandidate(id, bearing, distance, inFront, true));
         }
     }
@@ -298,9 +412,12 @@ internal sealed class SimpleFollowCamera : IDisposable
 
     private void ResetCombat()
     {
-        combat.Reset(); combatCandidates.Clear(); combatNames.Clear();
+        combat.Reset(); combatCandidates.Clear(); combatNames.Clear(); combatCharacters.Clear();
         combatBlend = 0f; combatBlendVelocity = 0f; combatFov = 0f; // 0 reseeds to solo fov next solve.
-        combatSide = 0; combatTargetId = 0; combatDistance = 0f;
+        combatSide = 0; combatTargetId = 0; combatDistance = 0f; combatTargetCharacter = null;
+        // Seed the fit floor back to the solo lens; it reconverges in ~0.5s. 0
+        // reseeds to soloFov on the next solve (same contract as combatFov).
+        fitFov = 0f; fitFovVelocity = 0f; fitWiden = 0f;
         if (aim != null)
         {
             ScreenComposerSettings composition = aim.Composition;

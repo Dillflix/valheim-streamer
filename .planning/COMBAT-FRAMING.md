@@ -120,6 +120,52 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
 8. **Diagnostics**: Simple-follow line gains "; combat: <targetName> <d>m, enemy <L|R>
    thirds" while in Combat (0.25s cadence line already exists).
 9. Wildlife cutaways already suppressed in simple mode; directed system untouched.
+10. **Full-body fit floor (locked 2026-11-09):** the mm lens targets (solo 50 /
+    combat 75) become AESTHETIC targets; the PRESENTED vertical fov takes a
+    widening-only floor solved from each actor's REAL body span. Never narrows
+    below the lens target; never exceeds an 85-deg fisheye cap.
+    - **Rule 1 (hard): the player's feet are ALWAYS in frame.** A pure static
+      `FrameFitPolicy.RequiredVerticalFovDegrees(aimScreenY, belowAimMetres,
+      aboveAimMetres, planarDistanceMetres)` solves (by bisection in [1,120] deg
+      to 5e-4) the minimal vfov that fits a segment below+above the AIM POINT when
+      the aim is pinned at screen fraction aimScreenY (Cinemachine Y-down, 0.05 =
+      aim below centre, so phi_aim = atan(2*aimScreenY*tan(vfov/2)) biases room to
+      the head and tightens the feet). Player spans: belowAim = aimHeight + 0.25
+      (feet margin), aboveAim = (h - aimHeight) + 0.35 (head margin), aimHeight =
+      0.8*h. Real size via GetHeight()*lossyScale.y.
+    - **Rule 2 (best-effort, capped 85): the engaged enemy's body fits too.** An
+      overload `RequiredVerticalFovFromAnglesDegrees(aimScreenY, angleBelowAimDeg,
+      angleAboveAimDeg)` takes the enemy's bottom (feet - 0.15) and top (head +
+      0.25) as angles RELATIVE TO THE AIM DIRECTION (handles a tall troll beside a
+      small player). The metre overload delegates to it after atan-ing. The live
+      enemy Character is reached via `combatTargetCharacter` (set each frame from
+      this frame's candidates, never retained, reset with combat).
+    - **Floor = max(playerNeed, min(enemyNeed, 85)); playerNeed is NOT capped by
+      the enemy cap.** finalFovTarget = clamp(max(lensBlendedFov, floor), 10, 85).
+      A pathological playerNeed above 85 (deoccluder jammed against the player)
+      still clamps to 85 — documented, accepted.
+    - **Distances use the PRESENTED camera pose** (last frame's actual position,
+      incl. deoccluder displacement; falls back to the ideal orbit distance before
+      the first presented frame). The floor reacts to where the shot really is.
+    - **Ease:** `fitFov` SmoothDamps toward finalFovTarget over ~0.5s (within the
+      user's 1-2s feet-loss allowance — fast enough to rescue feet, slow enough not
+      to pump). The LENS reads fitFov each frame (replaces the direct combatFov
+      assignment; combatFov now carries the mm-lens blend ONLY). The thirds solve
+      reads the SAME fitFov the lens carries this frame (no read-back). Seeded to
+      soloFov on create/reset/rebind; reconverges in ~0.5s.
+    - **Diagnostics:** the simple-follow line appends "; fit +N.N°"
+      (fitFov - lensBlendedFov) only when the floor is actually widening (>0.3 deg)
+      so footage review can see the constraint working.
+    - **HONEST NOTE — the floor dominates 75mm at the default 6m orbit.** For a
+      1.9m player at d=6: belowAim=1.77m => angle_down=atan(1.77/6)=16.43 deg, which
+      ALONE already exceeds half of the 75mm 18.18 deg vfov (9.09). With the 0.05
+      below-centre aim pin reducing down-space further, the solved playerNeed lands
+      at ~36.7 deg (verified in test). So the 75mm aesthetic survives mainly at
+      longer deoccluder-free distances or if the operator raises SimpleFollowDistance;
+      at the default 6m orbit the feet floor correctly wins. This is expected, not a
+      bug — rule 1 (feet) outranks the lens look by design.
+    - Untouched: deadzone, hard limits, deoccluder, Layer 1 steering, state machine,
+      screen-X blend.
 
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
