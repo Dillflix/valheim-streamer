@@ -25,15 +25,9 @@ public sealed partial class JourneyGuide
     public double HighestSurfaceAhead { get; private set; }
     private double corridorSlope = double.NegativeInfinity;
 
-    private double solidGrade, forecastRange;
-    private AutonomyPosition? passageBend, passageExit;
-
     private void ObserveFlightCorridor(IJourneyGuideWorld world, double bearing, double currentFloor)
     {
         corridorSlope = double.NegativeInfinity;
-        solidGrade = double.NegativeInfinity;
-        forecastRange = 0;
-        CorridorChoice = "Terrain course";
         requiredTerrainLift = 0;
         LocalSurfaceHeight = HighestSurfaceAhead = currentFloor;
         double range = Math.Min(Position.HorizontalDistance(destination), Clamp(cruise * 4, 24, 64));
@@ -52,7 +46,6 @@ public sealed partial class JourneyGuide
             // A sample can fall on either side of the actual crest. Reserve
             // half the observed rise across this interval while choosing pitch;
             // body clearance is still established by a fresh swept test.
-            forecastRange = span;
             HighestSurfaceAhead = Math.Max(HighestSurfaceAhead, floor);
             double crestAllowance = Math.Abs(floor - previousFloor) * .5;
             double rise = floor + crestAllowance + altitude + extraHeight - Position.Y;
@@ -65,120 +58,7 @@ public sealed partial class JourneyGuide
         }
         if (world is IJourneyFlightCorridor sensor &&
             sensor.TryGetClimbSlope(Position, heading, range, out double solidSlope) && Finite(solidSlope))
-            solidGrade = Clamp(solidSlope, -.36, .95);
-    }
-
-    // A collider top is an overflight option. A terrain-height measurement
-    // still governs ridge anticipation; a top alone tells us nothing about
-    // the free space beside a trunk or underneath an overhanging collider.
-    private bool TryPassageCourse(IJourneyGuideWorld world, double bearing, out Candidate course)
-    {
-        course = default;
-        if (escapeTarget.HasValue || extraHeight > 0 || requiredTerrainLift >= 1)
-        {
-            passageExit = null;
-            corridorSlope = Math.Max(corridorSlope, solidGrade);
-            return false;
-        }
-
-        if (passageExit.HasValue)
-        {
-            double reached = Math.Max(1, Speed * .15);
-            if (passageBend.HasValue && Position.HorizontalDistance(passageBend.Value) <= reached)
-                passageBend = null;
-            var waypoint = passageBend ?? passageExit.Value;
-            if (Position.HorizontalDistance(waypoint) > reached &&
-                TryPassageLeg(world, Position, waypoint, out course))
-            {
-                if (!passageBend.HasValue) course = PassageRunway(world, waypoint, course);
-                CorridorChoice = "Committed lateral passage";
-                return true;
-            }
-            passageExit = null;
-        }
-        if (forecastRange < 5 || solidGrade <= corridorSlope + .015) return false;
-
-        // Probe the actual camera envelope at the terrain-following height.
-        // Work within the observed prefix and the adapter's 64 m sweep limit.
-        var ahead = Direction(bearing, 0);
-        double range = Math.Min(52, forecastRange);
-        var end = Along(Position, ahead, range);
-        double rise = Clamp(corridorSlope, -.36, 1.28);
-        end = Along(end, Up, range * rise);
-        double length = Position.Distance(end);
-        if (length < 1) return false;
-        double clear = SafeClearance(world, Position, end);
-        if (clear >= length - .01)
-        {
-            CorridorChoice = "Clear at cruising height";
-            return false;
-        }
-
-        // Aim beyond the first contact, not merely at a clear ray ending on
-        // this side of the tree. Check forward room beyond that shoulder.
-        double contact = clear * range / length;
-        double advance = Math.Min(range, contact + 4);
-        var shoulder = Along(Position, ahead, advance);
-        var across = Direction(bearing + 90, 0);
-        int firstSide = detourSide == 0 ? 1 : detourSide;
-        // In staggered rows a diagonal can cut through this row even though
-        // the next opening is reachable by continuing before turning.
-        for (int shape = 0; shape < 2; shape++)
-        {
-            var approach = Position;
-            Candidate entry = default;
-            if (shape == 1)
-            {
-                double lead = contact - 4;
-                if (lead < 2) break;
-                approach = Along(Along(Position, ahead, lead), Up, rise * lead);
-                if (!TryPassageLeg(world, Position, approach, out entry)) break;
-            }
-            foreach (int offset in PassageOffsets)
-            {
-                var exit = Along(shoulder, across, offset * firstSide);
-                if (!world.TryGetSurface(exit, out double floor) || !Finite(floor)) continue;
-                exit = Along(exit, Up, Clamp(floor + altitude - Position.Y, -advance * .36, advance * .36));
-                if (!TryPassageLeg(world, approach, exit, out var leg)) continue;
-                var beyond = Along(exit, ahead, Math.Max(4, cruise * .6));
-                if (!world.TryGetSurface(beyond, out double nextFloor) || !Finite(nextFloor)) continue;
-                beyond = Along(beyond, Up, Clamp(nextFloor - floor, -2, 2));
-                if (SafeClearance(world, exit, beyond) < exit.Distance(beyond) - .01) continue;
-                passageBend = shape == 0 ? (AutonomyPosition?)null : approach;
-                passageExit = exit;
-                detourSide = Math.Sign(offset * firstSide);
-                CorridorChoice = shape == 0 ? "Entered lateral passage" : "Entered bending passage";
-                course = shape == 0 ? PassageRunway(world, exit, leg) : entry;
-                return true;
-            }
-        }
-        corridorSlope = Math.Max(corridorSlope, solidGrade);
-        CorridorChoice = "Overflight after passage search";
-        return false;
-    }
-
-    private static readonly AutonomyPosition Up = new AutonomyPosition(0, 1, 0);
-    private static readonly int[] PassageOffsets = { 3, -3, 7, -7, 12, -12 };
-
-    // A steering waypoint need not be a stopping point. Credit only newly
-    // swept space on the same heading for braking; a tight bend still slows.
-    private Candidate PassageRunway(IJourneyGuideWorld world, AutonomyPosition exit, Candidate leg)
-    {
-        double stopping = cruise * ScanInterval + cruise * cruise / (2 * Brake) + Margin;
-        if (leg.Clear >= stopping) return leg;
-        var continuation = Along(exit, Direction(leg.Yaw, leg.Pitch), stopping - leg.Clear);
-        double runway = leg.Clear + SafeClearance(world, exit, continuation);
-        return new Candidate(leg.Yaw, leg.Pitch, runway, leg.Side, leg.Score);
-    }
-
-    private static bool TryPassageLeg(IJourneyGuideWorld world, AutonomyPosition from, AutonomyPosition exit, out Candidate leg)
-    {
-        leg = default;
-        double length = from.Distance(exit);
-        if (length < 1 || SafeClearance(world, from, exit) < length - .01) return false;
-        double elevation = Math.Atan2(exit.Y - from.Y, from.HorizontalDistance(exit)) * 180 / Math.PI;
-        leg = new Candidate(Bearing(from, exit), elevation, length, 0, length);
-        return true;
+            corridorSlope = Math.Max(corridorSlope, Clamp(solidSlope, -.36, .95));
     }
 
     private bool TryClimbTerrain(IJourneyGuideWorld world, Candidate direct, double horizon, double floor)
