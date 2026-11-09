@@ -12,11 +12,12 @@ using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Server;
 
-[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.71")]
+[BepInPlugin("com.dillflix.valheimbroadcaster.server", "Valheim Broadcaster Server", "0.8.72")]
 [BepInDependency(Jotunn.Main.ModGuid, "2.30.2")]
 [NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 public sealed partial class ObserverServerPlugin : BaseUnityPlugin
 {
+    private const int GravestoneWindowMinutes = 48 * 60;
     private static ObserverServerPlugin? instance;
     private Harmony? harmony;
     private ConfigEntry<bool> allow = null!;
@@ -51,8 +52,8 @@ public sealed partial class ObserverServerPlugin : BaseUnityPlugin
         activityEnabled = Config.Bind("Observer", "ActivityEnabled", true, "Optional observed-idle evidence for all ordinary players, for wildlife cutaways. Uses existing replicated movement, actions and heartbeat; cannot prove absence of local menu/input activity. Does not alter observer admission or simulate regions.");
         eventsEnabled = Config.Bind("Observer", "EventsEnabled", true, "Optional timestamped movement, generic action, crafting and health-loss evidence for activity-aware coverage. Generic action/health loss does not prove combat. Reads the existing activity samples; no ordinary-player mod or simulation changes. Respects SharePrivatePlayerPositions.");
         interestsEnabled = Config.Bind("Observer", "WorldInterestEnabled", true, "Optional metadata-only discovery of natural landscapes/coasts, player bases and already-placed landmarks, with destination feedback. Requires observer authorization and DiscoveryEnabled. Does not simulate regions or change admission.");
-        gravestoneMinutes = Config.Bind("Observer", "RecentGravestoneMinutes", 120,
-            new ConfigDescription("World-clock minutes to offer an existing outdoor player gravestone area to authorized Scenic observers. Zero disables. Requires world interests and private position sharing.", new AcceptableValueRange<int>(0, 1440)));
+        gravestoneMinutes = Config.Bind("Observer", "RecentGravestoneMinutes", GravestoneWindowMinutes,
+            new ConfigDescription("World-clock minutes to offer an existing outdoor player gravestone area to authorized Scenic observers. Zero disables. Requires world interests and private position sharing.", new AcceptableValueRange<int>(0, GravestoneWindowMinutes)));
         InitializeEnvironment();
         interests = new ObserverWorldInterestService(message => Logger.LogInfo(message), () => discovery.NaturalDestinations,
             () => sharePrivatePositions.Value ? gravestoneMinutes.Value : 0);
@@ -78,7 +79,7 @@ public sealed partial class ObserverServerPlugin : BaseUnityPlugin
                 Patch(typeof(ZNet), command, new[] { typeof(ZRpc), typeof(string) }, prefix: nameof(WorldWrite));
             // The observer never receives a character ZDO on the server. Inbound object
             // writes and gameplay routed calls are refused before native handlers run.
-            Logger.LogInfo("Observer server 0.8.71 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
+            Logger.LogInfo("Observer server 0.8.72 ready; protocol 3, explicit pre-admission request required. Allowlisted vanilla clients play normally. Discovery enabled=" + discoveryEnabled.Value + "; authorized private positions=" + sharePrivatePositions.Value + ".");
         }
         catch (Exception error)
         {

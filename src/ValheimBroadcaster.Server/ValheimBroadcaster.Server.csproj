@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.8.71</Version>
+    <Version>0.8.72</Version>
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>ValheimBroadcaster.Server</AssemblyName>
     <RootNamespace>ValheimBroadcaster.Server</RootNamespace>
