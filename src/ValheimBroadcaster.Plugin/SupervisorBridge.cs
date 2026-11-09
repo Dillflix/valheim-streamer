@@ -14,7 +14,7 @@ namespace ValheimBroadcaster.Plugin;
 // directory (a Sandboxie guest path on Windows, mapped by the host supervisor).
 internal sealed class SupervisorBridge
 {
-    private readonly string directory, session, pluginHash, sourceSha;
+    private readonly string directory, session, pluginHash;
     private readonly int pid;
     private readonly Action<string> log;
     private float nextTick;
@@ -29,7 +29,6 @@ internal sealed class SupervisorBridge
         using var algorithm = SHA256.Create();
         using var input = File.OpenRead(Assembly.GetExecutingAssembly().Location);
         pluginHash = BitConverter.ToString(algorithm.ComputeHash(input)).Replace("-", "").ToLowerInvariant();
-        sourceSha = SupervisorIdentity.SourceSha(Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
     }
 
     internal static SupervisorBridge? Create(Action<string> log)
@@ -118,7 +117,7 @@ internal sealed class SupervisorBridge
         var status = new Status
         {
             startup_phase = startupPhase, session_id = session, pid = pid, version = BroadcasterPlugin.PluginVersion,
-            plugin_sha256 = pluginHash, source_sha = sourceSha, sequence = ++sequence, encoder_pid = encoderPid,
+            plugin_sha256 = pluginHash, source_sha = BroadcasterPlugin.SourceRevision, sequence = ++sequence, encoder_pid = encoderPid,
             encoder_pids = encoderPids ?? Array.Empty<int>(),
             state = state, observer_authorized = authorized, observer_active = active,
             publishing = publishing, picture_live = pictureLive, failure_category = failureCategory, reason = reason

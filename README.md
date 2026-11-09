@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**Client 0.8.73 shows the loaded client version and short Git commit in the operator status and optional RTMP debug overlay.** The same label appears on live, held and recovery pictures. Builds without an embedded commit show the version alone.
+
 **Client 0.8.72 restores the Scenic Journey flight behavior from 0.8.69.** The Windows supervisor can install this update from main. The existing dedicated server and configuration are compatible.
 
 **Server companion 0.8.72 extends Scenic gravestone coverage to 48 hours on the server’s world clock.** If 0.8.71 already wrote your server config, set `[Observer] RecentGravestoneMinutes` to `2880` when upgrading. The updated server companion can offer outdoor locations with a recent, still-existing grave. The client occasionally visits the surrounding scenery alongside other destination types. Run `broadcast destinations` on the observer to see the count. [Server configuration and coverage](docs/WORLD-DESTINATIONS.md#recent-player-gravestones)
