@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Globalization;
 using UnityEngine;
 using UnityEngine.Rendering;
 using ValheimBroadcaster.Core;
@@ -18,6 +19,17 @@ internal sealed class StreamCapture : MonoBehaviour
     private string preflightFailure = "", orientationDiagnostics = "Orientation has not been measured.";
     private bool preflightPermanent;
     private ProgramFrameStamp pendingFrame;
+    internal Func<bool>? MarkerEnabled;
+    private readonly ReviewMarker marker = new ReviewMarker();
+    private bool markPending;
+    internal Func<bool>? OverlayEnabled, OverlayShowTrace;
+    internal Func<int>? OverlayFontSize;
+    internal Func<FramePresentation, string>? DescribeStatus;
+    private readonly StreamStatusPanel panel = new StreamStatusPanel();
+    private bool overlayReady, manualFlip, overlayFault;
+    private ProgramFrameStamp panelStamp;
+    private string panelSession = "";
+    private string? panelFollowDetails, panelSubject;
     private byte[] pixels = Array.Empty<byte>();
     private bool active, pending;
     private Vector3 normalPosition;
@@ -56,6 +68,8 @@ internal sealed class StreamCapture : MonoBehaviour
             Generation++;
             reportFailure = onFailure;
             failureReported = false;
+            manualFlip = !options.AutomaticOrientation && options.FlipVertical;
+            overlayReady = overlayFault = false;
             preflightFailure = ""; preflightPermanent = false;
             program = programSource ?? throw new ArgumentNullException(nameof(programSource));
             listener = gameListener;
@@ -164,9 +178,39 @@ internal sealed class StreamCapture : MonoBehaviour
         // diagnostic banners and screen-space HUD/UI never become stream input.
         // Missing or stale compositor output supplies an intentional clean slate.
         pendingFrame = program.CopyProgramFrame(output, orientation?.FlipCamera ?? false, orientation?.FlipSlate ?? false);
+        markPending = MarkerEnabled?.Invoke() == true && ScenicTrace.Enabled &&
+            marker.Prepare(ScenicTrace.SessionId, pendingFrame.CopiedAt);
+        PrepareOverlay(pendingFrame, output.width, output.height);
         pending = true;
         try { AsyncGPUReadback.Request(output, 0, TextureFormat.RGBA32, ReadbackFinished); }
         catch { pending = false; throw; }
+    }
+
+    private void PrepareOverlay(ProgramFrameStamp stamp, int width, int height)
+    {
+        if (overlayFault || OverlayEnabled?.Invoke() != true || DescribeStatus == null)
+        { overlayReady = false; return; }
+        string trace = ScenicTrace.Enabled ? ScenicTrace.SessionId : "OFF";
+        string? followDetails = program?.OperatorPicture.FollowDetails;
+        if (overlayReady && panelFollowDetails == followDetails && panelSubject == program?.OperatorSubject && panelSession == trace && panelStamp.Generation == stamp.Generation &&
+            panelStamp.Presentation == stamp.Presentation && stamp.CopiedAt - panelStamp.CopiedAt < .25) return;
+        try
+        {
+            string text = DescribeStatus(stamp.Presentation);
+            if (OverlayShowTrace?.Invoke() != false)
+                text = "TRACE " + trace + " | T " + stamp.CopiedAt.ToString("F2", CultureInfo.InvariantCulture) + " s\n" + text;
+            panel.Prepare(text, width, height, OverlayFontSize?.Invoke() ?? 14);
+            panelStamp = stamp;
+            panelSession = trace;
+            panelFollowDetails = followDetails; panelSubject = program?.OperatorSubject;
+            overlayReady = true;
+        }
+        catch (Exception error)
+        {
+            overlayReady = false;
+            overlayFault = true;
+            Debug.LogWarning("Valheim Broadcaster: RTMP debug overlay unavailable for this encoder session: " + error.GetType().Name);
+        }
     }
 
     private void ReadbackFinished(AsyncGPUReadbackRequest request)
@@ -177,6 +221,10 @@ internal sealed class StreamCapture : MonoBehaviour
             if (!active || session == null || program == null || !program.IsProgramFrameCurrent(pendingFrame)) return;
             if (request.hasError) { session.Fail("GPU readback failed; restart with a supported graphics backend."); return; }
             request.GetData<byte>().CopyTo(pixels);
+            if (overlayReady && output && OverlayEnabled?.Invoke() == true)
+                panel.Composite(pixels, output.width, output.height, manualFlip);
+            if (markPending && output && MarkerEnabled?.Invoke() == true)
+                marker.Composite(pixels, output.width, output.height, manualFlip);
             pixels = session.SubmitVideo(pixels);
         }
         catch { session?.Fail("Frame transfer failed; restart streaming."); }

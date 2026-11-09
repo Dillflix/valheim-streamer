@@ -10,6 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="../../third_party/OverlayFont/coverage.bin" LogicalName="StreamOverlay.coverage" />
+    <EmbeddedResource Include="../../third_party/OverlayFont/LICENSE.txt" LogicalName="StreamOverlay.LICENSE.txt" />
     <ProjectReference Include="../ValheimBroadcaster.Core/ValheimBroadcaster.Core.csproj" />
     <ProjectReference Include="../../third_party/Cinemachine/Cinemachine.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />

@@ -1,5 +1,11 @@
 # Valheim Broadcaster
 
+**0.8.69 adds Player Follow telemetry to the operator display and optional RTMP overlay.** The PLAYER line reports observed action, sampled ground speed, upper-body screen position measured from the top left, and camera range. Simple Follow shows its requested orbit radius and Cinemachine obstacle displacement. Directed Follow shows the displayed shot, pacing and decision, geometric obstruction estimates, and observed encounter context. Fixed follow reports its configured offset. Usable dwell is time credited toward target rotation. A held picture retains its source telemetry. Use F10 for a solo trial and `broadcast stream overlay on` to include the panel in the feed.
+
+**0.8.68 fixes the four-minute restart of a working broadcaster.** The client reports the most recent completed live render to the supervisor. The supervisor keeps an authorized, publishing baseline online while it verifies the picture and logs the individual health signals. Install both the client and supervisor for this fix.
+
+**0.8.67 restores unattended password submission during dedicated-server admission.** The Windows supervisor can configure an existing sandboxed installation, adopt a manually installed build after verifying its manifest and live broadcast, and show startup progress and update-poll results. The existing protocol-3 server companion is compatible. [Windows setup and restart rehearsal](docs/UNATTENDED-UPDATES.md#existing-broadcaster-quick-start-0867)
+
 **0.8.63 addresses flicker in the observer’s Valheim window after Journey arrival.** During a brief held frame the game camera retains its last captured broadcast pose. A stationary arrival picture can continue through a pending foliage refresh and earn dwell for its displayed frames.
 
 **0.8.62 brings the 0.8.61 Journey director and PR #18’s camera transitions to main.** Within a scene, severe hard occlusion can trigger a cut. Other editorial changes use blends. Journey supports cruise speeds up to 24 m/s. A local guide steers toward the chosen destination as terrain loads around the observer. Use the existing in-game recorder for synchronized footage and diagnostics. An in-game 0.8.59 recording covered 2,078.7 m across Mountain, Black Forest and Meadows and reached its selected destination. Operators can keep their current protocol-3 server companion. [Journey runbook](docs/JOURNEY-EXPEDITION.md)
@@ -271,6 +277,9 @@ Camera commands also update their settings while running. See [CAMERA-DIRECTOR.m
 | `Idle / CreatureSeconds` | `25` | Usable creature footage before returning to scenery |
 | `Idle / CreatureRadius` | `50` | Loaded-creature search radius around the survey origin (metres) |
 | `Display / HideHud` | `true` | Hide the ordinary HUD during broadcast |
+| `Streaming / DebugOverlay` | `false` | Burn the operator status and trace reference into the RTMP feed. Toggle live with `broadcast stream overlay on\|off\|status`. See [remote footage review](docs/EDITORIAL-CAPTURE.md#reviewing-a-moment-from-the-live-feed). |
+| `Streaming / DebugOverlayFontSize` | `14` | Font pixels at 1080p, adjustable from 10 to 20. Scales to the encoded frame with an 8 px floor. |
+| `Streaming / DebugOverlayShowTrace` | `true` | Include the trace reference above the status lines. The private player's marker works with this line hidden. |
 | `Display / ShowStatus` | `true` | Show the director overlay |
 | `Multiplayer / ObserverConnection` | `false` | Select the read-only connection before joining; requires matching companion authorization |
 | `Automation / Enabled`, `ScenicTravel` | `true`, `true` | Acquire players and traverse generated scenic regions in a read-only session |
@@ -316,3 +325,5 @@ When other players become ready, coverage switches to them and rotates if severa
 **0.5.0 runtime failure:** distant reference movement can exclude and unload the broadcaster itself, leaving a black view that `off` cannot repair. 0.5.1 adds a pre-removal guard that aborts the attempt and stops broadcasting if the observer is not retained. This is containment; dual-region loading is still unsolved. Rejoin after a failure on the older build.
 
 No second player is needed to test scene acquisition. See [SOLO-ACQUISITION.md](docs/SOLO-ACQUISITION.md) for the mark → travel away → acquire workflow. This exercises network interest and rendering, not remote-player replication or teleport travel.
+
+[Private stream review and Report this moment](tools/stream-review/README.md) pairs the developer player's displayed frame with retained diagnostic footage and trace data.

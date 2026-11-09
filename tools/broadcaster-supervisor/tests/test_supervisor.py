@@ -1,5 +1,6 @@
 """Real filesystem transactions and deterministic managed-session lifecycle tests."""
 from copy import deepcopy
+import errno
 import json
 import os
 from pathlib import Path
@@ -37,7 +38,7 @@ class Fixture(unittest.TestCase):
                                       game_dir=self.game, game_executable=self.game / "valheim.exe",
                                       platform="linux", launch_command=[str(self.game / "valheim.exe")],
                                       shutdown_timeout_seconds=5, health_timeout_seconds=30, stable_seconds=5,
-                                      require_publishing=True, poll_seconds=30)
+                                      require_publishing=True, poll_seconds=30, branch="main")
         self.s = sup.Supervisor(self.config, github=SimpleNamespace(candidate=lambda *_: None))
         self.s.state = {"schema": 1, "active": {"source_sha": "b" * 40, "run_number": 1, "version": "0.8.19"},
                         "quarantined": [], "paused": False, "restart_failures": 0}
@@ -259,6 +260,137 @@ class HeartbeatTests(Fixture):
     def write(self):
         sup.atomic_json(self.s.control_dir() / "status.json", self.status)
 
+    def test_denied_live_json_retries_and_recovers_for_both_inputs(self):
+        self.write()
+        for filename in ("status.json", "operator.json"):
+            path = self.s.control_dir() / filename if filename == "status.json" else self.state / filename
+            if filename == "operator.json":
+                sup.atomic_json(path, {"command": "pause"})
+            for number in (None, 5, 32, 33):
+                with self.subTest(filename=filename, winerror=number):
+                    error = PermissionError(errno.EACCES, "denied")
+                    if number is not None:
+                        error.winerror = number
+                    with patch.object(sup, "open_live_json", side_effect=error), patch.object(sup.time, "sleep") as sleep:
+                        if filename == "status.json":
+                            self.assertIsNone(self.s.heartbeat())
+                            self.assertIn(filename, self.s.status_read_error)
+                        else:
+                            self.assertFalse(self.s.observe_pause())
+                            self.assertIn(filename, self.s.operator_read_error)
+                            with self.assertRaises(sup.LiveReadUnavailable):
+                                self.s.requested_pause()
+                            self.assertTrue(path.exists())
+                        self.assertGreaterEqual(sleep.call_count, 3)
+            if filename == "status.json":
+                self.assertEqual(self.s.heartbeat(), self.status)
+                self.assertIsNone(self.s.status_read_error)
+            else:
+                self.assertTrue(self.s.observe_pause())
+                self.assertIsNone(self.s.operator_read_error)
+                self.assertFalse(path.exists())
+
+    def test_startup_accepts_fresh_output_after_plain_eacces_so_game_can_keep_running(self):
+        self.status.update(startup_phase="authorized", picture_live=True)
+        self.write()
+        clock = [100.0]
+        path = self.s.control_dir() / "status.json"
+        real_open = sup.open_live_json
+        def open_snapshot(file):
+            if file == path and 103 <= clock[0] < 105:
+                raise PermissionError(errno.EACCES, "access denied")
+            return real_open(file)
+        def advance(seconds):
+            clock[0] += seconds
+            self.status["sequence"] += 1
+            self.write()
+        with patch.object(sup, "open_live_json", side_effect=open_snapshot), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            self.config.stable_seconds = 6
+            result = self.s.wait_healthy()
+        self.assertTrue(result["picture_live"])
+        self.assertGreaterEqual(clock[0], 106)
+        self.assertLess(clock[0], 110)
+
+    def test_publishing_baseline_survives_deadline_and_verifies_first_live_picture(self):
+        self.config.health_timeout_seconds, self.config.stable_seconds = 240, 20
+        clock = [0.]
+        def advance(seconds):
+            clock[0] += seconds
+        def sample(**_):
+            return dict(self.status, startup_phase="authorized", picture_live=clock[0] >= 255)
+        with patch.object(self.s, "heartbeat", side_effect=sample), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            self.assertTrue(self.s.wait_healthy()["picture_live"])
+        self.assertEqual(clock[0], 255)
+
+    def test_update_candidate_requires_live_render_by_its_deadline(self):
+        self.s.record["transaction_id"] = "e" * 32
+        self.config.health_timeout_seconds, self.config.stable_seconds = 240, 20
+        clock = [0.]
+        def advance(seconds):
+            clock[0] += seconds
+        with patch.object(self.s, "heartbeat", return_value=dict(self.status, picture_live=False)), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            with self.assertRaisesRegex(sup.HealthFailure, "health deadline.*picture_live=False"):
+                self.s.wait_healthy()
+        self.assertEqual(clock[0], 240)
+
+    def test_unreadable_status_never_satisfies_health(self):
+        self.status.update(startup_phase="authorized", picture_live=True)
+        self.write()
+        clock = [100.0]
+        real_open = sup.open_live_json
+        def open_snapshot(file):
+            if file.name == "status.json" and clock[0] > 100:
+                raise PermissionError(errno.EACCES, "access denied")
+            return real_open(file)
+        def advance(seconds):
+            clock[0] += seconds
+        with patch.object(sup, "open_live_json", side_effect=open_snapshot), \
+             patch.object(sup.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(sup.time, "sleep", side_effect=advance):
+            with self.assertRaisesRegex(sup.HealthFailure, "health deadline.*status.json"):
+                self.s.wait_healthy()
+        self.assertGreaterEqual(clock[0], 100 + self.config.health_timeout_seconds)
+
+    @unittest.skipUnless(os.name == "nt", "requires real Windows file sharing")
+    def test_windows_snapshot_shares_delete_access_and_recovers_after_exclusive_lock(self):
+        path = self.s.control_dir() / "status.json"
+        self.write()
+        with sup.open_live_json(path) as old:
+            # FILE_SHARE_DELETE permits a rename of the opened generation.
+            # MoveFileExW can still reject replacing an open destination.
+            path.rename(path.with_suffix(".old"))
+            sup.atomic_json(path, {"new": True})
+            self.assertEqual(json.load(old), self.status)
+            self.assertEqual(sup.read_live_json(path)[0], {"new": True})
+        handle = sup._kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0, None)
+        self.assertNotEqual(handle, sup.ctypes.c_void_p(-1).value)
+        try:
+            with self.assertRaisesRegex(sup.LiveReadUnavailable, "status.json"):
+                sup.read_live_json(path)
+        finally:
+            sup._kernel.CloseHandle(handle)
+        self.assertEqual(sup.read_live_json(path)[0], {"new": True})
+
+    @unittest.skipUnless(os.name == "nt", "requires real Windows file sharing")
+    def test_windows_host_can_publish_over_a_briefly_locked_destination(self):
+        import threading
+        path = self.state / "operator.json"
+        sup.atomic_json(path, {"command": "pause"})
+        with path.open("rb") as held:
+            release = threading.Timer(0.04, held.close)
+            release.start()
+            try:
+                sup.atomic_json(path, {"command": "resume"})
+            finally:
+                release.join()
+        self.assertEqual(sup.read_live_json(path)[0], {"command": "resume"})
+
     def test_fresh_matching_heartbeat_is_accepted(self):
         self.write()
         self.assertEqual(self.s.heartbeat(), self.status)
@@ -395,6 +527,38 @@ class LoopTests(Fixture):
         self.s.run()
         self.assertEqual(len(self.launches), 1)
         self.assertTrue(self.s.state["paused"])
+
+    def test_failure_evidence_distinguishes_live_game_from_exit_before_stop(self):
+        self.s.record = {"session_id": "e" * 32}
+        self.s.startup_phase = "authorized"
+        (self.game / "BepInEx/LogOutput.log").write_text("on-air before stop")
+        error = PermissionError(13, "secret-argument")
+        for code, expected in [(None, "running before supervisor cleanup"), (3221225477, "0xC0000005")]:
+            self.s.process = SimpleNamespace(poll=lambda: code)
+            message = self.s.capture_startup_failure(error, 2)
+            self.assertIn(expected, message)
+            self.assertIn("authorized", message)
+            self.assertIn("PermissionError", message)
+            self.assertNotIn("secret-argument", message)
+            self.assertEqual(message, self.s.state["last_startup_failure"]["message"])
+            self.assertEqual("on-air before stop", (self.state / "startup-failure-2.log").read_text())
+
+    def test_manual_baseline_adopts_only_after_stable_health(self):
+        new = {"version": "0.8.20", "source_sha": "a" * 40, "run_number": 0}
+        old = dict(self.s.state["active"])
+        self.s.installed_baseline = lambda path: dict(new)
+        def launch(version, source_sha=None):
+            self.assertEqual((version, source_sha), (new["version"], new["source_sha"]))
+            self.s.record = {"pid": 123}
+        self.s.launch = launch
+        def ready():
+            self.assertEqual(self.s.state["active"], old)
+            return self.s.heartbeat()
+        self.s.wait_healthy = ready
+        with patch.object(sup.time, "sleep", side_effect=lambda _: setattr(self.s, "stopping", True)):
+            self.s.run(self.root / "release-manifest.json")
+        self.assertEqual(self.s.state["active"], new)
+        self.assertEqual(self.s.state["last_update_check"]["result"], "no_eligible_build")
 
     def test_short_healthy_restart_does_not_reset_crash_budget(self):
         self.s.state["restart_failures"] = 2

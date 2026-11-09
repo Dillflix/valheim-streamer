@@ -76,3 +76,21 @@ Complementary footage is bounded to **2.75 seconds actually shown**, **four seco
 | Related enemy/quarry insert, actor loss, player movement and lost return view | Brief connected perspective, clear return, no acquisition teleport or false player coverage credit |
 
 Compare captured sequences for unavailable-picture time, sustained obscuration, unnecessary cuts, movement/FOV discontinuities and CPU/GPU frame cost. Local tests validate decisions and media transport; these observations validate the broadcast.
+
+### Reviewing a moment from the live feed
+
+Run `broadcast stream overlay on` to show the director status to RTMP viewers. The switch takes effect on the running stream. Use `broadcast stream overlay off` to restore the clean feed, or `broadcast stream overlay status` to inspect the saved setting. The setting is `[Streaming] DebugOverlay` in the client configuration, default `false`. Local `ShowStatus` is independent. The stream uses mixed-case antialiased text and a translucent panel fitted to the text. In `[Streaming]`, `DebugOverlayFontSize = 14` sets its size at 1080p (10–20, scaled to output height with an 8 px floor). Set `DebugOverlayShowTrace = false` for the five ordinary status lines without the human-readable timestamp. The private player can still use `broadcast stream marker on`. Long status lines are ellipsized to keep the picture visible. The feed includes subject names shown in the director status. The console, HUD and the diagnostic recorder's clean MP4 stay separate.
+
+For a review session, run `broadcast capture on` and check `broadcast capture status`. With `DebugOverlayShowTrace` enabled, ask the viewer to copy the first line of the overlay (or take a screenshot) at the beginning and end of the incident. It contains the trace session and the unscaled elapsed seconds at the status sample. The overlay refreshes four times a second and follows encoder repeats. Its timestamp stays attached to the picture through playback delay. A held picture may have an earlier source frame. `TRACE OFF` means there is no active trace to look up.
+
+Under `BepInEx/diagnostics/ValheimBroadcaster/`, match the ID to `scenic-<session>-*.jsonl` (the trace suffix is case-insensitive) and select records by their numeric `time`. Within `footage/`, match `traceSession` and `time` in the footage sidecars, including adjacent segments when the incident spans a boundary. Give reviewers the matching **closed** MP4/JSONL pairs and relevant trace records before rolling retention removes them. The synchronized review tool above can generate a shareable HTML index. Keep the relative video paths beside the index. A reviewer needs no game installation. The sampled MP4 and RTMP stream can have different frame rates.
+
+To package a viewer-reported interval, use the existing review tool. For example, substitute the ID and elapsed times seen on the feed:
+
+```text
+python tools/review-footage.py "BepInEx/diagnostics/ValheimBroadcaster/footage" --session 20261108T193012345-ABCD1234 --start 372 --end 402 --bundle incident.zip
+```
+
+Send the ZIP to a developer. After extracting it, open `footage-review.html` to scrub the footage, or inspect the window's JSONL for all retained timestamped trace events. The ZIP includes entire completed MP4/sidecar pairs overlapping the interval, so reviewers can see footage on either side of it. If only the trace is available, the ZIP contains just that trace. If a segment is still recording, retry after it closes. The command reports counts and fails explicitly when neither source covers the interval.
+
+For private self-service downloads and the player’s **Report this moment** control, see the [Owncast review host and Windows uploader](../tools/stream-review/README.md).

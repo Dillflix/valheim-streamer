@@ -1,0 +1,18 @@
+services:
+  review:
+    build:
+      context: ../..
+      dockerfile: tools/stream-review/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${REVIEW_BIND:-127.0.0.1}:8788:8788"
+    environment:
+      REVIEW_USER: "${REVIEW_USER:-reviewer}"
+      REVIEW_PASSWORD: "${REVIEW_PASSWORD:?Set REVIEW_PASSWORD}"
+      REVIEW_UPLOAD_TOKEN: "${REVIEW_UPLOAD_TOKEN:?Set REVIEW_UPLOAD_TOKEN}"
+      REVIEW_MAX_MIB: "${REVIEW_MAX_MIB:-2048}"
+      REVIEW_RETENTION_HOURS: "${REVIEW_RETENTION_HOURS:-24}"
+    volumes:
+      - evidence:/data
+volumes:
+  evidence:

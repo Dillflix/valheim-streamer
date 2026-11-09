@@ -21,9 +21,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.63";
+    public const string PluginVersion = "0.8.69";
     private SupervisorBridge? supervisor;
-    private float supervisorLiveAt = float.NegativeInfinity;
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
     private StreamCapture? stream;
@@ -94,7 +93,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private long lastRevision = -1;
     private string lastStatus = "Disabled";
     private GUIStyle? operatorStyle;
-    private string operatorText = "";
+    private readonly PlayerFollowReadout followReadout = new PlayerFollowReadout();
+    private string operatorText = "", operatorFollowDetails = "", operatorSubject = "";
     private double nextOperatorText;
     private FramePresentation operatorPresentation = FramePresentation.Slate;
 
@@ -136,6 +136,11 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             connection.Install(harmony);
             harmony.Patch(cameraMethod, postfix: new HarmonyMethod(typeof(BroadcasterPlugin), nameof(AfterCameraUpdate)));
             stream = gameObject.AddComponent<StreamCapture>();
+            stream.OverlayEnabled = () => settings.DebugOverlay.Value;
+            stream.MarkerEnabled = () => settings.ReviewMarker.Value;
+            stream.OverlayFontSize = () => settings.DebugOverlayFontSize.Value;
+            stream.OverlayShowTrace = () => settings.DebugOverlayShowTrace.Value;
+            stream.DescribeStatus = Status;
             diagnosticCapture = gameObject.AddComponent<DiagnosticCapture>();
             diagnosticCapture.Configure(frameHold,
                 () => enabled && director.IsEnabled && settings.DiagnosticVideo.Value && ScenicTrace.Enabled &&
@@ -1004,14 +1009,20 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             idle.Plan.FeatureKind + " / " + idle.Plan.Role + " / " + scenicMotion :
             "Retained previous scenic view" : rig.CurrentPlayerScene?.ActionPhase.Phase.ToString() ?? "";
         CameraSceneFrame? encounterScene = scenic ? null : rig.CurrentPlayerScene;
+        bool playerPicture = !probe.Active && presentedMode == CoverageMode.Player;
+        string followDetails = "";
+        if (playerPicture)
+            followDetails = followReadout.Sample(roster.Find(presentedPlayerId)?.LoadedPlayer, rig, settings,
+                presentedRevision, shot, picture?.Key.SceneEpoch ?? 0);
+        else followReadout.Clear();
         return new DiagnosticPictureContext(probe.Active ? "Probe" : presentedMode.ToString(),
             shot, presentedRevision, cameraReady && rig.LastPictureUsable,
             rig.PictureReason, position.x, position.y, position.z,
-            euler.x, euler.y, euler.z, rig.FieldOfView, rig.PerspectiveDescription,
+            euler.x, euler.y, euler.z, rig.FieldOfView, playerPicture ? rig.PlayerFollowLabel : rig.PerspectiveDescription,
             picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1, intent,
             encounterScene?.EncounterSituation.Pressure.ToString() ?? "", rig.EncounterCoverageDescription,
             encounterScene?.EncounterSituation.HostileCount ?? 0, encounterScene?.Subjects.Count ?? 0,
-            rig.FramedParticipantCount, rig.VisibleOpponentCount, rig.PrimaryActorOcclusion);
+            rig.FramedParticipantCount, rig.VisibleOpponentCount, rig.PrimaryActorOcclusion, followDetails: followDetails);
     }
 
     private string DescribeOperatorSubject() => presentedMode == CoverageMode.Player
@@ -1090,8 +1101,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     fontSize = 14, padding = new RectOffset(12, 12, 9, 9)
                 };
             double now = Time.unscaledTimeAsDouble;
-            if (programPresentation != operatorPresentation || now >= nextOperatorText)
+            if (programPresentation != operatorPresentation || operatorFollowDetails != frameHold.OperatorPicture.FollowDetails || operatorSubject != frameHold.OperatorSubject || now >= nextOperatorText)
             {
+                operatorFollowDetails = frameHold.OperatorPicture.FollowDetails; operatorSubject = frameHold.OperatorSubject;
                 operatorPresentation = programPresentation; nextOperatorText = now + .25;
                 operatorText = Status(programPresentation);
                 if (presentation == FramePresentation.Slate && observer.Active)
@@ -1143,6 +1155,17 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
         string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
         string discovery = observer.RemoteSession ? remote.DiscoveryStatus : roster.ConnectedOthers + " other connected; " + roster.Targets.Count + " known targets";
+        if (presentation != FramePresentation.Slate && shown.Mode == "Player" && !string.IsNullOrEmpty(shown.FollowDetails))
+        {
+            string player = StatusText(frameHold.OperatorSubject);
+            int tracked = director.Roster.Count;
+            string rosterStatus = selfTest ? "Self-follow test" : tracked == 1 ? "1 tracked player" : $"{tracked} tracked players";
+            if (!director.IsHolding && tracked > 1 && coverage.Mode == CoverageMode.Player && presentation == FramePresentation.Live)
+                rosterStatus += " | " + (automatic?.ControlsSelection == true ? automatic.FollowDwell :
+                    $"{director.ReadyDwellSeconds:F0}/{director.DwellSeconds:F0}s usable dwell");
+            return $"ON AIR: {state} | {player} | {shown.Perspective}\n" + shown.FollowDetails +
+                "\nDIRECTOR: " + StatusText(directing) + " | " + rosterStatus + " | RTMP: " + StatusText(output?.Status ?? "Stopped");
+        }
         return "ON AIR: " + state + " | " + onAir + "\nMODE: " + coverage.Preference + " | " +
             CoveragePreferences.Describe(coverage.Preference, coverage.Mode) + "\nDIRECTOR: " + StatusText(directing) + journeyDetails + planning +
             "\nSESSION: " + session + " | " + StatusText(discovery) + "\nRTMP: " + StatusText(output?.Status ?? "Stopped");
@@ -1333,11 +1356,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         if (supervisor == null) return false;
         bool authorized = remote.Isolated && remote.Approved;
         bool observing = authorized && observer.Active && observer.Phase == ObserverPhase.Watching && director.IsEnabled && activeWorld == ZNet.instance;
-        if (!observing) supervisorLiveAt = float.NegativeInfinity;
-        else if (cameraReady && Time.frameCount - presentedFrame <= 2 && frameHold.CurrentPresentation == FramePresentation.Live && frameHold.HasRecentLiveFrame &&
-            (presentedMode == CoverageMode.Player ? presentedPlayerUsable : presentedIdleUsable))
-            supervisorLiveAt = Time.realtimeSinceStartup;
-        bool pictureLive = observing && cameraReady && Time.realtimeSinceStartup - supervisorLiveAt <= 5;
+        bool pictureLive = observing && frameHold.CompletedLiveProgramPicture;
         bool blocked = connection?.Blocked == true || output?.Blocked == true;
         bool stopped = connection?.StoppedByOperator == true || output?.ManualSuppressed == true;
         bool configured = settings.StartupEnabled.Value && settings.ObserverConnection.Value && WantsUnattended;
@@ -1347,7 +1366,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
         supervisor.Tick(state, authorized, observing, stream?.IsPublishing == true, category,
             stopped ? "operator_stopped" : category == "none" ? "none" : category, stream?.EncoderProcessId ?? 0, pictureLive,
             new[] { stream?.EncoderProcessId ?? 0, diagnosticCapture?.EncoderProcessId ?? 0, timelapseCapture?.EncoderProcessId ?? 0 }
-                .Where(value => value > 0).Distinct().ToArray());
+                .Where(value => value > 0).Distinct().ToArray(), connection?.StartupPhase ?? "");
         if (!supervisor.ShutdownRequested) return false;
         CancelIntent();
         diagnosticCapture?.StopCapture(); timelapseCapture?.StopCapture("Supervisor shutdown");
@@ -1509,7 +1528,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     {
         public override string Name => "broadcast";
         public override string Help => "broadcast journey start|stop|on|off|status|distance <metres>|duration <seconds>|speed <m/s> | fixture list|save <name>|play <name> [seconds]|stop|preview live|off|<name> | timelapse on|off|start|stop|status|duration <seconds>|record start [interval] [duration] [fps] | environment list|cycle <seconds>|weather <name>|off|status\n" +
-            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|startup profiles|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics";
+            "broadcast mode auto|scenic|player|creature|status | self|on|off|next|previous|hold|resume|list|status|diagnostics|destinations|trace on|off|status|capture on|off|status|wildlife on|off|status|framehold test|camera procedural|fixed|dynamic|steady|composition|groups|motion|damping|status|survey|auto on|off|status|route add [x y z]|start|stop|clear|status|unattended on|off|status|startup profiles|status|observer start|mark|travel [x y z]|return|status|probe mark|start|stop|status|follow <id>|stream on|off|status|diagnostics|overlay on|off|status|marker on|off|status";
         public override void Run(string[] args, Terminal context)
         {
             BroadcasterPlugin? plugin = instance;
@@ -1561,14 +1580,29 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                         plugin.ProbeCommand(args, context);
                         return;
                     case "stream":
-                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status|diagnostics"); return; }
+                        if (args.Length >= 2 && (args[1].Equals("overlay", StringComparison.OrdinalIgnoreCase) ||
+                            args[1].Equals("marker", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            var toggle = args[1].Equals("marker", StringComparison.OrdinalIgnoreCase) ?
+                                plugin.settings.ReviewMarker : plugin.settings.DebugOverlay;
+                            switch (args.Length == 3 ? args[2].ToLowerInvariant() : "")
+                            {
+                                case "on": toggle.Value = true; break;
+                                case "off": toggle.Value = false; break;
+                                case "status": break;
+                                default: context?.AddString("broadcast stream " + args[1] + " on|off|status"); return;
+                            }
+                            context?.AddString("RTMP " + args[1] + ": " + (toggle.Value ? "on" : "off"));
+                            return;
+                        }
+                        if (args.Length != 2) { context?.AddString("broadcast stream on|off|status|diagnostics|overlay on|off|status|marker on|off|status"); return; }
                         switch (args[1].ToLowerInvariant())
                         {
                             case "on": plugin.StartStream(); break;
                             case "off": plugin.output?.RequestStop(); break;
                             case "status": break;
                             case "diagnostics": context?.AddString(plugin.output?.Diagnostics); return;
-                            default: context?.AddString("broadcast stream on|off|status|diagnostics"); return;
+                            default: context?.AddString("broadcast stream on|off|status|diagnostics|overlay on|off|status|marker on|off|status"); return;
                         }
                         context?.AddString("RTMP: " + (plugin.output?.Status ?? "Stopped"));
                         return;

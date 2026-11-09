@@ -7,6 +7,11 @@ H.264 support. The JSONL remains authoritative for source/capture/sample timing.
 """
 import argparse
 import json
+import math
+import re
+import shutil
+import tempfile
+import zipfile
 from pathlib import Path
 import subprocess
 
@@ -92,13 +97,80 @@ data.segments.forEach((s,i)=>{let option=document.createElement('option');option
     return segments
 
 
+def export_window(directory, output, session, start, end, verify=False, ffprobe="ffprobe"):
+    """Export retained evidence only. Whole, closed video segments keep frame mappings valid."""
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{9}-[0-9a-fA-F]{8}", session):
+        raise ValueError("Use the trace ID printed on the stream overlay")
+    if not (math.isfinite(start) and math.isfinite(end) and 0 <= start <= end):
+        raise ValueError("Specify a finite capture interval with 0 <= start <= end")
+    session = session[:-8] + session[-8:].lower()
+    with tempfile.TemporaryDirectory(dir=output.parent) as work:
+        root = Path(work)
+        footage = root / "footage"
+        footage.mkdir()
+        events = segments = 0
+        trace = root / f"scenic-{session}-window.jsonl"
+        with trace.open("w", encoding="utf-8") as dest:
+            for path in sorted(directory.parent.glob(f"scenic-{session}-*.jsonl")):
+                with path.open(encoding="utf-8") as source:
+                    for line in source:
+                        try:
+                            row = json.loads(line)
+                        except ValueError:
+                            continue  # The writer can still be appending its last line.
+                        if isinstance(row.get("time"), (float, int)) and start <= row["time"] <= end and "seq" in row:
+                            dest.write(line.rstrip() + "\n")
+                            events += 1
+        if not events:
+            trace.unlink()
+        for path in sorted(directory.glob("footage-*.jsonl")):
+            try:
+                segment = read_segment(path)
+            except (FileNotFoundError, json.JSONDecodeError):
+                continue  # Rotated or currently being written.
+            if not segment["complete"] or not any(f.get("traceSession") == session and start <= f["time"] <= end
+                                                  for f in segment["frames"]):
+                continue
+            video = directory / segment["header"]["video"]
+            shutil.copyfile(video, footage / video.name)
+            shutil.copyfile(path, footage / path.name)
+            segments += 1
+        if not (segments or events):
+            raise ValueError("No retained trace records or completed footage segments matched this session and interval")
+        if segments:
+            make_report(footage, root / "footage-review.html", verify, ffprobe)
+        archive = root / "review.zip"
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for item in sorted(root.rglob("*")):
+                if item.is_file() and item != archive:
+                    bundle.write(item, item.relative_to(root))
+        archive.replace(output)
+    return events, segments
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--ffprobe", default="ffprobe")
+    parser.add_argument("--bundle", type=Path, help="Export a review ZIP for a viewer-reported interval")
+    parser.add_argument("--session", help="Trace ID from the stream overlay")
+    parser.add_argument("--start", type=float, help="First capture time in seconds")
+    parser.add_argument("--end", type=float, help="Last capture time in seconds")
     args = parser.parse_args()
+    window = (args.session, args.start, args.end)
+    if args.bundle:
+        if None in window or args.output or args.bundle.suffix.lower() != ".zip":
+            parser.error("--bundle requires a .zip path, --session, --start and --end")
+        try:
+            events, segments = export_window(args.directory.resolve(), args.bundle.resolve(), *window, args.verify, args.ffprobe)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            parser.exit(1, str(error) + "\n")
+        print(f"Created {args.bundle}: {events} trace records, {segments} complete video segments.")
+        return
+    if any(value is not None for value in window):
+        parser.error("use --bundle to export a session interval")
     directory = args.directory.resolve()
     output = (args.output or directory / "footage-review.html").resolve()
     try:

@@ -37,6 +37,7 @@ internal static class Program
             new StreamOptions { Url = "rtmps://localhost/live/key?token=abc" }.Validate();
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", Width = 321 }.Validate(), "reject odd width");
             Reject(() => new StreamOptions { Url = "rtmp://localhost/live/test", SampleRate = 96000 }.Validate(), "reject unsupported audio rate");
+            CheckStreamPanel();
             EncoderSettingsAndDiagnostics();
             RecoveryChecks.Run(Check);
             var ring = new AudioRing(8);
@@ -71,6 +72,49 @@ internal static class Program
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static void CheckStreamPanel()
+    {
+        var panel = new StreamStatusPanel();
+        byte[] Render(string text, int width, int height, byte background, bool flip = false, int size = 14)
+        {
+            var pixels = new byte[width * height * 4];
+            Array.Fill(pixels, background);
+            panel.Prepare(text, width, height, size);
+            panel.Composite(pixels, width, height, flip);
+            return pixels;
+        }
+
+        byte[] normal = Render("Following Braggi", 1280, 720, 80);
+        byte[] flipped = Render("Following Braggi", 1280, 720, 80, true);
+        for (int y = 0; y < 720; y++)
+            if (!normal.AsSpan(y * 1280 * 4, 1280 * 4).SequenceEqual(
+                    flipped.AsSpan((719 - y) * 1280 * 4, 1280 * 4)))
+                throw new Exception("encoder vflip changed panel appearance");
+        Check(true, "both encoder orientations produce the same inset panel");
+        int corner = (8 * 1280 + 8) * 4;
+        Check(normal[0] == 80 && normal[corner] == 40 && normal[corner + 3] == 80 &&
+            Render("Following Braggi", 1280, 720, 160)[corner] == 80,
+            "inset and translucent padding preserve scene variation and source alpha");
+
+        const int w = 320, h = 180;
+        byte[] narrow = Render("iiii", w, h, 40), wide = Render("WWWW", w, h, 40);
+        int Changed(byte[] a)
+        {
+            int changed = 0;
+            for (int i = 0; i < a.Length; i += 4) if (a[i] != 40) changed++;
+            return changed;
+        }
+        Check(Changed(narrow) < Changed(wide) && !wide.AsSpan().SequenceEqual(Render("wwww", w, h, 40)),
+            "proportional advances and distinct lowercase survive compositing");
+        Check(Array.Exists(wide, pixel => pixel > 70 && pixel < 190), "glyph edges retain grayscale coverage");
+        byte[] overflow = Render(new string('W', 4500) + new string('\n', 100), w, h, 40);
+        Check(overflow[(75 * w + 2) * 4] == 40 && overflow[(2 * w + w - 1) * 4] == 40,
+            "long labels stay within the picture budget on the smallest stream");
+        Check(Changed(Render("i", w, h, 40)) < Changed(narrow), "shorter text removes the old panel");
+        Check(Changed(Render("Ruin — Bräggi", 1920, 1080, 40, size: 20)) >
+            Changed(Render("Ruin — Bräggi", 1920, 1080, 40)), "configured size changes the render footprint");
     }
 
     private static Process Start(string executable, string arguments)

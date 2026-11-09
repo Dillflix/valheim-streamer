@@ -8,7 +8,9 @@ processes by name. See docs/UNATTENDED-UPDATES.md before enabling it.
 from __future__ import annotations
 
 import argparse
+import configparser
 import contextlib
+import errno
 from dataclasses import dataclass
 import hashlib
 import json
@@ -28,7 +30,16 @@ import uuid
 import zipfile
 
 if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
     import msvcrt
+
+    _kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    _kernel.CreateFileW.restype = wintypes.HANDLE
+    _kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel.CloseHandle.restype = wintypes.BOOL
 else:
     import fcntl
 from sandboxie import Sandboxie, SandboxieError, guest_to_host, create_private_directory, verify_private_path
@@ -83,6 +94,10 @@ def fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def access_conflict(error):
+    return getattr(error, "winerror", None) in (5, 32, 33) or error.errno == errno.EACCES
+
+
 def atomic_json(path: Path, value: dict) -> None:
     temporary = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -92,7 +107,14 @@ def atomic_json(path: Path, value: dict) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for delay in (0.025, 0.05, 0.1, 0):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as error:
+                if os.name != "nt" or not delay or not access_conflict(error):
+                    raise
+                time.sleep(delay)
         fsync_dir(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
@@ -107,6 +129,56 @@ def read_json(path: Path, default=None):
         return json.loads(path.read_text(encoding="utf-8"))
     except (UnicodeError, ValueError) as error:
         raise Failure("Invalid local JSON file") from error
+
+
+class LiveReadUnavailable(Failure):
+    """An existing or inaccessible live control file could not be sampled."""
+
+
+def open_live_json(path):
+    if os.name != "nt":
+        return os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb")
+    # Share delete access with the game's native replacement operation and
+    # open the reparse point itself so fstat can reject redirects.
+    generic_read, share_read_write_delete = 0x80000000, 0x7
+    open_existing, open_reparse_point = 3, 0x00200000
+    handle = _kernel.CreateFileW(str(path), generic_read, share_read_write_delete, None,
+                                 open_existing, open_reparse_point, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        _kernel.CloseHandle(handle)
+        raise
+    return os.fdopen(fd, "rb")
+
+
+def read_live_json(path):
+    """Read data and mtime from one opened generation of a replaceable file."""
+    for delay in (0.025, 0.05, 0.1, 0):
+        try:
+            with open_live_json(path) as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_size > MAX_JSON or
+                        getattr(info, "st_file_attributes", 0) & 0x400):
+                    raise Failure("Unsafe or oversized " + path.name)
+                data = stream.read(MAX_JSON + 1)
+                if len(data) > MAX_JSON:
+                    raise Failure("Oversized " + path.name)
+                return json.loads(data.decode("utf-8")), info.st_mtime
+        except FileNotFoundError:
+            return None, None
+        except (UnicodeError, ValueError):
+            raise Failure("Invalid JSON in " + path.name) from None
+        except OSError as error:
+            winerror = getattr(error, "winerror", None)
+            if not access_conflict(error):
+                raise
+            if not delay:
+                code = f"WinError {winerror}" if winerror is not None else f"errno {error.errno}"
+                raise LiveReadUnavailable(f"{path.name} read denied ({code})") from None
+            time.sleep(delay)
 
 
 def no_symlinks(path: Path) -> None:
@@ -166,9 +238,12 @@ class Config:
 
     @classmethod
     def load(cls, path: Path) -> Config:
-        raw = read_json(path)
+        missing = object()
+        raw = read_json(path, default=missing)
+        if raw is missing:
+            raise Failure(f"Supervisor config file not found: {path.absolute()}. Pass --config with the path to your existing supervisor.json.")
         if not isinstance(raw, dict):
-            raise Failure("Configuration must be a JSON object")
+            raise Failure(f"Expected a JSON object in {path.absolute()}. Check that --config points to your supervisor settings.")
         allowed = set(cls.__dataclass_fields__)
         if set(raw) - allowed:
             raise Failure("Unknown supervisor configuration key")
@@ -608,6 +683,9 @@ class Supervisor:
         self.state: dict = {}
         self.sequence = -1
         self.last_progress = 0.0
+        self.startup_phase = None
+        self.status_read_error = None
+        self.operator_read_error = None
         self.adapter = None
 
     @property
@@ -701,6 +779,8 @@ class Supervisor:
             raise HealthFailure("Foreground launcher exited before the game started")
         self.record = {"schema": 1, "session_id": session, "pid": self.process.pid, "identity": identity,
                        "version": version, "source_sha": source_sha, "plugin_sha256": plugin_hash, "started_at": time.time()}
+        if transaction_id is not None:
+            self.record["transaction_id"] = transaction_id
         atomic_json(self.config.state_dir / "process.json", self.record)
         self.sequence, self.last_progress = -1, time.monotonic()
         self.report("starting", "Launched the configured broadcaster in its selected process environment")
@@ -727,10 +807,17 @@ class Supervisor:
             return None
         path = self.control_dir() / "status.json"
         try:
-            status = read_json(path)
-            if not isinstance(status, dict) or time.time() - path.stat().st_mtime > 10 or path.stat().st_mtime > time.time() + 5:
+            status, modified = read_live_json(path)
+            self.status_read_error = None
+            if not isinstance(status, dict) or not -5 <= time.time() - modified <= 10:
                 return None
-        except (Failure, FileNotFoundError):
+        except LiveReadUnavailable as error:
+            if self.status_read_error != str(error):
+                print(str(error) + "; waiting for a fresh heartbeat", flush=True)
+            self.status_read_error = str(error)
+            return None
+        except Failure:
+            self.status_read_error = None
             return None
         if status.get("schema") != 1 or status.get("session_id") != self.record["session_id"] or status.get("pid") != self.record["pid"]:
             return None
@@ -785,7 +872,7 @@ class Supervisor:
         if not self.record or self.is_running():
             return False
         path = self.control_dir() / "status.json"
-        status = read_json(path)
+        status, modified = read_live_json(path)
         if not isinstance(status, dict):
             return False
         return (status.get("schema") == 1 and status.get("session_id") == self.record.get("session_id") and
@@ -797,10 +884,10 @@ class Supervisor:
                 (self.record.get("version") is None or status["version"] == self.record["version"]) and type(status.get("sequence")) is int and
                 status["sequence"] >= 0 and status.get("state") == "stopped" and
                 status.get("reason") in {"operator_exit", "operator_stopped"} and
-                self.record.get("started_at", 0) <= path.stat().st_mtime <= time.time() + 5)
+                self.record.get("started_at", 0) <= modified <= time.time() + 5)
 
     def requested_pause(self) -> bool:
-        command = read_json(self.config.state_dir / "operator.json")
+        command, _ = read_live_json(self.config.state_dir / "operator.json")
         if command:
             if command.get("command") == "pause":
                 self.state["paused"] = True
@@ -811,34 +898,113 @@ class Supervisor:
             self.save()
         return self.state.get("paused", False)
 
+    def observe_pause(self):
+        # The running observer can keep broadcasting while we retry reading a
+        # command. Launch and update boundaries must still defer new work.
+        try:
+            paused = self.requested_pause()
+            self.operator_read_error = None
+            return paused
+        except LiveReadUnavailable as error:
+            if self.operator_read_error != str(error):
+                print(str(error) + "; deferring new launches and updates until readable", flush=True)
+            self.operator_read_error = str(error)
+            return self.state.get("paused", False)
+
+    def serving(self, status) -> bool:
+        return bool(status and status.get("observer_authorized") is True and
+                    (status.get("publishing") is True if self.config.require_publishing
+                     else status.get("observer_active") is True))
+
+    def ready_for_handoff(self, status) -> bool:
+        return (self.serving(status) and status.get("state") == "broadcasting" and
+                status.get("observer_active") is True and status.get("picture_live") is True)
+
     def wait_healthy(self) -> dict:
         deadline = time.monotonic() + self.config.health_timeout_seconds
-        healthy_since = None
-        while time.monotonic() < deadline:
-            if self.stopping or self.requested_pause():
+        self.startup_phase = None
+        self.status_read_error = None
+        healthy_since = last_serving = None
+        last_report = None
+        next_report = 0.0
+        extended = False
+        trial = bool(self.record and self.record.get("transaction_id"))
+        detail = "no validated heartbeat"
+        while True:
+            if self.stopping or self.observe_pause():
                 raise ManualStop("Operator stopped or paused the supervisor")
             status = self.heartbeat(allow_final=True)
             if status:
+                phase = status.get("startup_phase")
+                if phase in ("waiting_for_menu", "selecting_character", "joining_server", "password_submitted", "authorized") and phase != self.startup_phase:
+                    self.startup_phase = phase
+                    self.report("starting", "Game startup: " + phase)
                 if status.get("state") == "stopped":
                     raise ManualStop("Broadcaster was stopped by the operator")
                 if status.get("state") == "blocked":
                     # Reason text is intentionally not copied; native third-party messages can contain secrets.
-                    raise TerminalBlock("Broadcaster startup was blocked; inspect its local diagnostics")
-                healthy = (status.get("observer_authorized") is True and status.get("observer_active") is True and
-                           status.get("picture_live") is True and status.get("state") == "broadcasting" and
-                           (not self.config.require_publishing or status.get("publishing") is True))
-                if healthy:
-                    healthy_since = healthy_since or time.monotonic()
-                    if time.monotonic() - healthy_since >= self.config.stable_seconds:
+                    category = status.get("failure_category")
+                    if category not in ("authentication", "configuration", "adapter", "connection", "observer_authorization", "streaming"):
+                        category = "unknown"
+                    raise TerminalBlock("Broadcaster startup blocked (" + category + "); inspect its local diagnostics")
+                # Stable service and evidence of an actual live picture answer two
+                # different questions. A camera cut or travel need not restart the encoder.
+                now = time.monotonic()
+                if self.serving(status):
+                    healthy_since = now if healthy_since is None else healthy_since
+                    last_serving = now
+                    if self.ready_for_handoff(status) and now - healthy_since >= self.config.stable_seconds:
                         return status
                 else:
                     healthy_since = None
+                detail = ", ".join(f"{key}={status.get(key) is True}" for key in
+                                   ("observer_authorized", "observer_active", "publishing", "picture_live"))
+                if detail != last_report and now >= next_report:
+                    self.report("verifying", detail)
+                    last_report, next_report = detail, now + 5
             else:
-                healthy_since = None
+                detail = self.status_read_error or "no fresh validated heartbeat"
+                if not self.status_read_error or time.monotonic() - self.last_progress > 10:
+                    healthy_since = None
             if not self.is_running():
                 raise HealthFailure("Broadcaster process exited during startup")
+            now = time.monotonic()
+            if now >= deadline:
+                if trial or last_serving is None or now - last_serving >= self.config.health_timeout_seconds:
+                    raise HealthFailure("Broadcaster did not establish stable authorized output before the health deadline: " + detail)
+                if not extended:
+                    self.report("verifying", "Preserving the existing broadcast while verifying startup: " + detail)
+                    extended = True
             time.sleep(1)
-        raise HealthFailure("Broadcaster did not establish stable authorized output before the health deadline")
+
+    def capture_startup_failure(self, error, attempt):
+        # Capture *before* stop() can send a shutdown or change the process exit code.
+        if isinstance(error, OSError):
+            code = getattr(error, "winerror", None)
+            reason = f"{type(error).__name__} (WinError {code})" if code is not None else f"{type(error).__name__} (errno {error.errno})"
+            trace = error.__traceback__
+            while trace and trace.tb_next and trace.tb_next.tb_frame.f_code.co_filename == __file__:
+                trace = trace.tb_next
+            if trace:
+                reason += " in " + trace.tb_frame.f_code.co_name
+        else:
+            reason = str(error)  # Failure contains operator-safe text.
+        process = "no retained process"
+        if self.process is not None:
+            try:
+                code = self.process.poll()
+                process = "running before supervisor cleanup" if code is None else f"already exited, code {code} (0x{code & 0xffffffff:08X})"
+            except (OSError, SandboxieError):
+                process = "process state unavailable"
+        phase = self.startup_phase or "before first startup heartbeat"
+        message = f"{reason} | {phase} | {process}"
+        self.state["last_startup_failure"] = {"at": int(time.time()), "message": message,
+                                              "session_id": self.record.get("session_id") if self.record else None}
+        print("Startup failure before cleanup:", message, flush=True)
+        if self.record:
+            # Reuse at most three slots in the private host state directory.
+            self.preserve_log(self.config.state_dir, f"startup-failure-{min(attempt, 3)}.log")
+        return message
 
     def signal_owned_group(self, sig: int) -> None:
         if not self.record:
@@ -1014,6 +1180,7 @@ class Supervisor:
                 stream.seek(max(0, source.stat().st_size - 2 * 1024 * 1024))
                 content = stream.read(2 * 1024 * 1024)
             target = transaction / name
+            no_symlinks(target)
             with target.open("wb") as stream:
                 stream.write(content)
                 stream.flush()
@@ -1040,9 +1207,7 @@ class Supervisor:
         if self.stopping or self.requested_pause():
             raise ManualStop("Update deferred by operator request")
         status = self.heartbeat()
-        if (not status or status.get("state") != "broadcasting" or status.get("picture_live") is not True or
-                status.get("observer_authorized") is not True or status.get("observer_active") is not True or
-                self.config.require_publishing and status.get("publishing") is not True):
+        if not self.ready_for_handoff(status):
             raise Failure("Broadcast health changed while staging; leaving current installation in place")
         # Refuse unknown files/duplicate plugins BEFORE interrupting the broadcast.
         scan_duplicates(self.config)
@@ -1103,7 +1268,20 @@ class Supervisor:
                 raise
             raise
 
-    def run(self) -> None:
+    def installed_baseline(self, manifest_path: Path) -> dict:
+        """Explicit hand-off after a manual install. Never install from the supplied manifest."""
+        manifest = read_json(manifest_path)
+        sha = manifest.get("source_sha") if isinstance(manifest, dict) else None
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            raise Failure("Provide the release-manifest.json from the installed client ZIP")
+        files = validate_manifest(manifest, sha)
+        verify_inventory(self.config.plugin_dir, {name: {"sha256": row["sha256"], "size": row["size"]}
+                                                 for name, row in files.items()})
+        if sha in self.state.get("quarantined", []):
+            raise Failure("The installed baseline source is quarantined")
+        return {"source_sha": sha, "version": manifest["version"], "run_number": 0}
+
+    def run(self, installed_manifest: Path | None = None) -> None:
         self.setup()
         with InstanceLock(self.config.state_dir / "supervisor.lock"):
             # A supervisor crash may leave its exactly recorded child alive.
@@ -1114,57 +1292,66 @@ class Supervisor:
                 self.stop()
             self.recover_transaction()
             self.preflight()
+            baseline = self.installed_baseline(installed_manifest) if installed_manifest else None
             next_poll, next_restart = 0.0, 0.0
             degraded_since, healthy_since = None, None
             try:
                 while not self.stopping:
                     self.require_reconciled()
-                    if self.requested_pause():
+                    if self.observe_pause():
                         self.stop()
-                        if self.state.get("status") != "paused":
+                        if self.state.get("status") not in {"paused", "blocked"}:
                             self.report("paused", "Paused until an explicit resume")
                         time.sleep(1)
                         continue
                     if self.record is None:
-                        if time.monotonic() < next_restart:
+                        if self.operator_read_error or time.monotonic() < next_restart:
                             time.sleep(1)
                             continue
                         try:
-                            self.launch((self.state.get("active") or {}).get("version"), (self.state.get("active") or {}).get("source_sha"))
+                            self.startup_phase = None
+                            expected = baseline or self.state.get("active") or {}
+                            if baseline and self.installed_baseline(installed_manifest) != baseline:
+                                raise Failure("The supplied baseline manifest changed during startup")
+                            self.launch(expected.get("version"), expected.get("source_sha"))
                             status = self.wait_healthy()
                             self.record["version"] = status["version"]
                             self.record["source_sha"] = status["source_sha"]
                             atomic_json(self.config.state_dir / "process.json", self.record)
-                            if self.state.get("active") is None:
+                            if self.state.get("active") is None or (baseline and
+                                    (self.state.get("active") or {}).get("source_sha") != baseline["source_sha"]):
                                 self.state["active"] = {"version": status["version"], "run_number": 0, "source_sha": status["source_sha"]}
+                            baseline = None
                             self.report("broadcasting", "Authorized observer and output are healthy")
                             degraded_since, healthy_since = None, time.monotonic()
                         except ManualStop:
                             self.state["paused"] = True
                             self.save()
                             continue
-                        except TerminalBlock:
+                        except TerminalBlock as error:
                             self.stop()
                             self.state["paused"] = True
-                            self.report("blocked", "Startup reported a terminal block; inspect local diagnostics and explicitly resume")
+                            self.report("blocked", str(error))
                             continue
-                        except (Failure, OSError):
-                            self.stop()
+                        except (Failure, OSError) as error:
                             count = self.state.get("restart_failures", 0) + 1
+                            detail = self.capture_startup_failure(error, count)
+                            self.stop()
                             self.state["restart_failures"] = count
                             if count >= 3:
                                 self.state["paused"] = True
-                                self.report("blocked", "Three startup attempts failed; inspect local diagnostics and explicitly resume")
+                                self.report("blocked", f"Startup failed three times. {detail}. Explicit resume required")
                             else:
-                                next_restart = time.monotonic() + min(300, 30 * 2 ** (count - 1))
-                                self.report("backoff", "Startup failed; bounded retry scheduled")
+                                delay = min(300, 30 * 2 ** (count - 1))
+                                next_restart = time.monotonic() + delay
+                                self.report("backoff", f"{detail}. Retry scheduled in {delay}s")
                             continue
                     status = self.heartbeat(allow_final=True)
                     if status and status.get("state") in {"stopped", "blocked"}:
                         self.state["paused"] = True
                         self.report("paused", "Game reported an operator stop or blocked startup; explicit resume required")
                         continue
-                    healthy = status and status.get("observer_authorized") is True and status.get("observer_active") is True and (not self.config.require_publishing or status.get("publishing") is True)
+                    healthy = self.serving(status)
                     if not healthy:
                         healthy_since = None
                         degraded_since = degraded_since or time.monotonic()
@@ -1183,11 +1370,15 @@ class Supervisor:
                         if self.state.get("restart_failures", 0) and time.monotonic() - healthy_since >= 600:
                             self.state["restart_failures"] = 0
                             self.save()
-                    if healthy and time.monotonic() >= next_poll:
+                    if healthy and not self.operator_read_error and time.monotonic() >= next_poll:
                         next_poll = time.monotonic() + self.config.poll_seconds
                         try:
                             active = self.state.get("active") or {}
                             candidate = self.github.candidate(active.get("run_number", 0), set(self.state.get("quarantined", [])), active.get("source_sha"))
+                            self.state["last_update_check"] = {"at": int(time.time()), "branch": self.config.branch,
+                                "result": "qualified" if candidate else "no_eligible_build",
+                                "candidate_sha": candidate["source_sha"] if candidate else None}
+                            self.save()
                             if candidate and candidate["source_sha"] != active.get("source_sha"):
                                 candidate, transaction = self.prepare(candidate)
                                 try:
@@ -1199,7 +1390,9 @@ class Supervisor:
                             self.save()
                         except RecoveryRequired:
                             raise
-                        except (Failure, SandboxieError, OSError, zipfile.BadZipFile):
+                        except (Failure, SandboxieError, OSError, zipfile.BadZipFile) as error:
+                            self.state["last_update_check"] = {"at": int(time.time()), "branch": self.config.branch,
+                                "result": "deferred", "reason": str(error) if isinstance(error, Failure) else type(error).__name__}
                             # Download/validation errors leave the live game untouched. Failed update rolls back.
                             self.report("update_deferred", "Update check failed or build was rejected; retrying on the next poll")
                     time.sleep(1)
@@ -1212,8 +1405,11 @@ class Supervisor:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("command", choices=["check", "run", "status", "pause", "resume"])
+    parser.add_argument("command", choices=["check", "configure-startup", "run", "status", "pause", "resume"])
+    parser.add_argument("--installed-manifest", type=Path, help="run: verify an explicitly installed client before adopting its healthy session")
     args = parser.parse_args(argv)
+    if args.installed_manifest and args.command != "run":
+        parser.error("--installed-manifest is only valid with run")
     try:
         config = Config.load(args.config)
         if config.platform == "windows-sandboxie" and os.name != "nt":
@@ -1231,6 +1427,21 @@ def main(argv=None) -> int:
         if os.name != "nt" and os.geteuid() == 0:
             raise Failure("Run as the dedicated Steam desktop user, never root")
         supervisor = Supervisor(config)
+        if args.command == "configure-startup":
+            if config.platform != "windows-sandboxie":
+                raise Failure("Startup setup requires the Windows Sandboxie profile")
+            from startup_setup import configure
+            supervisor.setup()
+            with InstanceLock(config.state_dir / "supervisor.lock"):
+                supervisor.require_reconciled()
+                supervisor.preflight()
+                try:
+                    configure(config, no_symlinks, private_dir, private_file)
+                except (configparser.Error, UnicodeError):
+                    raise Failure("Sandbox BepInEx configuration could not be parsed; original settings retained") from None
+                except ValueError as error:
+                    raise Failure(str(error)) from None
+            return 0
         if args.command == "check":
             supervisor.setup()
             with InstanceLock(config.state_dir / "supervisor.lock"):
@@ -1245,7 +1456,7 @@ def main(argv=None) -> int:
             return 0
         signal.signal(signal.SIGINT, lambda *_: setattr(supervisor, "stopping", True))
         signal.signal(signal.SIGTERM, lambda *_: setattr(supervisor, "stopping", True))
-        supervisor.run()
+        supervisor.run(args.installed_manifest)
         return 0
     except (Failure, SandboxieError, OSError, zipfile.BadZipFile) as error:
         # Only authored Failure messages are safe; OS errors can contain private arguments/paths.

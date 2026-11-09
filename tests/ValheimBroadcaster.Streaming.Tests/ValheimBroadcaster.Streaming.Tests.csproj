@@ -5,6 +5,10 @@
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../third_party/OverlayFont/coverage.bin" LogicalName="StreamOverlay.coverage" />
+    <EmbeddedResource Include="../../third_party/OverlayFont/LICENSE.txt" LogicalName="StreamOverlay.LICENSE.txt" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/OverlayFont.cs" Link="OverlayFont.cs" />
+    <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/StreamStatusPanel.cs" Link="StreamStatusPanel.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/StreamOptions.cs" Link="StreamOptions.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/MediaBuffers.cs" Link="MediaBuffers.cs" />
     <Compile Include="../../src/ValheimBroadcaster.Plugin/Streaming/EncoderSession.cs" Link="EncoderSession.cs" />

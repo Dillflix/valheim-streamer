@@ -33,6 +33,16 @@ namespace ValheimBroadcaster.Core
             renderedAt = now; renderedFrame = frame; presentation = mode;
         }
 
+        // Update can run before this frame's compositor. Health observes the last
+        // completed render; texture copies still require an exact frame in Select.
+        public bool HasCompletedLiveRender(double now, int frame)
+        {
+            Validate(now, frame);
+            return presentation == FramePresentation.Live && renderedFrame >= 0 &&
+                renderedFrame <= frame && renderedFrame >= frame - 1 &&
+                now >= renderedAt && now - renderedAt <= MaximumRenderAge;
+        }
+
         public ProgramFrameStamp Select(double now, int frame, bool active, bool hardFailure, bool textureAvailable)
         {
             Validate(now, frame);

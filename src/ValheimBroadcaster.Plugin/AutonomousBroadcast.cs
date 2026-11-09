@@ -56,6 +56,7 @@ internal sealed class AutonomousBroadcast
         observer.Phase == ObserverPhase.Watching && !recovering && policy.CanStartWildlifeCutaway;
     internal string Status => paused ? "Automatic direction paused for manual control" : !WantsEnabled ? "Automatic direction off" :
         recovering ? "Recovering travel: " + recoveryReason : policy.Reason;
+    internal string FollowDwell => $"{policy.ReadyDwellSeconds:F0}/{policy.DwellSeconds:F0}s usable dwell";
     internal string Diagnostics => "Director: " + Status + " | state " + policy.State +
         "\nTarget: " + (policy.TargetName ?? "none") + "; ready dwell " + policy.ReadyDwellSeconds.ToString("F1") + "s; retry in " + policy.RetryAfterSeconds(Time.realtimeSinceStartupAsDouble).ToString("F0") + "s" +
         "\nActivity direction: " + policy.ActivityReason + "; " + remote.EventStatus +

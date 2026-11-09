@@ -56,6 +56,7 @@ namespace ValheimBroadcaster.Core
         public BroadcastState State { get; private set; } = BroadcastState.Disabled;
         public bool IsEnabled { get; private set; }
         public bool IsHolding { get; private set; }
+        public double ReadyDwellSeconds => _dwellElapsed;
         public string ActivityReason => _activity.Reason;
 
         /// <summary>Changes when the selected ID changes, including selection becoming empty.</summary>

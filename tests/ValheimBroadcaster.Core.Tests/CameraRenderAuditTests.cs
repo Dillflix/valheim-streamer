@@ -15,6 +15,7 @@ internal static class CameraRenderAuditTests
         yield return ("Render audit separates stale application, missing render and changed identity", MissingIdentity);
         yield return ("Render audit attributes late camera changes to the render-to-capture boundary", PostRender);
         yield return ("Render audit rejects invalid poses and produces valid JSON for unknown deltas", Invalid);
+        yield return ("Player screen position uses top-down coordinates and rejects behind-camera projections", FollowScreen);
         yield return ("Held picture retains the source camera audit across later shots", RetainedSource);
         yield return ("Camera pose provenance fits the bounded diagnostic frame record", MetadataBound);
         yield return ("One-frame camera anomaly survives reporting cooldown and subsequent healthy frames", BriefAnomaly);
@@ -103,10 +104,25 @@ internal static class CameraRenderAuditTests
         Check(row.RootElement.GetProperty("poseCaptureFrame").GetInt32() == 8 && row.RootElement.GetProperty("poseAudit").GetString() == "Matched");
         Check(source.RenderAudit.Status == CameraRenderAuditStatus.Changed);
     }
+    private static void FollowScreen()
+    {
+        Check(PlayerFramePosition.Describe(.25f, .75f, 3) == "25% across, 25% down");
+        Check(PlayerFramePosition.Describe(0, 0, 3) == "0% across, 100% down");
+        Check(PlayerFramePosition.Describe(.5f, .5f, -3) == "behind camera");
+        Check(PlayerFramePosition.Describe(-.1f, .5f, 3) == "outside frame");
+        Check(PlayerFramePosition.Describe(float.NaN, 0, 3) == "position unknown");
+        var live = new DiagnosticPictureContext("Player", 12, 1, true, "Clear", followDetails: "CAMERA: Rear orbit");
+        var held = live.WithRenderAudit(Audit(Pose(), Pose(), Pose()));
+        var later = new DiagnosticPictureContext("Player", 13, 1, true, "Clear", followDetails: "CAMERA: Pass-by");
+        Check(held.FollowDetails != later.FollowDetails);
+        using var row = JsonDocument.Parse(held.Append(new CameraTraceRecord("video-sample", 1)).ToString());
+        Check(row.RootElement.GetProperty("followDetails").GetString() == "CAMERA: Rear orbit");
+    }
+
     private static void MetadataBound()
     {
         var context = new DiagnosticPictureContext("Player", 15, 7, true, new string('x', 512),
-            perspective: new string('x', 512), intent: new string('x', 512), encounter: new string('x', 512), coverage: new string('x', 512))
+            perspective: new string('x', 512), intent: new string('x', 512), encounter: new string('x', 512), coverage: new string('x', 512), followDetails: new string('x', 512))
             .WithRenderAudit(Audit(Pose(), Pose(), Pose()));
         string record = context.Append(new CameraTraceRecord("video-sample", 12345.6789)
             .Field("videoSession", new string('x', 64)).Field("traceSession", new string('x', 64))).ToString();

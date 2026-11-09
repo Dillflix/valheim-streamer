@@ -32,6 +32,25 @@ internal sealed class CameraRig
     internal string PerspectiveDescription => guideMission > 0 ? "Journey" : simpleActive ? "Player simple follow" : complementaryActive ? complementary.Description : scenicActive ? "Scenic" : creatureActive ? "Creature" : "Player primary";
     internal long PresentedActorShotId => proceduralActive && !scenicActive ? ActorCamera.PresentedShotId : -1;
     private CinemachineShotRig ActorCamera => complementaryActive ? complementary.Rig : creatureActive ? creatureCamera : shotCamera;
+    internal string PlayerFollowLabel => simpleActive ? "Simple follow" : complementaryActive ? "Encounter cutaway" :
+        proceduralActive ? "Directed follow" : "Fixed follow";
+
+    internal string DescribeFollowCamera(BroadcastSettings settings)
+    {
+        if (simpleActive)
+            return $"CAMERA: Rear orbit {settings.SimpleFollowDistance.Value:F1} m | FOV {FieldOfView:F0}° | obstacle correction {simpleFollow!.ObstacleDisplacement:F1} m";
+        if (!proceduralActive)
+            return $"CAMERA: Fixed offset | azimuth {settings.Azimuth.Value:F0}° | height {settings.Height.Value:F1} m | FOV {FieldOfView:F0}°";
+        string camera = ActorCamera.DescribeFollowShot(FieldOfView, complementaryActive ? complementary.Decision : null);
+        // A complementary camera evaluates the encounter subject. Its player
+        // solver remains on standby and owns the wider encounter observation.
+        CameraSceneFrame? scene = CurrentPlayerScene;
+        if (scene == null) return camera;
+        string encounter = scene.EncounterSituation.HostileCount > 0 ?
+            $" | {scene.EncounterSituation.HostileCount} hostiles ({scene.EncounterSituation.Pressure})" : "";
+        return camera + $"\nSCENE: {scene.Activity} / {scene.ActionPhase.Phase} | {scene.Environment}" + encounter;
+    }
+
     private string? presentationNotice;
     private string legacyMode = "awaiting coverage";
     internal string Diagnostics => presentationNotice != null ? "Camera: " + presentationNotice :

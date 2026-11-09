@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Valheim · Broadcast review</title><link rel="stylesheet" href="assets/review.css"></head>
+<body><main><header><span>VALHEIM</span><h1>Broadcast review</h1></header>
+<section class="toolbar"><label>Playback <select id="source"><option value="">Live broadcast</option></select></label><button id="refresh">Refresh recordings</button></section>
+<video controls playsinline id="player"></video><div class="controls"><button class="primary" id="report">Report this moment</button><output id="status" role="status"></output></div>
+<section id="incident" hidden><h2>Reported moment</h2><p id="reference"></p><p>Download the available footage and trace from 15 seconds before to 15 seconds after this moment.</p>
+<a id="download">Download evidence</a> <a id="permalink">Link to this moment</a><p id="availability" role="status"></p></section>
+</main><script src="assets/hls.light.min.js"></script><script type="module" src="assets/player.js"></script></body></html>
