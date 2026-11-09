@@ -308,6 +308,7 @@ internal sealed partial class ScenicProduction
             .Field("effectiveCruise", guide.Speed).Field("cruise", journey.CruiseSpeed).Field("noProgressSeconds", noAdvance)
             .Field("biomeAtRenderedPosition", biome).Field("surfaceAtRenderedPosition", surface)
             .Field("reason", journeyStatus).Field("awaitingRender", MissingGuideRender).Field("guideStatus", guide.Status)
+            .Field("guideCorridor", guide.CorridorChoice).Field("preferredHeightAboveSurface", guide.PreferredHeight)
             .Field("localSurfaceY", guide.LocalSurfaceHeight).Field("highestSurfaceAheadY", guide.HighestSurfaceAhead)
             .Field("lastSweepRejection", guideWorld.LastRejection).Field("sweepCounts", guideWorld.SweepSummary)
             .Field("terrainContact", guideWorld.LastTerrainContact)

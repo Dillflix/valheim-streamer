@@ -42,6 +42,7 @@ public sealed partial class JourneyGuide
         if (slowSeconds < 3.5 || frontier || lifting && speedLimit > 0) return false;
         double bearing = Bearing(Position, target);
         if (!world.TryGetSurface(Along(Position, Direction(bearing, 0), 4), out _)) return false;
+        passageExit = null;
         failedPosition = Position;
         lastBearing = bearing;
         withdrawn = 0;
