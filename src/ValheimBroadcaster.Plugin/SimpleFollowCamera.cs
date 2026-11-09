@@ -53,6 +53,22 @@ internal sealed class SimpleFollowCamera : IDisposable
     private float steerTarget;
     private double probeReadyAt;
     private float diagnosticsAt;
+    // Combat two-shot framing: the pure policy owns the Solo<->Combat state and
+    // the thirds/orbit geometry; this adapter senses hostiles, slews the orbit
+    // toward the solved azimuth (unless Layer 1 recovery is steering) and eases
+    // the composer's screen X between solo and the opposite thirds.
+    private const float CombatConeDot = 0.17364818f; // cos(80 deg): the player forward cone.
+    private const float SoloScreenX = -0.08f;
+    private const float SoloScreenY = 0.05f;          // Unchanged headroom; combat only moves X.
+    private const float ThirdsScreenX = 1f / 6f;      // +/-1/6: the enemy's opposite thirds line.
+    private readonly CombatFramingPolicy combat = new CombatFramingPolicy();
+    private readonly List<CombatCandidate> combatCandidates = new List<CombatCandidate>(16);
+    private readonly Dictionary<int, string> combatNames = new Dictionary<int, string>(16);
+    private float combatScreenX = SoloScreenX;
+    private float combatScreenXVelocity;
+    private int combatSide;
+    private int combatTargetId;
+    private float combatDistance;
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
 
@@ -87,6 +103,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         camera.Lens.FieldOfView = Mathf.Clamp(settings.FieldOfView.Value, 30f, 110f);
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
         UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, radius, dt);
+        UpdateCombatFraming(actor, settings, subjectPosition, radius, dt);
         // ManualCameraUpdate owns exact elapsed time and native skipped-frame compensation.
         ManualCameraUpdate.Update(camera, Vector3.up, dt);
         CameraState state = camera.State;
@@ -105,7 +122,9 @@ internal sealed class SimpleFollowCamera : IDisposable
             diagnosticsAt = now + 0.25f;
             Diagnostics = $"Simple follow: Cinemachine 3.1.7; distance {radius:F1}m (actual {Vector3.Distance(position, subjectPosition):F1}m); " +
                 $"screen ({ScreenPosition.x:F2}, {ScreenPosition.y:F2}); recentering behind subject; fov {fov:F0}; " +
-                $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "");
+                $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
+                (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
+                    ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "");
         }
         LastFailure = "none";
         return true;
@@ -144,6 +163,119 @@ internal sealed class SimpleFollowCamera : IDisposable
         float next = Mathf.MoveTowardsAngle(value, steerTarget, step);
         if (next > 180f) next -= 360f; else if (next < -180f) next += 360f;
         orbit.HorizontalAxis.Value = next;
+    }
+
+    // Layer 1.5: Solo <-> Combat player states. The pure policy owns the state
+    // machine, target selection and the thirds/orbit geometry; this adapter
+    // senses hostiles in the player's forward cone, slews the orbit toward the
+    // solved azimuth (yielding to Layer 1 recovery, which still Observes every
+    // frame) and eases the composer's screen X between solo and the enemy's
+    // opposite thirds. Writing HorizontalAxis cancels native recentering that
+    // frame, exactly like Layer 1; on release we stop writing and recentering
+    // resumes. No cuts, ever.
+    private void UpdateCombatFraming(Character actor, BroadcastSettings settings, Vector3 subjectPosition,
+        float radius, float dt)
+    {
+        if (!settings.CombatFraming.Value) { if (combatTargetId != 0) ResetCombat(); return; }
+        float separation = CombatFramingPolicy.ThirdsSeparationDegrees(
+            Mathf.Clamp(camera!.Lens.FieldOfView, 30f, 110f), Mathf.Max(0.1f, camera.Lens.Aspect));
+        SenseHostiles(actor, settings, subjectPosition);
+        double now = Time.unscaledTimeAsDouble;
+        float cameraAzimuth = orbit!.HorizontalAxis.Value;
+        CombatFramingDecision decision = combat.Observe(now, cameraAzimuth, separation, radius, combatCandidates);
+        combatTargetId = decision.TargetId;
+        combatSide = decision.PlayerScreenSide;
+        // Bound the name cache: only ever cleared out of combat, so no live
+        // target's label is lost and no diagnostic string churns.
+        if (combatTargetId == 0 && combatNames.Count > 64) combatNames.Clear();
+        if (combatTargetId != 0)
+            for (int i = 0; i < combatCandidates.Count; i++)
+                if (combatCandidates[i].Id == combatTargetId) { combatDistance = combatCandidates[i].Distance; break; }
+        // Occlusion recovery wins the orbit while it steers; the combat policy
+        // still ran above so its state keeps flowing (spec priority rule).
+        if (!steering && decision.Phase == CombatFramingPhase.Combat)
+        {
+            float remaining = Mathf.DeltaAngle(cameraAzimuth, decision.TargetAzimuthDegrees);
+            // Gentler than Layer 1 recovery (20-90): slow start, brisk middle,
+            // soft settle - the user's "nice and smooth and weighted" feel.
+            float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1.5f, 8f, 45f);
+            float step = Mathf.Min(speed * Mathf.Max(dt, 0f), Mathf.Abs(remaining));
+            if (step > 0f)
+            {
+                float next = Mathf.MoveTowardsAngle(cameraAzimuth, decision.TargetAzimuthDegrees, step);
+                if (next > 180f) next -= 360f; else if (next < -180f) next += 360f;
+                orbit.HorizontalAxis.Value = next;
+            }
+        }
+        // Ease the player across the frame toward its thirds (enemy opposite).
+        // SmoothDamp gives the critically damped ~0.8s settle; weight collapses
+        // the target back to solo as the policy releases.
+        float sideSign = combatSide >= 0 ? 1f : -1f;
+        float engagedX = -sideSign * ThirdsScreenX; // Enemy on side => player opposite.
+        float targetX = Mathf.Lerp(SoloScreenX, engagedX, decision.Weight);
+        float eased = Mathf.SmoothDamp(combatScreenX, targetX, ref combatScreenXVelocity, 0.8f, Mathf.Infinity, Mathf.Max(dt, 0f));
+        if (eased != combatScreenX)
+        {
+            combatScreenX = eased;
+            ScreenComposerSettings composition = aim!.Composition; // Struct: mutate a copy and reassign.
+            composition.ScreenPosition = new Vector2(combatScreenX, SoloScreenY);
+            aim.Composition = composition;
+        }
+    }
+
+    // Build the hostile candidate list with no per-frame allocations: a pooled
+    // list of value structs and a name cache populated only on first sight.
+    // Hostile = loaded MonsterAI the game treats as the player's enemy, alive,
+    // not the player, within CombatRange and the forward cone. Mirrors the
+    // proven PlayerSceneContext detection (ai is MonsterAI && BaseAI.IsEnemy).
+    private void SenseHostiles(Character actor, BroadcastSettings settings, Vector3 subjectPosition)
+    {
+        combatCandidates.Clear();
+        var player = actor as Player;
+        if (!player) return;
+        Vector3 forward = actor.transform.forward; forward.y = 0f;
+        if (!TargetRoster.Finite(forward) || forward.sqrMagnitude < 0.0001f) return;
+        forward.Normalize();
+        float range = Mathf.Max(5f, settings.CombatRange.Value);
+        float rangeSq = range * range;
+        foreach (Character enemy in Character.GetAllCharacters())
+        {
+            if (!enemy || enemy == actor || enemy is Player || enemy.IsDead()) continue;
+            if (!(enemy.GetBaseAI() is MonsterAI) || !BaseAI.IsEnemy(player, enemy)) continue;
+            Vector3 delta = enemy.transform.position - subjectPosition; delta.y = 0f;
+            float distSq = delta.sqrMagnitude;
+            if (distSq > rangeSq || distSq < 0.0001f) continue;
+            float distance = Mathf.Sqrt(distSq);
+            Vector3 dir = delta / distance;
+            bool inFront = Vector3.Dot(forward, dir) >= CombatConeDot;
+            float bearing = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg; // World azimuth (+Z = 0), matches orbit axis.
+            int id = enemy.GetInstanceID();
+            if (!combatNames.ContainsKey(id)) combatNames[id] = CombatName(enemy);
+            combatCandidates.Add(new CombatCandidate(id, bearing, distance, inFront, true));
+        }
+    }
+
+    // Raw name token, de-prefixed when trivial ($enemy_/$). Cached per id so this
+    // string work happens once per enemy, never per frame.
+    private static string CombatName(Character enemy)
+    {
+        string raw = enemy.m_name ?? "enemy";
+        if (raw.StartsWith("$enemy_")) return raw.Substring(7);
+        if (raw.Length > 0 && raw[0] == '$') return raw.Substring(1);
+        return raw;
+    }
+
+    private void ResetCombat()
+    {
+        combat.Reset(); combatCandidates.Clear(); combatNames.Clear();
+        combatScreenX = SoloScreenX; combatScreenXVelocity = 0f;
+        combatSide = 0; combatTargetId = 0; combatDistance = 0f;
+        if (aim != null)
+        {
+            ScreenComposerSettings composition = aim.Composition;
+            composition.ScreenPosition = new Vector2(SoloScreenX, SoloScreenY);
+            aim.Composition = composition;
+        }
     }
 
     // Candidate vantages on the current orbit: ideal orbit points around the
@@ -209,6 +341,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     {
         recovery.Reset(); candidates.Clear();
         hasPresented = steering = false; lastOcclusion = 0; probeReadyAt = 0;
+        ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 
     // A fresh binding seeds the camera directly behind the subject's facing at
