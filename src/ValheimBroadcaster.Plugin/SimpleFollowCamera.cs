@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using Unity.Cinemachine;
 using Unity.Cinemachine.TargetTracking;
 using UnityEngine;
 using ValheimBroadcaster.CinemachineRuntime;
+using ValheimBroadcaster.Core;
 
 namespace ValheimBroadcaster.Plugin;
 
@@ -33,6 +35,23 @@ internal sealed class SimpleFollowCamera : IDisposable
     private Character? subject;
     private Vector3 lastSubjectPosition;
     internal float ObstacleDisplacement => obstacles && camera ? obstacles!.GetCameraDisplacementDistance(camera!) : 0;
+    // Layer 1: occlusion recovery. The policy owns all thresholds and the
+    // state machine; this adapter only measures solid occlusion, probes
+    // candidate azimuths on request and slews the orbit while steering.
+    private const float SteerMaxDegreesPerSecond = 90f;
+    private const double ProbeIntervalSeconds = 0.2;
+    private static readonly float[] ProbeOffsets = { -145f, -110f, -70f, -35f, 35f, 70f, 110f, 145f };
+    private readonly OcclusionRecoveryPolicy recovery = new OcclusionRecoveryPolicy();
+    private readonly List<OcclusionRecoveryCandidate> candidates = new List<OcclusionRecoveryCandidate>(8);
+    private readonly RaycastHit[] occlusionHits = new RaycastHit[16];
+    private readonly Collider[] probeOverlaps = new Collider[8];
+    private int solidMask;
+    private Vector3 presentedPosition;
+    private bool hasPresented;
+    private float lastOcclusion;
+    private bool steering;
+    private float steerTarget;
+    private double probeReadyAt;
     private float diagnosticsAt;
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
@@ -55,7 +74,10 @@ internal sealed class SimpleFollowCamera : IDisposable
         bool rebind = subject != actor || !camera!.Follow;
         if (rebind) Bind(actor, radius, aimHeight, subjectPosition);
         else if ((subjectPosition - lastSubjectPosition).sqrMagnitude > WarpDistanceMetres * WarpDistanceMetres)
+        {
             camera!.OnTargetObjectWarped(actor.transform, subjectPosition - lastSubjectPosition);
+            ResetRecovery(); // A teleported subject invalidates every stale occlusion observation.
+        }
         lastSubjectPosition = subjectPosition;
         lookPoint!.position = subjectPosition + Vector3.up * aimHeight;
         orbit!.Radius = radius;
@@ -64,6 +86,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         camera!.Lens.ModeOverride = LensSettings.OverrideModes.Perspective;
         camera.Lens.FieldOfView = Mathf.Clamp(settings.FieldOfView.Value, 30f, 110f);
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
+        UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, radius, dt);
         // ManualCameraUpdate owns exact elapsed time and native skipped-frame compensation.
         ManualCameraUpdate.Update(camera, Vector3.up, dt);
         CameraState state = camera.State;
@@ -75,15 +98,117 @@ internal sealed class SimpleFollowCamera : IDisposable
             subject = null; // Reseed from scratch on the next frame.
             return Fail("Native solve produced a non-finite pose");
         }
+        presentedPosition = position; hasPresented = true;
         float now = Time.unscaledTime;
         if (now >= diagnosticsAt)
         {
             diagnosticsAt = now + 0.25f;
             Diagnostics = $"Simple follow: Cinemachine 3.1.7; distance {radius:F1}m (actual {Vector3.Distance(position, subjectPosition):F1}m); " +
-                $"screen ({ScreenPosition.x:F2}, {ScreenPosition.y:F2}); recentering behind subject; fov {fov:F0}";
+                $"screen ({ScreenPosition.x:F2}, {ScreenPosition.y:F2}); recentering behind subject; fov {fov:F0}; " +
+                $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "");
         }
         LastFailure = "none";
         return true;
+    }
+
+    // Layer 1: the ONLY authorized vantage-change trigger is sustained severe
+    // solid occlusion of the player. The pure policy decides; when it steers,
+    // the orbit's horizontal axis slews toward the verified-clear azimuth
+    // (writing the axis cancels native recentering for that frame). When the
+    // policy releases, this simply stops writing and the native behind-the-
+    // player recentering resumes from the same axis value - the orbit solve
+    // keeps all motion continuous by construction. No cuts, ever.
+    private void UpdateOcclusionRecovery(Character actor, Vector3 subjectPosition, float aimHeight, float radius, float dt)
+    {
+        if (solidMask == 0) solidMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        float height = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
+        lastOcclusion = hasPresented ? BodyOcclusion(presentedPosition, subjectPosition, height) : 0f;
+        double now = Time.unscaledTimeAsDouble;
+        OcclusionRecoveryDecision decision = recovery.Observe(now, lastOcclusion,
+            ObstacleDisplacement > 0.01f, orbit!.HorizontalAxis.Value, candidates);
+        if (!decision.NeedsCandidates) { candidates.Clear(); probeReadyAt = 0; }
+        else if (now >= probeReadyAt)
+        {
+            probeReadyAt = now + ProbeIntervalSeconds;
+            ProbeCandidates(subjectPosition, aimHeight, radius, height);
+        }
+        steering = decision.Phase == OcclusionRecoveryPhase.Steering;
+        if (!steering) return;
+        steerTarget = decision.TargetAzimuthDegrees;
+        float value = orbit.HorizontalAxis.Value;
+        float remaining = Mathf.DeltaAngle(value, steerTarget);
+        // Eased, bounded slew: brisk across a big arc, settling near the target.
+        float speed = Mathf.Clamp(Mathf.Abs(remaining) * 2.5f, 20f, SteerMaxDegreesPerSecond);
+        float step = Mathf.Min(speed * Mathf.Max(dt, 0f), Mathf.Abs(remaining));
+        if (step <= 0f) return;
+        float next = Mathf.MoveTowardsAngle(value, steerTarget, step);
+        if (next > 180f) next -= 360f; else if (next < -180f) next += 360f;
+        orbit.HorizontalAxis.Value = next;
+    }
+
+    // Candidate vantages on the current orbit: ideal orbit points around the
+    // player at the configured radius and elevation. A probe embedded in
+    // solid geometry sees nothing; otherwise its clearance is the unblocked
+    // fraction of the same five body rays used for the live measurement.
+    private void ProbeCandidates(Vector3 subjectPosition, float aimHeight, float radius, float height)
+    {
+        candidates.Clear();
+        Vector3 centre = subjectPosition + Vector3.up * aimHeight;
+        float current = orbit!.HorizontalAxis.Value;
+        for (int i = 0; i < ProbeOffsets.Length; i++)
+        {
+            float azimuth = current + ProbeOffsets[i];
+            Vector3 probe = centre + Quaternion.Euler(ElevationDegrees, azimuth, 0f) * new Vector3(0f, 0f, -radius);
+            float clear = PointInsideSolid(probe) ? 0f : 1f - BodyOcclusion(probe, subjectPosition, height);
+            if (azimuth > 180f) azimuth -= 360f; else if (azimuth < -180f) azimuth += 360f;
+            candidates.Add(new OcclusionRecoveryCandidate(azimuth, clear));
+        }
+    }
+
+    // Blocked fraction of five sample points spread over the character
+    // capsule (shin, knees, chest, head, above the head). Solid geometry
+    // only: triggers and characters never occlude, and foliage is tracked by
+    // bounds elsewhere and deliberately absent from the solid mask - leaves
+    // can NEVER trigger recovery.
+    private float BodyOcclusion(Vector3 from, Vector3 subjectPosition, float height)
+    {
+        int blocked = 0;
+        if (RayBlocked(from, subjectPosition + Vector3.up * 0.3f)) blocked++;
+        if (RayBlocked(from, subjectPosition + Vector3.up * (height * 0.25f))) blocked++;
+        if (RayBlocked(from, subjectPosition + Vector3.up * (height * 0.55f))) blocked++;
+        if (RayBlocked(from, subjectPosition + Vector3.up * (height * 0.92f))) blocked++;
+        if (RayBlocked(from, subjectPosition + Vector3.up * (height + 0.2f))) blocked++;
+        return blocked / 5f;
+    }
+
+    private bool RayBlocked(Vector3 from, Vector3 to)
+    {
+        Vector3 delta = to - from;
+        if (!TargetRoster.Finite(delta)) return false;
+        float distance = delta.magnitude;
+        if (distance <= 0.05f) return false;
+        int count = Physics.RaycastNonAlloc(from, delta / distance, occlusionHits,
+            Mathf.Max(0f, distance - 0.05f), solidMask, QueryTriggerInteraction.Ignore);
+        if (count == occlusionHits.Length) return true; // A saturated query is not proof of clearance.
+        for (int i = 0; i < count; i++) if (Solid(occlusionHits[i].collider)) return true;
+        return false;
+    }
+
+    private bool PointInsideSolid(Vector3 point)
+    {
+        int count = Physics.OverlapSphereNonAlloc(point, 0.05f, probeOverlaps, solidMask, QueryTriggerInteraction.Ignore);
+        if (count == probeOverlaps.Length) return true;
+        for (int i = 0; i < count; i++) if (Solid(probeOverlaps[i])) return true;
+        return false;
+    }
+
+    private static bool Solid(Collider collider) => collider && collider.enabled &&
+        !collider.isTrigger && !collider.GetComponentInParent<Character>();
+
+    private void ResetRecovery()
+    {
+        recovery.Reset(); candidates.Clear();
+        hasPresented = steering = false; lastOcclusion = 0; probeReadyAt = 0;
     }
 
     // A fresh binding seeds the camera directly behind the subject's facing at
@@ -91,6 +216,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     private void Bind(Character actor, float radius, float aimHeight, Vector3 subjectPosition)
     {
         subject = actor;
+        ResetRecovery(); // A fresh binding is a fresh vantage; stale occlusion evidence is void.
         camera!.Follow = actor.transform;
         camera.LookAt = lookPoint;
         Vector3 forward = Vector3.ProjectOnPlane(actor.transform.forward, Vector3.up);
@@ -175,6 +301,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     internal void Reset()
     {
         subject = null;
+        ResetRecovery();
         if (camera) { camera!.Follow = null; camera.PreviousStateIsValid = false; }
         LastFailure = "Awaiting player"; Diagnostics = "Simple follow: awaiting player"; diagnosticsAt = 0;
     }
