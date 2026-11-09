@@ -23,8 +23,29 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
    at PlayerSceneContext.cs:289), within CombatRange (config, default 30m), within
    the player's forward cone (dot(playerForward, toEnemy) >= cos(80 deg)).
    Selection = closest qualifying. Retarget hysteresis: a challenger replaces the
-   current target only if current is dead/invalid/out-of-cone OR challenger is
+   current target only if current is dead/invalid/absent OR challenger is
    >= 20% + 1m closer.
+   - **The forward cone is an ACQUISITION filter ONLY (flee retention rule, added
+     2026-11-09).** Live symptom it fixed: when the player walked/ran AWAY from
+     the engaged enemy, the enemy fell behind, left the 80-degree cone, the policy
+     starved, released after 2.5s, and native recentering swung the camera to the
+     stay-behind view — losing the enemy. Rule now:
+     - A NEW target (engage from Solo, challenger steal, or promotion after a
+       death) must be InFront — new targets never acquire from behind.
+     - The CURRENT target is RETAINED regardless of InFront while it is alive and
+       present in the candidate list. The adapter enforces CombatRange by dropping
+       out-of-range enemies from the list, so retention ends naturally at range
+       (the target simply goes absent). While retained-behind, the orbit azimuth
+       is solved for opposite-thirds framing exactly as in front — the geometry
+       does not care about the player's facing, so the camera looks BACK at the
+       enemy instead of recentering.
+     - Challenger hysteresis unchanged (a challenger must be InFront + 20%+1m
+       closer). A behind candidate can neither steal nor be promoted.
+     - Release timing unchanged: the starvation gate begins only when the current
+       target is dead/absent AND no InFront candidate exists.
+     - Adapter: `SenseHostiles` already adds behind-the-player enemies (within
+       range, alive, hostile) with `InFront=false`; no adapter change was needed —
+       verified the candidate list includes them so the policy can retain.
 3. **Framing mechanism** (Plugin, SimpleFollowCamera):
    - Follow/LookAt anchor stays the PLAYER (lookPoint at 0.8x height). Never-out-of-
      frame guarantee (hard limits 0.6/0.55, deadzone, deoccluder) unchanged.
@@ -50,15 +71,32 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
    - Writing HorizontalAxis cancels native recentering that frame (proven Layer 1
      pattern, SimpleFollowCamera.cs:114-147); on exit we stop writing and native
      stay-behind recentering resumes — continuous by construction.
-   - **35 mm combat lens:** one eased 0..1 blend (combatBlend, SmoothDamp ~0.8s
-     toward the policy Weight) drives BOTH the thirds screen-X slide AND the lens
-     push together. fov = Lerp(soloFov, CombatFovDegrees=37.849 (full-frame 35mm,
-     2*atan(12/35)), combatBlend); screenX = Lerp(SoloScreenX, -side*1/6, combatBlend).
-     The thirds separation is solved from this SAME blended fov (passed in, never
-     read back from the lens) so the enemy stays pinned on its thirds line as the
-     lens tightens. combatFov is stored in a field; the TrySolve lens assignment
-     reads it (seeded to soloFov on create/reset/out-of-combat). Eases out in
-     lockstep on release; no snaps, no cuts.
+   - **Lens model — solo 45 mm / combat 24 mm (updated 2026-11-09, was 50-deg
+     solo / 35 mm combat):** full-frame vertical fov = 2*atan(12/focalMm) deg.
+     Solo = 45 mm -> **29.8628 deg** (tighter). Combat = 24 mm -> **53.1301 deg**
+     (WIDER, so it holds both actors). Combat is now wider than solo, not tighter.
+     - `SimpleFollowCamera.LensFov(mm) = 2*atan(12/max(1,mm))*Rad2Deg`;
+       `CombatLensMm = 24f`. soloFov = LensFov(clamp(settings.FollowLensMm, 12, 135)),
+       clamped to [10,100] as a non-finite backstop (the [12,135] mm clamp already
+       bounds fov to ~[10.1, 90]). combatFovTarget = LensFov(24) = 53.1301.
+     - One eased 0..1 blend (combatBlend, SmoothDamp ~0.8s toward the policy
+       Weight) drives BOTH the thirds screen-X slide AND the lens change together:
+       fov = Lerp(soloFov, combatFovTarget, combatBlend); screenX = Lerp(SoloScreenX,
+       -side*1/6, combatBlend). The thirds separation is solved from this SAME
+       blended fov (passed in, never read back from the lens), clamped [10,100], so
+       the enemy stays pinned on its thirds line as the lens widens. combatFov is
+       stored in a field; the TrySolve lens assignment reads it (seeded to soloFov
+       on create/reset/out-of-combat). Eases out in lockstep on release; no snaps.
+     - The TrySolve failure-path `fov` out-param default is now the solo lens fov
+       (LensFov(FollowLensMm)), the simple camera's own lens — not the dormant
+       directed knob.
+   - **`Camera.FollowLensMm` is a NEW config key (migration, same reason as
+     FollowFieldOfView):** the deployed broadcast machine's BepInEx cfg has
+     persisted values under old keys (Config.Bind keeps saved values), so a new
+     key is required to force the 45 mm default to actually apply. Default 45f,
+     range [12,135] mm. `Camera.FollowFieldOfView` is LEFT BOUND unchanged — it
+     feeds the dormant directed/scenic system (CameraRig/CinemachineShotRig/
+     ScenicProduction); the simple-follow camera no longer reads it.
 4. **Side rule**: enemy takes the screen side it is ALREADY nearer (sign of current
    signed bearing of enemy relative to camera forward at engage/retarget time);
    player gets the opposite. Side is sticky per target: re-evaluated only on
@@ -97,5 +135,12 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
   target, challenger hysteresis, cone filter, side stickiness, azimuth solve math
   (exact angles both sides, infeasible clamp), separation-angle math vs fov/aspect,
   clock rollback, contracts.
+  - Flee retention (added 2026-11-09): engage an InFront target then flip InFront
+    to false — policy stays Combat on the SAME target, azimuth still solved for
+    opposite thirds (exact value asserted), no release past 2.5s while it lives,
+    release only once it leaves the list. Acquisition still gated: a behind-only
+    candidate never engages from Solo however long sustained. A behind challenger
+    cannot steal; after the front target dies a behind-only survivor is not
+    promoted and the policy starves/releases after 2.5s.
 - All three suites + Core/CM/Plugin builds green before commit.
 - Runtime footage verification outstanding (user reviews live broadcast).
