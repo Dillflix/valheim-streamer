@@ -13,14 +13,14 @@ internal sealed class StreamRecovery
     private readonly Func<AudioListener?> listener;
     private readonly Action<string> log;
     private readonly OutputRecoveryPolicy policy = new OutputRecoveryPolicy();
-    private long handledFailure = -1;
+    private long handledFailure = -1, reportedCleanup = -1;
     private bool permitted;
     private string encoder = "not started";
     internal bool Blocked => policy.Blocked;
     internal bool Desired => policy.Desired;
     internal bool ManualSuppressed => policy.ManualSuppressed;
     internal string Status => !policy.Desired ? "Stopped" : policy.Blocked ? "Blocked: " + policy.LastFailure :
-        !permitted ? "Waiting for authorized broadcast scene" : capture.Active ? capture.Status : !capture.CanStart ? "Closing previous encoder" :
+        !permitted ? "Waiting for authorized broadcast scene" : capture.Active ? capture.Status : !capture.CanStart ? (capture.CleanupStatus.Length == 0 ? "Closing previous encoder" : capture.CleanupStatus) :
         "Retry in " + policy.RetryIn(Time.realtimeSinceStartup).ToString("F0") + "s (attempts " + policy.Attempts + ")";
     internal string Diagnostics => "RTMP: " + Status + "\nEncoder: " + encoder + "; desired " + policy.Desired +
         "; manual stop " + policy.ManualSuppressed + "; attempts " + policy.Attempts + "; failures in retry cycle " + policy.FailuresInBurst +
@@ -48,10 +48,15 @@ internal sealed class StreamRecovery
             return;
         }
         double now = Time.realtimeSinceStartup;
-        if ((capture.HasCompletedFailure || capture.CleanupBlocked) && handledFailure != capture.Generation)
+        if (!capture.EncoderClosed && capture.CleanupStatus.Length != 0 && reportedCleanup != capture.Generation)
+        {
+            reportedCleanup = capture.Generation;
+            log("RTMP cleanup delayed: " + capture.CleanupStatus + "\n" + capture.Diagnostics);
+        }
+        if (capture.HasCompletedFailure && handledFailure != capture.Generation)
         {
             handledFailure = capture.Generation;
-            policy.Failed(now, capture.PermanentFailure || capture.CleanupBlocked, retryEnabled, capture.Diagnostics);
+            policy.Failed(now, capture.PermanentFailure, retryEnabled, capture.Diagnostics);
             log("RTMP failure (redacted):\n" + capture.Diagnostics + "\n" + Status);
         }
         if (capture.IsPublishing) policy.Publishing(now);

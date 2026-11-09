@@ -29,16 +29,16 @@ internal sealed class EncoderSession
     private volatile bool invalidAudioFormat;
     private volatile bool publishing;
     private volatile bool errorsComplete;
-    private volatile bool cleanupBlocked;
+    private volatile string cleanupStatus = "";
     private int processId;
     internal int ProcessId => closed ? 0 : Volatile.Read(ref processId);
     internal bool IsClosed => closed;
     internal bool IsStopping => stopping;
     internal bool IsPublishing => publishing && !stopping;
     internal bool PermanentFailure => invalidAudioFormat || diagnostics.PermanentFailure;
-    internal bool CleanupBlocked => cleanupBlocked;
+    internal string CleanupStatus => cleanupStatus;
     internal string Status => failure.Length != 0 ? failure + diagnostics.Summary : closed ? "Stopped" : stopping ? "Stopping" : publishing ? "Publishing H.264 + AAC (" + options.VideoEncoder + ")" : "Starting encoder (" + options.VideoEncoder + ")";
-    internal string FailureDetails => failure.Length == 0 ? "" : failure + "\nEncoder: " + options.VideoEncoder + "; audio " + options.SampleRate + " Hz / " + Volatile.Read(ref audioChannels) + " channels; input connected " + (Interlocked.Read(ref mediaStarted) >= 0) + "\n" + failureTiming + "\n" + diagnostics.Details;
+    internal string FailureDetails => failure.Length == 0 ? "" : failure + "\nEncoder: " + options.VideoEncoder + "; audio " + options.SampleRate + " Hz / " + Volatile.Read(ref audioChannels) + " channels; input connected " + (Interlocked.Read(ref mediaStarted) >= 0) + "\n" + failureTiming + (cleanupStatus.Length == 0 ? "" : "\n" + cleanupStatus) + "\n" + diagnostics.Details;
     internal string TimingDetails
     {
         get
@@ -51,7 +51,7 @@ internal sealed class EncoderSession
             double rate = first >= 0 && now > first ? frames * 1000.0 / (now - first) : 0;
             long queued = failed >= 0 ? Interlocked.Read(ref queuedAtFailure) : audio.QueuedSamples;
             return "Timing at " + (failed >= 0 ? "failure" : "observation") + ": session " + now + "ms; audio connected " + (began >= 0 ? (now - began) + "ms ago" : "never") +
-                "; mux progress " + publishing + "; mode " + options.Width + "x" + options.Height + "@" + options.Fps +
+                "; mux progress " + publishing + "; last mux report " + WriteAge(Interlocked.Read(ref lastProgress), now) + "ms ago; last video capture " + WriteAge(Interlocked.Read(ref lastVideo), now) + "ms ago; last audio callback " + WriteAge(Interlocked.Read(ref lastAudio), now) + "ms ago; mode " + options.Width + "x" + options.Height + "@" + options.Fps +
                 "\nCapture: " + Interlocked.Read(ref audioCallbacks) + " callbacks; " + frames + " frames; average " + rate.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " frames/s (expected " + options.SampleRate + "); since connect " + Interlocked.Read(ref connectedFrames) +
                 "\nAudio: queued " + (queued * 500.0 / options.SampleRate).ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "ms; consumed " + Interlocked.Read(ref consumedFrames) + " real frames; sent " + Interlocked.Read(ref sentFrames) + " total frames; write blocked " + WriteAge(audioWriteSince, now) + "ms; last write " + WriteAge(lastAudioWrite, now) + "ms ago" +
                 "\nVideo: " + Interlocked.Read(ref videoWrites) + " writes; write blocked " + WriteAge(videoWriteSince, now) + "ms; last write " + WriteAge(lastVideoWrite, now) + "ms ago";
@@ -169,7 +169,9 @@ internal sealed class EncoderSession
         try
         {
             byte[] frame = new byte[options.Width * options.Height * 4];
-            Stream pipe = process.StandardInput.BaseStream;
+            // Closing our end supplies EOF even when Sandboxie denies a forced process stop.
+            using StreamWriter input = process.StandardInput;
+            Stream pipe = input.BaseStream;
             // One timestamp-zero frame lets FFmpeg open raw video before it opens
             // audio. Both continuing writers then use the audio connection epoch.
             frame = video.Take(frame);
@@ -240,26 +242,56 @@ internal sealed class EncoderSession
         {
             stopping = true;
             listener.Stop();
-            // A pipe failure often races the process exit and stderr callbacks.
-            // Allow a short drain on this background thread before forced cleanup.
-            try { if (failure.Length != 0 && process.WaitForExit(500)) diagnostics.SetExitCode(process.ExitCode); } catch { }
-            // Kill closes blocked pipes without blocking the Unity or audio threads.
-            try { if (!process.HasExited) process.Kill(); } catch { }
-            bool videoClosed = videoThread.Join(2000);
-            bool audioClosed = audioThread.Join(6000);
-            bool processClosed = false;
-            try { if (process.WaitForExit(1000)) { processClosed = true; diagnostics.SetExitCode(process.ExitCode); } } catch { }
-            SpinWait.SpinUntil(() => errorsComplete, 1000);
-            process.Dispose();
-            if (videoClosed && audioClosed && processClosed) closed = true;
-            else
-            {
-                cleanupBlocked = true;
-                // Never let unattended retries overlap a process or writer whose
-                // termination could not be confirmed (for example a launcher shim).
-                Interlocked.Exchange(ref failure, "Encoder cleanup did not finish. Restart Valheim and configure the actual FFmpeg executable, not a launcher shim.");
-            }
+            FinishCleanup();
         }
+    }
+
+    private void FinishCleanup()
+    {
+        // EOF from both writers normally lets FFmpeg flush the muxer and exit. If it
+        // cannot, keep the original process handle until exit AND both writers are proven done.
+        var elapsed = Stopwatch.StartNew();
+        long nextKill = 1000, nextReport = 3000;
+        bool exited = false;
+        string processError = "";
+        while (true)
+        {
+            if (!exited)
+            {
+                try
+                {
+                    exited = process.HasExited;
+                    if (exited)
+                    {
+                        Volatile.Write(ref processId, 0);
+                        diagnostics.SetExitCode(process.ExitCode);
+                    }
+                    else if (elapsed.ElapsedMilliseconds >= nextKill)
+                    {
+                        nextKill = elapsed.ElapsedMilliseconds + 5000;
+                        process.Kill();
+                    }
+                }
+                catch (System.ComponentModel.Win32Exception error)
+                { processError = error.GetType().Name + " (" + error.NativeErrorCode + ")"; }
+                catch (Exception error) { processError = error.GetType().Name; }
+            }
+
+            bool videoDone = !videoThread.IsAlive, audioDone = !audioThread.IsAlive;
+            if (exited && videoDone && audioDone) break;
+            if (elapsed.ElapsedMilliseconds >= nextReport)
+            {
+                cleanupStatus = "Encoder cleanup pending: process exited=" + exited + ", video writer stopped=" + videoDone +
+                    ", audio writer stopped=" + audioDone + (processError.Length == 0 ? "" : ", process operation=" + processError);
+                nextReport = elapsed.ElapsedMilliseconds + 5000;
+            }
+            Thread.Sleep(100);
+        }
+        if (cleanupStatus.Length != 0)
+            cleanupStatus = "Encoder cleanup completed after " + elapsed.ElapsedMilliseconds + "ms. Last observation: " + cleanupStatus;
+        SpinWait.SpinUntil(() => errorsComplete, 1000);
+        process.Dispose();
+        closed = true;
     }
 }
 

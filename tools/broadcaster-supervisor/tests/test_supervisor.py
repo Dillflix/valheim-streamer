@@ -609,6 +609,24 @@ class LoopTests(Fixture):
         self.assertEqual(len(self.launches), 1)
         self.assertTrue(self.s.state["paused"])
 
+    def test_runtime_block_preserves_log_and_reports_category_before_cleanup(self):
+        log = self.game / "BepInEx/LogOutput.log"
+        log.write_text("encoder failure during broadcast")
+        self.s.launch = lambda *args: setattr(self.s, "record", {"pid": 123})
+        self.s.wait_healthy = lambda: {"version": "0.8.20", "source_sha": "a" * 40}
+        self.s.heartbeat = lambda **kwargs: {"state": "blocked", "failure_category": "streaming", "reason": "secret"}
+        original = self.s.report
+        def report(state, message):
+            original(state, message)
+            if state == "blocked":
+                self.s.stopping = True
+        self.s.report = report
+        self.s.run()
+        self.assertTrue(self.s.state["paused"])
+        self.assertEqual(self.s.state["last_runtime_block"]["category"], "streaming")
+        self.assertNotIn("secret", str(self.s.state["last_runtime_block"]))
+        self.assertEqual((self.state / "last-runtime-block.log").read_text(), log.read_text())
+
     def test_failure_evidence_distinguishes_live_game_from_exit_before_stop(self):
         self.s.record = {"session_id": "e" * 32}
         self.s.startup_phase = "authorized"

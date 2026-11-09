@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.73";
+    public const string PluginVersion = "0.8.74";
     internal static readonly string SourceRevision = SupervisorIdentity.SourceSha(
         typeof(BroadcasterPlugin).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
     private static readonly string ClientBuildLabel = "Client v" + PluginVersion +
