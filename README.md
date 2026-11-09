@@ -1,5 +1,7 @@
 # Valheim Broadcaster
 
+**0.8.69 adds Player Follow telemetry to the operator display and optional RTMP overlay.** The PLAYER line reports observed action, sampled ground speed, upper-body screen position measured from the top left, and camera range. Simple Follow shows its requested orbit radius and Cinemachine obstacle displacement. Directed Follow shows the displayed shot, pacing and decision, geometric obstruction estimates, and observed encounter context. Fixed follow reports its configured offset. Usable dwell is time credited toward target rotation. A held picture retains its source telemetry. Use F10 for a solo trial and `broadcast stream overlay on` to include the panel in the feed.
+
 **0.8.68 fixes the four-minute restart of a working broadcaster.** The client reports the most recent completed live render to the supervisor. The supervisor keeps an authorized, publishing baseline online while it verifies the picture and logs the individual health signals. Install both the client and supervisor for this fix.
 
 **0.8.67 restores unattended password submission during dedicated-server admission.** The Windows supervisor can configure an existing sandboxed installation, adopt a manually installed build after verifying its manifest and live broadcast, and show startup progress and update-poll results. The existing protocol-3 server companion is compatible. [Windows setup and restart rehearsal](docs/UNATTENDED-UPDATES.md#existing-broadcaster-quick-start-0867)

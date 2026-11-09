@@ -147,6 +147,20 @@ internal sealed class CinemachineShotRig : IDisposable
     internal string LastFailure { get; private set; } = "Awaiting player camera";
     internal string Diagnostics { get; private set; } = "Procedural camera: awaiting player";
 
+    internal string DescribeFollowShot(float fov, string? insertDecision)
+    {
+        string pacing = insertDecision != null ? "encounter insert" : EditorialHold ? "operator hold" : lastDynamic ?
+            $"{director.ShotAge:F0}s / {director.DesiredSeconds:F0}s nominal" : "steady selection";
+        string decision = insertDecision ?? (fallbackSince >= 0 ? "Revalidating the previous viewpoint" :
+            motionBlocked ? "Holding motion for clearance" : lastDynamic ? director.Reason : lastView.Reason);
+        string foliage = lastView.SurveyComplete ? $"{lastView.PrimaryFoliageOcclusion:P0} foliage" : "foliage survey incomplete";
+        string cast = insertDecision != null ? "on-screen encounter subject" :
+            $"{FramedParticipantCount} in cast, {VisibleOpponentCount} opponents visible";
+        return $"CAMERA: {lastRole} / {lastView.PrimaryScale} | FOV {fov:F0}° | {pacing} | {decision}" +
+            $"\nVIEW: {lastView.PrimarySolidOcclusion:P0} solid, {foliage}, {lastView.PrimaryActorOcclusion:P0} actor obstruction" +
+            $" | {cast}";
+    }
+
     private sealed class Candidate
     {
         internal readonly CinemachineCamera Camera;

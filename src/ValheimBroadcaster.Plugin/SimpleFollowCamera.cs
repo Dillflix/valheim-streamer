@@ -32,6 +32,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     private Transform? lookPoint;
     private Character? subject;
     private Vector3 lastSubjectPosition;
+    internal float ObstacleDisplacement => obstacles && camera ? obstacles!.GetCameraDisplacementDistance(camera!) : 0;
     private float diagnosticsAt;
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";

@@ -21,7 +21,7 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.dillflix.valheimbroadcaster";
     public const string PluginName = "Valheim Broadcaster";
-    public const string PluginVersion = "0.8.68";
+    public const string PluginVersion = "0.8.69";
     private SupervisorBridge? supervisor;
     private static BroadcasterPlugin? instance;
     private Harmony? harmony;
@@ -93,7 +93,8 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
     private long lastRevision = -1;
     private string lastStatus = "Disabled";
     private GUIStyle? operatorStyle;
-    private string operatorText = "";
+    private readonly PlayerFollowReadout followReadout = new PlayerFollowReadout();
+    private string operatorText = "", operatorFollowDetails = "", operatorSubject = "";
     private double nextOperatorText;
     private FramePresentation operatorPresentation = FramePresentation.Slate;
 
@@ -1008,14 +1009,20 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
             idle.Plan.FeatureKind + " / " + idle.Plan.Role + " / " + scenicMotion :
             "Retained previous scenic view" : rig.CurrentPlayerScene?.ActionPhase.Phase.ToString() ?? "";
         CameraSceneFrame? encounterScene = scenic ? null : rig.CurrentPlayerScene;
+        bool playerPicture = !probe.Active && presentedMode == CoverageMode.Player;
+        string followDetails = "";
+        if (playerPicture)
+            followDetails = followReadout.Sample(roster.Find(presentedPlayerId)?.LoadedPlayer, rig, settings,
+                presentedRevision, shot, picture?.Key.SceneEpoch ?? 0);
+        else followReadout.Clear();
         return new DiagnosticPictureContext(probe.Active ? "Probe" : presentedMode.ToString(),
             shot, presentedRevision, cameraReady && rig.LastPictureUsable,
             rig.PictureReason, position.x, position.y, position.z,
-            euler.x, euler.y, euler.z, rig.FieldOfView, rig.PerspectiveDescription,
+            euler.x, euler.y, euler.z, rig.FieldOfView, playerPicture ? rig.PlayerFollowLabel : rig.PerspectiveDescription,
             picture?.Key.SceneEpoch ?? 0, picture?.Key.Candidate ?? -1, intent,
             encounterScene?.EncounterSituation.Pressure.ToString() ?? "", rig.EncounterCoverageDescription,
             encounterScene?.EncounterSituation.HostileCount ?? 0, encounterScene?.Subjects.Count ?? 0,
-            rig.FramedParticipantCount, rig.VisibleOpponentCount, rig.PrimaryActorOcclusion);
+            rig.FramedParticipantCount, rig.VisibleOpponentCount, rig.PrimaryActorOcclusion, followDetails: followDetails);
     }
 
     private string DescribeOperatorSubject() => presentedMode == CoverageMode.Player
@@ -1094,8 +1101,9 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                     fontSize = 14, padding = new RectOffset(12, 12, 9, 9)
                 };
             double now = Time.unscaledTimeAsDouble;
-            if (programPresentation != operatorPresentation || now >= nextOperatorText)
+            if (programPresentation != operatorPresentation || operatorFollowDetails != frameHold.OperatorPicture.FollowDetails || operatorSubject != frameHold.OperatorSubject || now >= nextOperatorText)
             {
+                operatorFollowDetails = frameHold.OperatorPicture.FollowDetails; operatorSubject = frameHold.OperatorSubject;
                 operatorPresentation = programPresentation; nextOperatorText = now + .25;
                 operatorText = Status(programPresentation);
                 if (presentation == FramePresentation.Slate && observer.Active)
@@ -1147,6 +1155,17 @@ public sealed partial class BroadcasterPlugin : BaseUnityPlugin
                 ? "\nPREPARING: " + StatusText(idle.ScenicSearchStatus) : "";
         string session = observer.Active ? "Observer " + observer.Phase : selfTest ? "Self-follow test" : "Ordinary client";
         string discovery = observer.RemoteSession ? remote.DiscoveryStatus : roster.ConnectedOthers + " other connected; " + roster.Targets.Count + " known targets";
+        if (presentation != FramePresentation.Slate && shown.Mode == "Player" && !string.IsNullOrEmpty(shown.FollowDetails))
+        {
+            string player = StatusText(frameHold.OperatorSubject);
+            int tracked = director.Roster.Count;
+            string rosterStatus = selfTest ? "Self-follow test" : tracked == 1 ? "1 tracked player" : $"{tracked} tracked players";
+            if (!director.IsHolding && tracked > 1 && coverage.Mode == CoverageMode.Player && presentation == FramePresentation.Live)
+                rosterStatus += " | " + (automatic?.ControlsSelection == true ? automatic.FollowDwell :
+                    $"{director.ReadyDwellSeconds:F0}/{director.DwellSeconds:F0}s usable dwell");
+            return $"ON AIR: {state} | {player} | {shown.Perspective}\n" + shown.FollowDetails +
+                "\nDIRECTOR: " + StatusText(directing) + " | " + rosterStatus + " | RTMP: " + StatusText(output?.Status ?? "Stopped");
+        }
         return "ON AIR: " + state + " | " + onAir + "\nMODE: " + coverage.Preference + " | " +
             CoveragePreferences.Describe(coverage.Preference, coverage.Mode) + "\nDIRECTOR: " + StatusText(directing) + journeyDetails + planning +
             "\nSESSION: " + session + " | " + StatusText(discovery) + "\nRTMP: " + StatusText(output?.Status ?? "Stopped");

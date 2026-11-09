@@ -29,6 +29,7 @@ internal sealed class StreamCapture : MonoBehaviour
     private bool overlayReady, manualFlip, overlayFault;
     private ProgramFrameStamp panelStamp;
     private string panelSession = "";
+    private string? panelFollowDetails, panelSubject;
     private byte[] pixels = Array.Empty<byte>();
     private bool active, pending;
     private Vector3 normalPosition;
@@ -190,7 +191,8 @@ internal sealed class StreamCapture : MonoBehaviour
         if (overlayFault || OverlayEnabled?.Invoke() != true || DescribeStatus == null)
         { overlayReady = false; return; }
         string trace = ScenicTrace.Enabled ? ScenicTrace.SessionId : "OFF";
-        if (overlayReady && panelSession == trace && panelStamp.Generation == stamp.Generation &&
+        string? followDetails = program?.OperatorPicture.FollowDetails;
+        if (overlayReady && panelFollowDetails == followDetails && panelSubject == program?.OperatorSubject && panelSession == trace && panelStamp.Generation == stamp.Generation &&
             panelStamp.Presentation == stamp.Presentation && stamp.CopiedAt - panelStamp.CopiedAt < .25) return;
         try
         {
@@ -200,6 +202,7 @@ internal sealed class StreamCapture : MonoBehaviour
             panel.Prepare(text, width, height, OverlayFontSize?.Invoke() ?? 14);
             panelStamp = stamp;
             panelSession = trace;
+            panelFollowDetails = followDetails; panelSubject = program?.OperatorSubject;
             overlayReady = true;
         }
         catch (Exception error)

@@ -21,6 +21,7 @@ internal sealed class PlayerComplementaryCamera
     private bool ready;
     private int mask;
     internal bool Active => policy.Active;
+    internal string Decision => policy.Reason;
     internal string Description => Active ? "Player complementary encounter subject; " + policy.Reason : "Player primary; " + policy.Reason;
 
     internal bool TrySelect(CameraSceneFrame? scene, string ownerId, Camera output, BroadcastSettings settings, float dt,
