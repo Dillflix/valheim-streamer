@@ -120,6 +120,72 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
 8. **Diagnostics**: Simple-follow line gains "; combat: <targetName> <d>m, enemy <L|R>
    thirds" while in Combat (0.25s cadence line already exists).
 9. Wildlife cutaways already suppressed in simple mode; directed system untouched.
+10. **FOV-floor fit (2026-11-09) — REJECTED by the operator, PR #43 closed unmerged.**
+    The approach widened the lens (a fov floor) to fit the player's feet. The
+    operator's rule: "that's not how lens choices work. if we say 50, we go 50.
+    if we say 75, we go 75mm." The lens is INVIOLATE. This decision never reached
+    main; the fitFov path does not exist on this branch. Superseded by #11.
+11. **Dolly group framing (2026-11-09) — the fit is absorbed by CAMERA DISTANCE,
+    never the lens.** Cinemachine's native GroupFraming in `DollyOnly` mode
+    (obj/upstream/Runtime/Behaviours/CinemachineGroupFraming.cs: SizeAdjustment=
+    DollyOnly moves the camera along its boom at a fixed fov; Damping ~2 eases the
+    move) is MIRRORED in our player-anchored rig as pure math — we do NOT attach a
+    CinemachineTargetGroup / CinemachineGroupFraming. Native group framing needs
+    LookAt=group, which would move the rule-1 hard-limit protection off the PLAYER
+    onto a group centroid; our composer must keep pinning the player, so the
+    semantics are reimplemented instead of delegated.
+    - **New Core pure math `GroupFramingPolicy`** (static, ArgumentOutOfRangeException
+      contracts, house style):
+      - `RequiredDistanceForVerticalSpan(fixedVfovDeg, aimScreenY, belowAim,
+        aboveAim)` — CLOSED FORM. The fixed lens makes phi_aim = atan(2*aimScreenY*
+        tan(vfov/2)) a constant; available half-angles are down = vfov/2 - phi_aim
+        (Y-down positive aimScreenY, aim below centre, toward the feet/bottom edge)
+        and up = vfov/2 + phi_aim (toward the head). Required d = max(below/tan(down),
+        above/tan(up)). Both extremes land exactly on their frame edge at the result;
+        verified by forward projection in tests (feet reach screenY +0.5, d-0.05
+        crops). Contracts: vfov in (1,170), aimScreenY in [-0.45,0.45] with both
+        angles > 1 deg, spans >= 0.
+      - `GroupWeight(separation, full, zero)` — the SPARSE GATE. Smoothstep 1->0 as
+        the planar player-enemy separation grows from full (10 m, weight 1) to zero
+        (16 m, weight 0), clamped outside. A far enemy never drags the camera back
+        into a sparse two-shot (rule 4) even though combat state / thirds continue.
+      - `RequiredDistanceForEnemy(...)` — enemy on the player ground plane at an
+        axial depth offset along the camera forward; conservative, treats the
+        enemy's extent at planar distance (d_player + axialOffset) so d_player =
+        span fit - axialOffset, floored at 1 m (axialOffset negative when the enemy
+        is nearer the camera than the player, pushing the camera further out).
+      - `HeadBandBelowSpan(enemyAboveAimExtent, headKeep)` — the oversized-enemy
+        fallback: when the full body cannot fit within the dolly cap, keep the top
+        headKeep band (feet may crop, rule 3). Returns the reduced below-aim span.
+    - **Plugin (SimpleFollowCamera) wiring** — everything else (lens blend 50<->75,
+      thirds solve, Layer 1 priority, flee retention) is UNCHANGED:
+      - Margins: player feet 0.25 / head 0.35, enemy feet 0.15 / head 0.25.
+        GroupFull 10 m, GroupZero 16 m, DollyMax 18 m, headKeep = max(0.8, 30% of
+        enemy height), ease ~0.7 s SmoothDamp (within the 1-2 s loss allowance).
+      - Each frame (solo AND combat): playerNeed from the live blended lens fov at
+        aimScreenY 0.05. In combat with a live target and weight > 0: compute the
+        enemy's axial depth along the current camera forward (orbit axis), solve the
+        enemy full-body need; if it exceeds DollyMax, recompute with the head band;
+        effective = max(playerNeed, Lerp(playerNeed, enemyNeed, weight)).
+      - desiredRadius = clamp(max(SimpleFollowDistance, playerNeed, weightedEnemy),
+        1, DollyMax); a SmoothDamp'd dollyRadius field eases toward it and becomes
+        orbit.Radius (replacing the raw SimpleFollowDistance assignment). dollyRadius
+        is seeded to SimpleFollowDistance on create/reset/rebind/warp. The thirds
+        SolveOrbitAzimuth and the Layer 1 occlusion probes both receive the LIVE
+        dollyRadius so the two-shot stays exact while dollying.
+      - Diagnostics append "; dolly N.Nm" when dollyRadius exceeds SimpleFollowDistance
+        by > 0.2 m, plus " (head)" when the head-band fallback is active.
+    - **Real numbers (verified, player h=1.9, aimHeight 1.52, aimY 0.05, margins
+      0.25/0.35 => belowAim 1.77, aboveAim 0.73):**
+      - 50 mm solo (26.9915 deg vFov): playerNeed ~= **8.24 m** — ABOVE the 6 m
+        default, so solo dollies out ~2.2 m to keep the feet in frame. EXPECTED.
+      - 75 mm combat (18.1805 deg vFov): playerNeed ~= **12.32 m** — comfortably
+        UNDER the DollyMax 18 m cap (~5.7 m of headroom). The operator's worry that
+        75 mm might blow the cap does not materialise: a 1.9 m player's feet fit at
+        ~12.3 m, so **DollyMax stays 18 m** (chosen from the math, not raised).
+    - Distance-law note: dollying OUT never parks the camera; FollowDistanceInvariant
+      and the deoccluder are untouched. The lens is INVIOLATE throughout (#10's
+      rejected fov-floor is gone).
 
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
