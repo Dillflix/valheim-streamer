@@ -65,7 +65,16 @@ internal sealed class SimpleFollowCamera : IDisposable
     // battle look; the thirds solve fits both actors at any fov. A full-frame
     // focal length maps to a vertical fov by 2*atan(12/mm): solo defaults to
     // 50 mm (26.9915 deg), combat to 75 mm (18.1805 deg, tighter).
-    private const float CombatLensMm = 75f;           // Full-frame 75 mm: 2*atan(12/75) = 18.1805 deg.
+    // Combat rides a long 75 mm two-shot; when the enemy presses in close the
+    // lens widens subtly toward 65 mm so the pair still breathes (operator:
+    // "keep it subtle"). Smoothstepped over separation 2-6 m and eased 0.5 s so
+    // measurement noise never pumps the lens.
+    private const float CombatLensFarMm = 75f;        // Full-frame 75 mm: 2*atan(12/75) = 18.1805 deg.
+    private const float CombatLensNearMm = 65f;       // Close-quarters floor: 2*atan(12/65) = 20.9524 deg.
+    private const float CloseEnemyNearMetres = 2f;    // At/below this separation the lens rides 65 mm.
+    private const float CloseEnemyFarMetres = 6f;     // At/above this separation the lens rides 75 mm.
+    private float combatLensMm = CombatLensFarMm;
+    private float combatLensVelocity;
     private static float LensFov(float mm) => 2f * Mathf.Atan(12f / Mathf.Max(1f, mm)) * Mathf.Rad2Deg;
     private readonly CombatFramingPolicy combat = new CombatFramingPolicy();
     private readonly List<CombatCandidate> combatCandidates = new List<CombatCandidate>(16);
@@ -314,7 +323,13 @@ internal sealed class SimpleFollowCamera : IDisposable
         // carries this frame, never a read-back - as the lens tightens to 75 mm
         // the thirds lines narrow in lockstep so the enemy stays pinned on its
         // line through the whole move.
-        float combatFovTarget = LensFov(CombatLensMm);
+        // Close-quarters widening: previous frame's enemy separation drives the
+        // 75->65 mm target (one-frame lag is invisible under the 0.5 s ease).
+        float closeness = Mathf.InverseLerp(CloseEnemyNearMetres, CloseEnemyFarMetres,
+            combatTargetId != 0 ? combatDistance : CloseEnemyFarMetres);
+        float lensTarget = Mathf.Lerp(CombatLensNearMm, CombatLensFarMm, Mathf.SmoothStep(0f, 1f, closeness));
+        combatLensMm = Mathf.SmoothDamp(combatLensMm, lensTarget, ref combatLensVelocity, 0.5f, Mathf.Infinity, Mathf.Max(dt, 0f));
+        float combatFovTarget = LensFov(combatLensMm);
         float blendedFov = Mathf.Lerp(soloFov, combatFovTarget, combatBlend);
         float separation = CombatFramingPolicy.ThirdsSeparationDegrees(
             Mathf.Clamp(blendedFov, 10f, 100f), Mathf.Max(0.1f, camera!.Lens.Aspect));
@@ -692,6 +707,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         combat.Reset(); combatCandidates.Clear(); combatNames.Clear();
         combatBlend = 0f; combatBlendVelocity = 0f; combatFov = 0f; // 0 reseeds to solo fov next solve.
         combatSide = 0; combatTargetId = 0; combatDistance = 0f;
+        combatLensMm = CombatLensFarMm; combatLensVelocity = 0f;
         if (aim != null)
         {
             ScreenComposerSettings composition = aim.Composition;
