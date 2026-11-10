@@ -67,7 +67,7 @@ namespace ValheimBroadcaster.Core
         public const float MotionThresholdMetresPerSecond = 1.2f;
         /// <summary>Sustained opposite lateral motion must hold this long before the
         /// solo side flips (and before the lead offset reaches full magnitude).</summary>
-        public const double SustainSeconds = 1.5;
+        public const double SustainSeconds = 2.0;
         /// <summary>Full magnitude of the combat lead offset (screen fraction) once
         /// the motion direction is sustained.</summary>
         public const float LeadOffsetMagnitude = 0.05f;
