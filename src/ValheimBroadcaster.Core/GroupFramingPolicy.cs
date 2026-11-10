@@ -20,50 +20,6 @@ namespace ValheimBroadcaster.Core
     /// dominates a full-body fit; the up half-angle (aim toward head) is larger.
     /// All distances are in metres; all angles in degrees at the public boundary.
     /// </summary>
-    /// <summary>
-    /// The solved camera placement for a FramingSize-style fill: how far the
-    /// camera sits on its boom and where the aim-pin lands on screen (Y-down
-    /// fraction) so the body spans a target fraction of the frame height. Unlike
-    /// the fit-only <see cref="GroupFramingPolicy.RequiredDistanceForVerticalSpan"/>
-    /// (which only guarantees the body FITS, with the aim pinned at a constant),
-    /// the fill solves BOTH unknowns so the body FILLS the frame.
-    /// </summary>
-    public readonly struct FramingFillResult
-    {
-        /// <summary>Camera distance on the boom, in metres.</summary>
-        public readonly float DistanceMetres;
-        /// <summary>Aim-pin screen Y (Y-down fraction of the half-frame). Negative
-        /// pins the aim above centre (more foot-room), positive below (more head-room).</summary>
-        public readonly float AimScreenY;
-        internal FramingFillResult(float distanceMetres, float aimScreenY)
-        { DistanceMetres = distanceMetres; AimScreenY = aimScreenY; }
-    }
-
-    /// <summary>
-    /// The solved composition when the camera CANNOT reach the full-fill distance
-    /// and must sit CLOSER, inside a tight space. The head is pinned with its
-    /// headroom (the head point projects to the fixed top target screenY = -0.5 +
-    /// topGap) and the frame bottom CROPS the body feet-up as the space shrinks.
-    /// Unlike <see cref="FramingFillResult"/> (which solves the distance to FILL),
-    /// this takes the distance as given and reports how much of the body survives.
-    /// </summary>
-    public readonly struct CroppedFramingResult
-    {
-        /// <summary>Aim-pin screen Y (Y-down fraction of the half-frame) that pins the
-        /// head at its target screen position at the given distance, clamped to the
-        /// composer's [-0.45, 0.45] limit.</summary>
-        public readonly float AimScreenY;
-        /// <summary>Metres of body visible below the aim line before the bottom frame
-        /// edge crops it (>= 0; the head side is always kept).</summary>
-        public readonly float VisibleBelowAimMetres;
-        /// <summary>Fraction of the full body (above + belowAimFull) still in frame,
-        /// clamped [0, 1]. 1 = the whole body is visible (full shot); shrinks toward 0
-        /// as the camera is forced closer (feet crop away first).</summary>
-        public readonly float VisibleBodyFraction;
-        internal CroppedFramingResult(float aimScreenY, float visibleBelowAimMetres, float visibleBodyFraction)
-        { AimScreenY = aimScreenY; VisibleBelowAimMetres = visibleBelowAimMetres; VisibleBodyFraction = visibleBodyFraction; }
-    }
-
     public static class GroupFramingPolicy
     {
         private const double Deg2Rad = Math.PI / 180.0;
@@ -106,163 +62,6 @@ namespace ValheimBroadcaster.Core
             double dBelow = belowAimMetres > 0f ? belowAimMetres / Math.Tan(down) : 0.0;
             double dAbove = aboveAimMetres > 0f ? aboveAimMetres / Math.Tan(up) : 0.0;
             return (float)Math.Max(dBelow, dAbove);
-        }
-
-        /// <summary>
-        /// FramingSize-style FILL solve (Cinemachine GroupFraming FramingSize
-        /// concept): given a body that extends <paramref name="belowAimMetres"/>
-        /// below and <paramref name="aboveAimMetres"/> above the AIM POINT (margins
-        /// already folded in by the caller), at a FIXED vertical fov, solve BOTH the
-        /// camera distance AND the aim-pin's screen Y so the body spans exactly
-        /// <paramref name="framingSize"/> of the frame height - the feet land at
-        /// screenY = +0.5 - bottomGap and the head at screenY = -0.5 + topGap, where
-        /// topGap = topGapShare*(1-framingSize) and bottomGap = (1-topGapShare)*
-        /// (1-framingSize). Unlike the fit-only solve this does NOT leave the aim at a
-        /// fixed pin and waste frame on one side; it positions the aim so the body
-        /// truly FILLS the chosen fraction.
-        ///
-        /// Exact projection model (matches the repo tests): a point at signed angle
-        /// phi below the camera forward axis projects to screenY = tan(phi)/(2*tan(
-        /// vfov/2)); the aim sits at phi_aim = atan(2*aimScreenY*tan(vfov/2)); feet are
-        /// at phi_aim + atan(below/d), head at phi_aim - atan(above/d).
-        ///
-        /// Solved by bisection on the aim angle phi_aim. The feet constraint gives
-        /// d_feet = below / tan(phiFeet - phi_aim) and the head constraint gives
-        /// d_head = above / tan(phi_aim - phiHead), where phiFeet/phiHead are the fixed
-        /// target angles of the bottom/top edges of the body band. As phi_aim rises
-        /// (aim moves toward the feet) d_feet increases and d_head decreases, so
-        /// g(phi_aim) = d_feet - d_head is strictly increasing - a single monotone
-        /// root, found by bisection, where the two agree and the body fills the band.
-        /// </summary>
-        public static FramingFillResult FramingFill(
-            float fixedVfovDeg, float belowAimMetres, float aboveAimMetres,
-            float framingSize, float topGapShare)
-        {
-            if (!Finite(fixedVfovDeg) || fixedVfovDeg <= 1f || fixedVfovDeg >= 170f)
-                throw new ArgumentOutOfRangeException(nameof(fixedVfovDeg));
-            if (!Finite(belowAimMetres) || belowAimMetres <= 0f)
-                throw new ArgumentOutOfRangeException(nameof(belowAimMetres));
-            if (!Finite(aboveAimMetres) || aboveAimMetres <= 0f)
-                throw new ArgumentOutOfRangeException(nameof(aboveAimMetres));
-            if (!Finite(framingSize) || framingSize <= 0.1f || framingSize > 1f)
-                throw new ArgumentOutOfRangeException(nameof(framingSize));
-            if (!Finite(topGapShare) || topGapShare < 0f || topGapShare > 1f)
-                throw new ArgumentOutOfRangeException(nameof(topGapShare));
-
-            double half = fixedVfovDeg * 0.5 * Deg2Rad;
-            double tanHalf = Math.Tan(half);
-
-            double gap = 1.0 - framingSize;
-            double topGap = topGapShare * gap;
-            double bottomGap = (1.0 - topGapShare) * gap;
-            // Target screen Y of the body's bottom (feet) and top (head) edges.
-            double feetScreenY = 0.5 - bottomGap;   // Y-down: positive, toward the bottom edge.
-            double headScreenY = -0.5 + topGap;      // Y-down: negative, toward the top edge.
-            // Fixed target angles for those edges under this fov.
-            double phiFeet = Math.Atan(2.0 * feetScreenY * tanHalf);
-            double phiHead = Math.Atan(2.0 * headScreenY * tanHalf);
-
-            // Bisect phi_aim over the span's interior. phi_aim lives strictly between
-            // phiHead and phiFeet (the aim is inside the body band); clamp the search
-            // to the aimScreenY [-0.45, 0.45] limit the composer and the fit solve
-            // share, and guard a degenerate near-zero angle difference (< 0.5 deg).
-            double phiLimit = Math.Atan(2.0 * 0.45 * tanHalf);
-            double guard = 0.5 * Deg2Rad;
-            double lo = Math.Max(phiHead + guard, -phiLimit);
-            double hi = Math.Min(phiFeet - guard, phiLimit);
-            if (hi <= lo)
-                throw new ArgumentOutOfRangeException(nameof(framingSize),
-                    "Framing size leaves no room to place the aim inside the frame at this fov.");
-
-            // g(phi_aim) = d_feet - d_head is strictly increasing. Bisect for its root.
-            double DFeet(double phiAim) => belowAimMetres / Math.Tan(phiFeet - phiAim);
-            double DHead(double phiAim) => aboveAimMetres / Math.Tan(phiAim - phiHead);
-            double g(double phiAim) => DFeet(phiAim) - DHead(phiAim);
-
-            double gLo = g(lo), gHi = g(hi);
-            double phiAimSolved;
-            if (gLo >= 0.0) phiAimSolved = lo;        // Root at/left of range: clamp.
-            else if (gHi <= 0.0) phiAimSolved = hi;   // Root at/right of range: clamp.
-            else
-            {
-                double a = lo, b = hi;
-                for (int i = 0; i < 80; i++)
-                {
-                    double mid = 0.5 * (a + b);
-                    double gm = g(mid);
-                    if (gm > 0.0) b = mid; else a = mid;
-                    if (b - a < 1e-10) break;
-                }
-                phiAimSolved = 0.5 * (a + b);
-            }
-
-            double d = 0.5 * (DFeet(phiAimSolved) + DHead(phiAimSolved));
-            // Invert phi_aim back to the composer's Y-down screen fraction.
-            double aimScreenY = Math.Tan(phiAimSolved) / (2.0 * tanHalf);
-            return new FramingFillResult((float)d, (float)aimScreenY);
-        }
-
-        /// <summary>
-        /// TIGHT-SPACE cropped composition. When the physical boom room
-        /// (<paramref name="availableDistanceMetres"/>) is less than the full-fill
-        /// distance the camera cannot pull back far enough to fit the whole body at
-        /// the fixed lens. Instead of bending the lens (inviolate) we PIN THE HEAD
-        /// with its headroom and let the bottom frame edge CROP the body feet-up: the
-        /// shot degrades gracefully full shot -> medium close -> close-up as the space
-        /// shrinks, while the head is always kept.
-        ///
-        /// The head point (aim + <paramref name="aboveAimMetres"/>) is forced to the
-        /// fixed top target screenY = -0.5 + <paramref name="topGapFraction"/>, whose
-        /// angle below the optical axis is htheta = atan(2*(-0.5+topGap)*tan(vfov/2))
-        /// (negative, toward the top edge). At this distance the head sits at
-        /// phi_aim - atan(above/d) = htheta, so phi_aim = htheta + atan(above/d) and
-        /// aimScreenY = tan(phi_aim)/(2*tan(vfov/2)), clamped to the composer's
-        /// [-0.45, 0.45] limit. The bottom frame edge is at btheta = atan(2*0.5*
-        /// tan(vfov/2)); the body visible below the aim is d*tan(btheta - phi_aim)
-        /// (floored at 0). The visible body fraction is clamp01((visibleBelow + above)
-        /// / (belowAimFull + above)). At the full-fill distance visibleBelow reaches
-        /// belowAimFull and the fraction is ~1 (reproduces the FramingFill composition);
-        /// closer distances give a decreasing fraction.
-        /// </summary>
-        public static CroppedFramingResult CroppedFraming(
-            float fixedVfovDeg, float availableDistanceMetres, float aboveAimMetres,
-            float belowAimFullMetres, float topGapFraction)
-        {
-            if (!Finite(fixedVfovDeg) || fixedVfovDeg <= 1f || fixedVfovDeg >= 170f)
-                throw new ArgumentOutOfRangeException(nameof(fixedVfovDeg));
-            if (!Finite(availableDistanceMetres) || availableDistanceMetres <= 0.5f)
-                throw new ArgumentOutOfRangeException(nameof(availableDistanceMetres));
-            if (!Finite(aboveAimMetres) || aboveAimMetres <= 0f)
-                throw new ArgumentOutOfRangeException(nameof(aboveAimMetres));
-            if (!Finite(belowAimFullMetres) || belowAimFullMetres <= 0f)
-                throw new ArgumentOutOfRangeException(nameof(belowAimFullMetres));
-            if (!Finite(topGapFraction) || topGapFraction < 0f || topGapFraction > 0.4f)
-                throw new ArgumentOutOfRangeException(nameof(topGapFraction));
-
-            double half = fixedVfovDeg * 0.5 * Deg2Rad;
-            double tanHalf = Math.Tan(half);
-            double d = availableDistanceMetres;
-
-            // Head target screen Y (Y-down, negative = above centre) -> its angle below
-            // the optical axis. htheta is negative (the head is toward the top edge).
-            double headScreenY = -0.5 + topGapFraction;
-            double htheta = Math.Atan(2.0 * headScreenY * tanHalf);
-            // Pin the head: phi_aim - atan(above/d) = htheta.
-            double phiAim = htheta + Math.Atan(aboveAimMetres / d);
-            double aimScreenY = Math.Tan(phiAim) / (2.0 * tanHalf);
-            // Clamp the aim to the composer's limit; the effective aim angle follows.
-            double aimClamped = aimScreenY < -0.45 ? -0.45 : (aimScreenY > 0.45 ? 0.45 : aimScreenY);
-            double phiAimEff = Math.Atan(2.0 * aimClamped * tanHalf);
-
-            // Bottom frame edge angle, then the body visible below the aim at this
-            // distance (floored at 0 - a very close shot may crop above the aim line).
-            double btheta = Math.Atan(2.0 * 0.5 * tanHalf);
-            double visibleBelow = d * Math.Tan(btheta - phiAimEff);
-            if (visibleBelow < 0.0) visibleBelow = 0.0;
-
-            double frac = (visibleBelow + aboveAimMetres) / (belowAimFullMetres + aboveAimMetres);
-            if (frac < 0.0) frac = 0.0; else if (frac > 1.0) frac = 1.0;
-            return new CroppedFramingResult((float)aimClamped, (float)visibleBelow, (float)frac);
         }
 
         /// <summary>
@@ -316,37 +115,6 @@ namespace ValheimBroadcaster.Core
         }
 
         /// <summary>
-        /// Combine the PLAYER's own vertical spans with an engaged enemy's spans
-        /// (both measured below/above the player's aim line, the enemy's already
-        /// projected to equivalent metres at the player's planar distance by the
-        /// caller) into GROUP spans, weighted by the sparse-gate group weight. The
-        /// FramingFill solve then receives group-consistent spans so the aim and
-        /// dolly balance the whole picture instead of the player alone: a small low
-        /// creature grows the below span (aim tilts DOWN, empty sky shrinks); a tall
-        /// enemy grows the above span (headroom adapts).
-        ///
-        /// groupBelow = Lerp(playerBelow, max(playerBelow, enemyBelowEq), weight);
-        /// groupAbove = Lerp(playerAbove, max(playerAbove, enemyAboveEq), weight).
-        /// At weight 0 the result is the player's own spans (solo identity); at
-        /// weight 1 it is the element-wise max (the group must contain both). The
-        /// max keeps the player always framed - the group never crops the player to
-        /// fit a smaller enemy. Returns (below, above) as a tuple; the caller folds
-        /// margins before calling and feeds the result straight to FramingFill.
-        /// </summary>
-        public static (float Below, float Above) CombineGroupSpans(
-            float playerBelow, float playerAbove, float enemyBelowEq, float enemyAboveEq, float weight)
-        {
-            if (!Finite(playerBelow) || playerBelow < 0f) throw new ArgumentOutOfRangeException(nameof(playerBelow));
-            if (!Finite(playerAbove) || playerAbove < 0f) throw new ArgumentOutOfRangeException(nameof(playerAbove));
-            if (!Finite(enemyBelowEq) || enemyBelowEq < 0f) throw new ArgumentOutOfRangeException(nameof(enemyBelowEq));
-            if (!Finite(enemyAboveEq) || enemyAboveEq < 0f) throw new ArgumentOutOfRangeException(nameof(enemyAboveEq));
-            if (!Finite(weight) || weight < 0f || weight > 1f) throw new ArgumentOutOfRangeException(nameof(weight));
-            float below = playerBelow + (Math.Max(playerBelow, enemyBelowEq) - playerBelow) * weight;
-            float above = playerAbove + (Math.Max(playerAbove, enemyAboveEq) - playerAbove) * weight;
-            return (below, above);
-        }
-
-        /// <summary>
         /// Head-band fallback for an enemy too tall to fit full-body within the
         /// dolly cap. Keeps the enemy's HEAD in frame (feet may crop): the aboveAim
         /// span is unchanged (head top + margin), and the belowAim span is REDUCED
@@ -367,6 +135,120 @@ namespace ValheimBroadcaster.Core
             float bandBottomRelAim = enemyAboveAimExtentMetres - headKeepMetres;
             // Band bottom above the aim -> no below-aim span to fit.
             return bandBottomRelAim >= 0f ? 0f : -bandBottomRelAim;
+        }
+
+        private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    /// <summary>
+    /// EYELINE-ON-TOP-THIRD doctrine (operator order 2026-11-10, supersedes the
+    /// vertical FramingSize fill / cropped-head mechanisms): the player's EYELINE
+    /// sits on the frame's TOP-THIRD line (Y-down screen fraction -1/6), and the
+    /// camera DISTANCE is solved so the feet land exactly on the bottom edge. There
+    /// are NO head safety margins and NO headroom gaps anywhere in this doctrine -
+    /// the eyeline pin owns the whole vertical composition. Feet margins (air below
+    /// the feet) are the only vertical margin that survives, folded into belowAim by
+    /// the caller (feet-in-frame is rule 1).
+    ///
+    /// Two pure closed/searched functions on a FIXED lens. The projection model is
+    /// identical to the rest of this file: a point at signed angle phi below the
+    /// camera forward axis projects to screenY = tan(phi)/(2*tan(vfov/2)); Y-down,
+    /// so a negative screenY is ABOVE centre (toward the top edge). The "eye" is a
+    /// point aimToEye metres ABOVE the aim point in the world (the aim sits lower,
+    /// nearer the chest); the "feet" are belowAim metres BELOW the aim.
+    /// </summary>
+    public static class EyelineFraming
+    {
+        private const double Deg2Rad = Math.PI / 180.0;
+
+        /// <summary>
+        /// Closed form: the aim-pin screen Y (Y-down fraction) that places the eye
+        /// exactly on <paramref name="eyelineScreenY"/> at the given distance, with
+        /// the lens fixed. The eye sits at angle eyeAngle = atan(2*eyelineScreenY*T)
+        /// below the optical axis (T = tan(vfov/2); negative when the eye is above
+        /// centre). The aim point is <paramref name="aimToEyeMetres"/> BELOW the eye
+        /// in the world, so its angle is phi_aim = eyeAngle + atan(aimToEye/distance)
+        /// and the returned aimScreenY = tan(phi_aim)/(2*T), clamped to the composer's
+        /// [-0.45, 0.45] limit.
+        ///
+        /// This is the INVARIANT at the heart of the doctrine: whatever the distance
+        /// (full-fill outdoors or capped in a tight space), feeding the live distance
+        /// through here keeps the eye pinned on the top-third line - the eye NEVER
+        /// leaves its line, the frame only crops the feet when the camera is forced in.
+        /// </summary>
+        public static float AimYForEyeline(
+            float fixedVfovDeg, float eyelineScreenY, float aimToEyeMetres, float distanceMetres)
+        {
+            if (!Finite(fixedVfovDeg) || fixedVfovDeg <= 1f || fixedVfovDeg >= 170f)
+                throw new ArgumentOutOfRangeException(nameof(fixedVfovDeg));
+            if (!Finite(eyelineScreenY) || eyelineScreenY < -0.45f || eyelineScreenY > 0.45f)
+                throw new ArgumentOutOfRangeException(nameof(eyelineScreenY));
+            if (!Finite(aimToEyeMetres) || aimToEyeMetres < 0f)
+                throw new ArgumentOutOfRangeException(nameof(aimToEyeMetres));
+            if (!Finite(distanceMetres) || distanceMetres <= 0.3f)
+                throw new ArgumentOutOfRangeException(nameof(distanceMetres));
+
+            double tanHalf = Math.Tan(fixedVfovDeg * 0.5 * Deg2Rad);
+            double eyeAngle = Math.Atan(2.0 * eyelineScreenY * tanHalf);
+            double phiAim = eyeAngle + Math.Atan(aimToEyeMetres / distanceMetres);
+            double aimScreenY = Math.Tan(phiAim) / (2.0 * tanHalf);
+            if (aimScreenY < -0.45) aimScreenY = -0.45;
+            else if (aimScreenY > 0.45) aimScreenY = 0.45;
+            return (float)aimScreenY;
+        }
+
+        /// <summary>
+        /// The camera distance at which, with the eyeline pinned at
+        /// <paramref name="eyelineScreenY"/>, the FEET point (<paramref name="belowAimMetres"/>
+        /// below the aim) lands exactly on the bottom frame edge (screenY +0.5).
+        ///
+        /// Monotonicity (documented, verified by the test oracle): with the eyeline
+        /// pinned, the aim angle phi_aim(d) = eyeAngle + atan(aimToEye/d) and the feet
+        /// angle below the optical axis is phi_feet(d) = phi_aim(d) + atan(belowAim/d).
+        /// Both atan terms SHRINK as d grows, so phi_feet(d) is strictly DECREASING in
+        /// d. The feet are on the bottom edge when phi_feet(d) == half (the bottom edge
+        /// angle, since screenY +0.5 maps to tan(phi)=T i.e. phi=half). Therefore
+        /// g(d) = phi_feet(d) - half is strictly decreasing with a single root: at the
+        /// low end the feet angle exceeds the frame (feet cropped), at the high end it
+        /// sits above the edge (feet in frame with room to spare). Working in ANGLE
+        /// space keeps g monotone across the whole search range (screenY space wraps
+        /// through tan's pole when phi_feet exceeds 90 deg at tiny d, so it is NOT used
+        /// for the bracket). Bisection on d in [0.5, 60], tolerance 1e-4.
+        /// </summary>
+        public static float DistanceForFeetAtEyeline(
+            float fixedVfovDeg, float eyelineScreenY, float aimToEyeMetres, float belowAimMetres)
+        {
+            if (!Finite(fixedVfovDeg) || fixedVfovDeg <= 1f || fixedVfovDeg >= 170f)
+                throw new ArgumentOutOfRangeException(nameof(fixedVfovDeg));
+            if (!Finite(eyelineScreenY) || eyelineScreenY < -0.45f || eyelineScreenY > 0.45f)
+                throw new ArgumentOutOfRangeException(nameof(eyelineScreenY));
+            if (!Finite(aimToEyeMetres) || aimToEyeMetres < 0f)
+                throw new ArgumentOutOfRangeException(nameof(aimToEyeMetres));
+            if (!Finite(belowAimMetres) || belowAimMetres <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(belowAimMetres));
+
+            double half = fixedVfovDeg * 0.5 * Deg2Rad;
+            double tanHalf = Math.Tan(half);
+            double eyeAngle = Math.Atan(2.0 * eyelineScreenY * tanHalf);
+
+            // g(d) = phi_feet(d) - half, strictly decreasing in d (see remarks).
+            double G(double d) => eyeAngle + Math.Atan(aimToEyeMetres / d) + Math.Atan(belowAimMetres / d) - half;
+
+            double lo = 0.5, hi = 60.0;
+            double gLo = G(lo), gHi = G(hi);
+            // g decreasing: gLo should be > 0 (feet cropped at the near end), gHi < 0
+            // (feet above the edge at the far end). If the root lies outside [lo,hi]
+            // the bracket clamps to the nearest endpoint (a very wide lens / tiny span
+            // can fit the feet even at 0.5 m).
+            if (gLo <= 0.0) return (float)lo;
+            if (gHi >= 0.0) return (float)hi;
+            for (int i = 0; i < 200; i++)
+            {
+                double mid = 0.5 * (lo + hi);
+                if (G(mid) > 0.0) lo = mid; else hi = mid;
+                if (hi - lo < 1e-4) break;
+            }
+            return (float)(0.5 * (lo + hi));
         }
 
         private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

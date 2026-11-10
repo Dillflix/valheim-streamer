@@ -59,8 +59,15 @@ internal sealed class SimpleFollowCamera : IDisposable
     // the composer's screen X between solo and the opposite thirds.
     private const float CombatConeDot = 0.17364818f; // cos(80 deg): the player forward cone.
     private const float SoloScreenX = -(1f / 6f);     // Solo LEFT THIRDS (operator order): the body fills frame-left.
-    private const float SoloScreenY = 0.05f;          // Legacy seed/fallback aim-Y; the live aim is solved by FramingFill.
     private const float ThirdsScreenX = 1f / 6f;      // +/-1/6: the enemy's opposite thirds line.
+    // EYELINE-ON-TOP-THIRD doctrine (operator order 2026-11-10): the player's
+    // EYELINE sits on the frame's top-third line (Y-down -1/6) and the camera
+    // DISTANCE is solved so the feet land on the bottom edge. NO head margins / NO
+    // headroom anywhere - the eyeline pin owns the vertical composition. Only the
+    // feet margin survives (feet-in-frame is rule 1). EyelineFraction is the tunable
+    // the operator adjusts from footage; only character height is available.
+    private const float EyelineFraction = 0.93f;      // Eye height = 0.93 * character height (tunable).
+    private const float EyelineScreenY = -(1f / 6f);  // Top-third line (Y-down; negative = above centre).
     // Combat eases to a LONGER lens than solo for a compressed, pulled-in
     // battle look; the thirds solve fits both actors at any fov. A full-frame
     // focal length maps to a vertical fov by 2*atan(12/mm): solo defaults to
@@ -97,13 +104,6 @@ internal sealed class SimpleFollowCamera : IDisposable
     // engaged enemy (rule 2) stay framed at a fixed focal length. The composer
     // keeps pinning the PLAYER, so native group framing (which needs a group
     // LookAt) is deliberately NOT used - rule-1 hard limits must stay on the player.
-    // FramingSize-style fill: the fixed lens never bends; the camera distance AND the
-    // aim-pin's screen Y are solved together each frame from the player's live body
-    // geometry so the body spans FramingSizeConst of the frame height (fills, not
-    // merely fits). TopGapShare > 0.5 puts more of the leftover gap above the head
-    // (headroom) than below the feet.
-    private const float FramingSizeConst = 0.9f;       // Body spans ~90% of frame height (operator: closer, larger character).
-    private const float TopGapShare = 0.6f;            // 60% of the leftover gap above the head, 40% below the feet.
     // Screen-space composition layer (pure policy): solo side follows lateral motion
     // (lead room), combat shares a small lead-room bias, and the group vertical
     // balance is folded into the fill via CombineGroupSpans. This adapter measures
@@ -121,12 +121,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     private bool hasVelocitySample;
     private float soloReasonRight;                      // Diagnostic latch: >0 when the solo side is RIGHT.
     private const float AimEaseSeconds = 0.8f;         // SmoothDamp settle for the eased aim-Y.
-    private float aimScreenY = SoloScreenY;            // Live eased aim-pin Y-down fraction (seeded to the legacy pin).
+    private float aimScreenY = EyelineScreenY;          // Live eased aim-pin Y-down fraction (seeded near the eyeline).
     private float aimScreenYVelocity;
-    private const float PlayerFeetMargin = 0.25f;      // Metres of air below the player's feet.
-    private const float PlayerHeadMargin = 0.35f;      // Metres of air above the player's head.
-    private const float EnemyFeetMargin = 0.15f;       // Tighter enemy margins: it is the secondary subject.
-    private const float EnemyHeadMargin = 0.25f;
+    private const float PlayerFeetMargin = 0.25f;      // Metres of air below the player's feet (feet margin STAYS).
+    private const float EnemyFeetMargin = 0.15f;       // Tighter enemy feet margin: it is the secondary subject.
     private const float GroupFullMetres = 10f;         // Sparse gate: full weight within this planar separation.
     private const float GroupZeroMetres = 16f;         // Beyond this the enemy never affects framing (still fights/thirds).
     private const float DollyMaxMetres = 18f;          // Absolute cap on the presented orbit radius.
@@ -145,7 +143,6 @@ internal sealed class SimpleFollowCamera : IDisposable
     private const float TightProbeMargin = 0.15f;       // Back off the solid hit by this before using it as the cap.
     private const float TightProbeExtra = 0.5f;         // Probe this far past the desired fill distance (headroom to detect "clear").
     private const float TightFloor = 1.3f;              // Deoccluder min distance (1) + margin: never closer than this.
-    private const float TightTopGapMin = 0.01f;         // Close-up headroom: the head may ride the frame top (operator rule).
     private const float TightShrinkSeconds = 0.25f;     // Fast collapse when the room shrinks (target < current).
     private const float TightRecoverSeconds = 1.5f;     // Slow re-open when the room grows (target > current), no pumping.
     private const float TightBandFull = 0.85f;          // Visible-body fraction >= this reads as a full shot.
@@ -158,10 +155,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
 
-    // Slightly center-left with a little headroom. Cinemachine screen guides
-    // are Y-down, so positive Y places the aim point below frame centre,
-    // leaving room above the character's head.
-    private static readonly Vector2 ScreenPosition = new Vector2(SoloScreenX, SoloScreenY);
+    // Initial composer pin: left thirds, aim near the eyeline line. Cinemachine
+    // screen guides are Y-down; the live aim-Y is solved each frame by the eyeline
+    // doctrine (AimYForEyeline) and eased onto the composer.
+    private static readonly Vector2 ScreenPosition = new Vector2(SoloScreenX, EyelineScreenY);
 
     internal bool TrySolve(Character actor, BroadcastSettings settings, Camera output, float dt,
         out Vector3 position, out Quaternion rotation, out float fov)
@@ -234,7 +231,7 @@ internal sealed class SimpleFollowCamera : IDisposable
                 $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
                     ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
-                $"; fill d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "") +
+                $"; eyeline d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "") +
                 (tightActive
                     ? $"; tight d={availableDistance:F1}m frame={(tightFrameFraction >= TightBandFull ? "full" : tightFrameFraction >= TightBandMedium ? "medium" : "close-up")} {tightFrameFraction * 100f:F0}%"
                     : "") +
@@ -304,19 +301,17 @@ internal sealed class SimpleFollowCamera : IDisposable
             soloReasonRight = comp.Side == SoloCompositionSide.Right ? 1f : 0f;
             leadOffsetX = Mathf.SmoothDamp(leadOffsetX, 0f, ref leadOffsetVelocity, LeadEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
             soloScreenX = Mathf.SmoothDamp(soloScreenX, comp.PlayerScreenX, ref soloScreenXVelocity, SoloXEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
-            // Solo fill: solve BOTH the distance and the aim-Y from the player's body
-            // so the body fills FramingSizeConst of the frame. SimpleFollowDistance is
-            // NOT a floor here (demoted to a seed) - the dolly may come closer than the
-            // configured distance; that is the fill's whole point.
-            float soloFill = SolvePlayerDolly(actor, soloFov, aimHeight, subjectPosition, out float soloFillAimY, out float soloBelow, out float soloAbove);
-            // Tight-space: cap the radius by the physical boom room and, when cramped,
-            // switch the aim to the head-pinned cropped composition (feet crop up). The
-            // thirds/lead X flow is COMPLETELY unchanged (operator: maintain thirds).
+            // Solo eyeline: solve the camera DISTANCE so the player's feet land on the
+            // bottom edge with the eyeline pinned on the top-third line. SimpleFollowDistance
+            // is NOT a floor here (seed/fallback only). The aim-Y is derived from the LIVE
+            // eased dolly radius so aim and boom agree.
+            float soloFill = SolvePlayerDolly(actor, soloFov, aimHeight, out float soloAimToEye);
+            // Tight-space: cap the radius by the physical boom room. The eyeline aim is
+            // re-solved at the capped distance so the eye NEVER leaves the top-third line
+            // (the crop eats the feet). Thirds/lead X flow is unchanged.
             UpdateBoomRoom(subjectPosition, aimHeight, soloFill, dt);
-            float soloAimTarget = ResolveTightAim(soloFov, soloFill, soloFillAimY, soloBelow, soloAbove);
-            // Physical space wins: cap by the boom room. The floor is TightFloor (1.3)
-            // so tight spaces can bring the camera in below the 2 m fill minimum.
             desiredDollyRadius = Mathf.Clamp(Mathf.Min(soloFill, availableDistance), TightFloor, DollyMaxMetres);
+            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, aimHeight, actor);
             EaseAim(soloAimTarget, soloScreenX + leadOffsetX, dt);
             return;
         }
@@ -387,22 +382,15 @@ internal sealed class SimpleFollowCamera : IDisposable
         float sideSign = combatSide >= 0 ? 1f : -1f;
         float engagedX = -sideSign * ThirdsScreenX + leadOffsetX; // Enemy on side => player opposite, shifted by the shared lead.
         float combatScreenX = Mathf.Lerp(soloScreenX + leadOffsetX, engagedX, combatBlend);
-        // Dolly fill: the fixed (blended) lens must FILL the frame with the player's
-        // body (rule 1), and fit the engaged enemy while it reads as one picture with
-        // the player (rule 2, sparse-gated). The lens never bends - the fit is absorbed
-        // by the orbit radius; the player fill also yields the aim-Y to ease toward.
-        // In combat with a live framed enemy the fill uses GROUP spans so a low
-        // creature lifts the aim / a tall enemy adds headroom (vertical balance).
+        // Eyeline dolly: the fixed (blended) lens never bends. The player DISTANCE is
+        // solved so the feet land on the bottom edge with the eyeline on the top-third
+        // line (rule 1 + the doctrine). The enemy may still pull the camera farther to
+        // fit (rule 2, sparse-gated), but the eyeline owns the VERTICAL aim, period -
+        // no group-span aim blending. The eye NEVER leaves its line, in or out of combat.
         float lensFov = Mathf.Clamp(combatFov, 10f, 100f);
-        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, subjectPosition, out float fillAimY, out float combatBelow, out float combatAbove);
-        // Tight-space: probe the physical boom room this frame (behavior B.1/B.2).
+        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, out float combatAimToEye);
+        // Tight-space: probe the physical boom room this frame.
         UpdateBoomRoom(subjectPosition, aimHeight, playerNeed, dt);
-        // When cramped, the aim comes from the player-only cropped solve (enemy fit is
-        // already best-effort; documented decision #14) - the head stays pinned, feet
-        // crop up. Thirds/lead X unchanged. Otherwise the fill aim owns the shot.
-        float combatAimTarget = ResolveTightAim(lensFov, playerNeed, fillAimY, combatBelow, combatAbove);
-        // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
-        EaseAim(combatAimTarget, combatScreenX, dt);
         float effectiveNeed = playerNeed;
         dollyHeadBand = false;
         if (combatTargetId != 0)
@@ -410,11 +398,15 @@ internal sealed class SimpleFollowCamera : IDisposable
             float enemyNeed = SolveEnemyDolly(lensFov, aimHeight, subjectPosition, radius, playerNeed);
             if (enemyNeed > 0f) effectiveNeed = Mathf.Max(playerNeed, enemyNeed);
         }
-        // Physical space wins (behavior B.4): the enemy need is also capped by the
-        // boom room - min() applied AFTER the max chain, before the clamp. Floor
-        // TightFloor (1.3) so tight combat can pull the camera in below 2 m.
+        // Physical space wins: the enemy need is also capped by the boom room - min()
+        // applied AFTER the max chain, before the clamp. Floor TightFloor (1.3).
         effectiveNeed = Mathf.Min(effectiveNeed, availableDistance);
         desiredDollyRadius = Mathf.Clamp(effectiveNeed, TightFloor, DollyMaxMetres);
+        // The eyeline aim is solved from the LIVE eased dolly radius (capped by the boom
+        // room) so the aim and the boom agree; the crop eats the feet in a tight space.
+        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, aimHeight, actor);
+        // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
+        EaseAim(combatAimTarget, combatScreenX, dt);
     }
 
     // Tight-space boom-room probe (behavior B.1/B.2). Sphere-cast from the player
@@ -513,108 +505,51 @@ internal sealed class SimpleFollowCamera : IDisposable
         }
     }
 
-    // FramingSize fill: solve BOTH the orbit radius AND the aim-pin screen Y from the
-    // player's live body so the body spans FramingSizeConst of the frame height at the
-    // fixed lens (fills, not merely fits). Real size: Character.GetHeight() *
-    // lossyScale.y. Returns the fill distance; the SOLVED aim-Y is stored into
-    // fillAimY for the caller to ease the composer toward. No DollyMax cap here (the
-    // player is rule 1); the caller clamps for safety. At 50 mm this lands ~6.5 m
-    // full-frame, not the ~8.2 m the fit-only solve produced.
-    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, Vector3 subjectPosition,
-        out float fillAimY, out float belowAimOut, out float aboveAimOut)
+    // EYELINE dolly: solve the camera DISTANCE at which the player's feet land on the
+    // bottom edge (screenY +0.5) with the EYELINE pinned on the top-third line
+    // (EyelineScreenY). Real size: Character.GetHeight() * lossyScale.y. The eye
+    // height = EyelineFraction * height (same scale clamps as aimHeight); aimToEye =
+    // max(0.01, eyeHeight - aimHeight). No head margin anywhere - only the feet margin
+    // (belowAim = aimHeight + PlayerFeetMargin) survives. Returns the feet-fit distance;
+    // the aim-to-eye is passed out for the caller to re-solve the aim-Y at the LIVE
+    // (eased, boom-capped) radius so aim and boom agree. At 50 mm this lands ~6.25 m.
+    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, out float aimToEye)
     {
-        float height = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
+        float scaleY = Mathf.Max(0.1f, actor.transform.lossyScale.y);
+        float eyeHeight = Mathf.Clamp(actor.GetHeight() * EyelineFraction, 0.5f, 14f) * scaleY;
+        aimToEye = Mathf.Max(0.01f, eyeHeight - aimHeight);
         float belowAim = aimHeight + PlayerFeetMargin;
-        float aboveAim = Mathf.Max(0f, height - aimHeight) + PlayerHeadMargin;
-        // Group vertical balance (behavior C): in combat with a live framed enemy
-        // (weight > 0), combine the player's spans with the enemy's vertical extents
-        // (projected to equivalent metres at the player's planar distance) so the
-        // fill solves a group-consistent aim/dolly - a low creature lifts the aim and
-        // adds dolly, a tall enemy adds headroom. Player-only when solo or w == 0.
-        if (combatTargetId != 0 && TryEnemyGroupSpans(aimHeight, subjectPosition, out float enemyBelowEq, out float enemyAboveEq, out float weight))
+        return EyelineFraming.DistanceForFeetAtEyeline(lensFov, EyelineScreenY, aimToEye, belowAim);
+    }
+
+    // Resolve this frame's aim-Y target: pin the EYELINE on the top-third line at the
+    // LIVE distance (the eased, boom-capped radius) so the eye NEVER leaves its line -
+    // outdoors the feet sit on the bottom edge, in a tight space the distance is capped
+    // and the feet crop automatically while the eyeline holds. Sets the tight
+    // diagnostics (tightActive + visible body fraction) when the room caps the dolly.
+    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float aimHeight, Character actor)
+    {
+        float d = Mathf.Max(0.31f, Mathf.Min(fillDistance, availableDistance));
+        tightActive = availableDistance < fillDistance - 0.1f;
+        float aimY = EyelineFraming.AimYForEyeline(lensFov, EyelineScreenY, aimToEye, d);
+        // Cheap visible-fraction for the "; tight ... frame=<band> NN%" line: the feet
+        // and the head TOP (h - aimHeight above the aim, NO margin) span the full body;
+        // the frame crops the feet first. visibleBelowAim is the metres below the aim
+        // that still sit above the bottom edge at this distance.
+        float belowAimFull = aimHeight + PlayerFeetMargin;
+        float headTopAboveAim = Mathf.Max(0.01f, Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y) - aimHeight);
+        if (tightActive)
         {
-            var group = GroupFramingPolicy.CombineGroupSpans(belowAim, aboveAim, enemyBelowEq, enemyAboveEq, weight);
-            belowAim = group.Below; aboveAim = group.Above;
+            float half = lensFov * 0.5f * Mathf.Deg2Rad;
+            float tanHalf = Mathf.Tan(half);
+            float phiAim = Mathf.Atan(2f * aimY * tanHalf);
+            float bottomAngle = half; // screenY +0.5 -> tan(phi)=tanHalf -> phi=half.
+            float visibleBelowAim = Mathf.Max(0f, d * Mathf.Tan(bottomAngle - phiAim));
+            float fullBody = belowAimFull + headTopAboveAim;
+            tightFrameFraction = fullBody > 0f ? Mathf.Clamp01((visibleBelowAim + headTopAboveAim) / fullBody) : 1f;
         }
-        belowAimOut = belowAim; aboveAimOut = aboveAim;
-        FramingFillResult fill = GroupFramingPolicy.FramingFill(
-            lensFov, belowAim, aboveAim, FramingSizeConst, TopGapShare);
-        fillAimY = fill.AimScreenY;
-        return fill.DistanceMetres;
-    }
-
-    // Tight-space resolve (behavior B.3/B.5): decide this frame's aim-Y target and
-    // the radius cap given the solved fill distance, the body spans and the smoothed
-    // boom room. When the room is >= the fill distance (within a small deadband) we
-    // are NOT cramped - keep the fill aim and the fill distance. When the room is
-    // smaller, TIGHT MODE: the camera sits at the available distance and the aim
-    // comes from CroppedFraming (head pinned with its headroom, feet crop up). The
-    // visible-body fraction drives the diagnostics band. Returns the aim-Y target to
-    // ease toward; writes the frame fraction and sets tightActive.
-    private float ResolveTightAim(float lensFov, float fillDistance, float fillAimY, float belowAim, float aboveAim)
-    {
-        tightActive = false;
-        tightFrameFraction = 1f;
-        float avail = availableDistance;
-        if (avail >= fillDistance - 0.1f) return fillAimY; // Room enough: the fill owns the shot.
-        tightActive = true;
-        // Headroom SHRINKS as the shot crops (operator rule: in a medium close-up
-        // the head may ride the frame top). At the fill boundary it matches the
-        // full shot's gap (6%), collapsing to near-zero by the close-up floor so
-        // the cropped frame is all character, no dead sky.
-        float fillTopGap = TopGapShare * (1f - FramingSizeConst);
-        float nearness = Mathf.InverseLerp(fillDistance, TightFloor, avail);
-        float topGap = Mathf.Lerp(fillTopGap, TightTopGapMin, nearness);
-        // The head MARGIN is the real negative space at close range: the solver
-        // pins head+margin at the top, and 0.35 m of air subtends 20-35% of the
-        // frame inside 2-4 m. Operator rule: NO safety margin when the camera is
-        // close - the margin tapers fully to zero so the frame top is the actual
-        // top of the head at the close-up floor.
-        float aboveTight = Mathf.Max(0.01f, aboveAim - nearness * PlayerHeadMargin);
-        float d = Mathf.Max(0.51f, avail);
-        CroppedFramingResult crop = GroupFramingPolicy.CroppedFraming(lensFov, d, aboveTight, belowAim, topGap);
-        tightFrameFraction = crop.VisibleBodyFraction;
-        return crop.AimScreenY;
-    }
-
-    // Project the engaged enemy's vertical extents (below/above the PLAYER's aim
-    // line) to equivalent metres at the player's planar distance, for the group
-    // vertical balance. equivalentMetres = tan(angleFromAimLine) * playerPlanarDist,
-    // clamped to [0, 6]. The angles reuse the presented camera pose (same model as
-    // RequiredDistanceForEnemy). Returns false (player-only solve) when there is no
-    // live enemy Character or the sparse weight is zero.
-    private bool TryEnemyGroupSpans(float aimHeight, Vector3 subjectPosition,
-        out float enemyBelowEq, out float enemyAboveEq, out float weight)
-    {
-        enemyBelowEq = enemyAboveEq = weight = 0f;
-        Character? enemy = FindCharacter(combatTargetId);
-        if (!enemy) return false;
-        float scale = Mathf.Max(0.1f, enemy!.transform.lossyScale.y);
-        float enemyHeight = Mathf.Clamp(enemy.GetHeight(), 0.3f, 24f) * scale;
-        Vector3 enemyPos = enemy.transform.position;
-        Vector3 planar = enemyPos - subjectPosition; planar.y = 0f;
-        if (!TargetRoster.Finite(planar)) return false;
-        float sep = planar.magnitude;
-        weight = GroupFramingPolicy.GroupWeight(sep, GroupFullMetres, GroupZeroMetres);
-        if (weight <= 0f) return false;
-        // The player's planar (camera-space) distance is the live orbit radius; the
-        // enemy stands on the ground plane, so its feet are at the aim line minus
-        // aimHeight and its head at (height - aimHeight) above. Convert each extent to
-        // an equivalent vertical metre at the PLAYER's planar distance via the same
-        // small-angle tangent relation the enemy-need solve uses: the apparent angle
-        // of a vertical extent v at the enemy's planar distance (orbit radius + axial
-        // offset) is atan(v / dEnemy); the equivalent metre at the player distance is
-        // tan(that angle) * dPlayer = v * dPlayer / dEnemy.
-        float dPlayer = Mathf.Max(1f, dollyRadius);
-        float axis = orbit!.HorizontalAxis.Value * Mathf.Deg2Rad;
-        Vector3 camForward = new Vector3(Mathf.Sin(axis), 0f, Mathf.Cos(axis));
-        float axialOffset = Vector3.Dot(planar, camForward);
-        float dEnemy = Mathf.Max(1f, dPlayer + axialOffset);
-        float enemyBelowMetres = aimHeight;                       // aim line down to the enemy feet.
-        float enemyAboveMetres = Mathf.Max(0f, enemyHeight - aimHeight); // aim line up to the enemy head.
-        enemyBelowEq = Mathf.Clamp(enemyBelowMetres * dPlayer / dEnemy, 0f, 6f);
-        enemyAboveEq = Mathf.Clamp(enemyAboveMetres * dPlayer / dEnemy, 0f, 6f);
-        return true;
+        else tightFrameFraction = 1f;
+        return aimY;
     }
 
     // The player orbit radius at which the engaged enemy also fits vertically, the
@@ -643,8 +578,10 @@ internal sealed class SimpleFollowCamera : IDisposable
         Vector3 camForward = new Vector3(Mathf.Sin(axis), 0f, Mathf.Cos(axis)); // cam->player planar direction.
         float axialOffset = Vector3.Dot(planar, camForward);
         // Enemy vertical spans from the player aim point (enemy feet on ground plane).
+        // NO head margin on the above-span (eyeline doctrine: head margins eradicated);
+        // the enemy feet margin STAYS (feet-in-frame content rule).
         float enemyBelow = aimHeight + EnemyFeetMargin;
-        float enemyAbove = Mathf.Max(0f, enemyHeight - aimHeight) + EnemyHeadMargin;
+        float enemyAbove = Mathf.Max(0.01f, enemyHeight - aimHeight);
         float enemyNeedFull = GroupFramingPolicy.RequiredDistanceForEnemy(
             lensFov, aimScreenY, enemyBelow, enemyAbove, axialOffset);
         float enemyNeed = enemyNeedFull;
@@ -722,7 +659,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (aim != null)
         {
             ScreenComposerSettings composition = aim.Composition;
-            composition.ScreenPosition = new Vector2(SoloScreenX, SoloScreenY);
+            composition.ScreenPosition = new Vector2(SoloScreenX, EyelineScreenY);
             aim.Composition = composition;
         }
     }
@@ -796,7 +733,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         // Tight-space: re-seed the boom room to "open" (0 => the next solve seeds it to
         // the desired fill distance) so a fresh vantage/warp never starts cramped.
         availableDistance = 0f; availableVelocity = 0f; tightActive = false; tightFrameFraction = 1f;
-        aimScreenY = SoloScreenY; aimScreenYVelocity = 0f; // Reseed the eased aim to the legacy pin.
+        aimScreenY = EyelineScreenY; aimScreenYVelocity = 0f; // Reseed the eased aim near the eyeline line.
         // Screen-space composition: side back to LEFT, lead 0, velocity sample voided.
         composition.Reset();
         soloScreenX = SoloScreenX; soloScreenXVelocity = 0f;
