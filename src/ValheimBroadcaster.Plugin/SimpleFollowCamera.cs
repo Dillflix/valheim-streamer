@@ -93,7 +93,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     // geometry so the body spans FramingSizeConst of the frame height (fills, not
     // merely fits). TopGapShare > 0.5 puts more of the leftover gap above the head
     // (headroom) than below the feet.
-    private const float FramingSizeConst = 0.8f;       // Body spans ~80% of frame height.
+    private const float FramingSizeConst = 0.85f;      // Body spans ~85% of frame height (operator: closer, larger character).
     private const float TopGapShare = 0.6f;            // 60% of the leftover gap above the head, 40% below the feet.
     private const float AimEaseSeconds = 0.8f;         // SmoothDamp settle for the eased aim-Y.
     private float aimScreenY = SoloScreenY;            // Live eased aim-pin Y-down fraction (seeded to the legacy pin).
