@@ -565,8 +565,13 @@ internal sealed class SimpleFollowCamera : IDisposable
         float fillTopGap = TopGapShare * (1f - FramingSizeConst);
         float nearness = Mathf.InverseLerp(fillDistance, TightFloor, avail);
         float topGap = Mathf.Lerp(fillTopGap, TightTopGapMin, nearness);
+        // The head MARGIN is the real negative space at close range: the solver
+        // pins head+margin at the top, and 0.35 m of air subtends 20-35% of the
+        // frame inside 2-4 m. Taper the margin away with the crop so the pinned
+        // point converges on the actual head.
+        float aboveTight = Mathf.Max(0.02f, aboveAim - nearness * (PlayerHeadMargin - 0.03f));
         float d = Mathf.Max(0.51f, avail);
-        CroppedFramingResult crop = GroupFramingPolicy.CroppedFraming(lensFov, d, aboveAim, belowAim, topGap);
+        CroppedFramingResult crop = GroupFramingPolicy.CroppedFraming(lensFov, d, aboveTight, belowAim, topGap);
         tightFrameFraction = crop.VisibleBodyFraction;
         return crop.AimScreenY;
     }
