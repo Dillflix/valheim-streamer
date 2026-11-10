@@ -39,6 +39,31 @@ namespace ValheimBroadcaster.Core
         { DistanceMetres = distanceMetres; AimScreenY = aimScreenY; }
     }
 
+    /// <summary>
+    /// The solved composition when the camera CANNOT reach the full-fill distance
+    /// and must sit CLOSER, inside a tight space. The head is pinned with its
+    /// headroom (the head point projects to the fixed top target screenY = -0.5 +
+    /// topGap) and the frame bottom CROPS the body feet-up as the space shrinks.
+    /// Unlike <see cref="FramingFillResult"/> (which solves the distance to FILL),
+    /// this takes the distance as given and reports how much of the body survives.
+    /// </summary>
+    public readonly struct CroppedFramingResult
+    {
+        /// <summary>Aim-pin screen Y (Y-down fraction of the half-frame) that pins the
+        /// head at its target screen position at the given distance, clamped to the
+        /// composer's [-0.45, 0.45] limit.</summary>
+        public readonly float AimScreenY;
+        /// <summary>Metres of body visible below the aim line before the bottom frame
+        /// edge crops it (>= 0; the head side is always kept).</summary>
+        public readonly float VisibleBelowAimMetres;
+        /// <summary>Fraction of the full body (above + belowAimFull) still in frame,
+        /// clamped [0, 1]. 1 = the whole body is visible (full shot); shrinks toward 0
+        /// as the camera is forced closer (feet crop away first).</summary>
+        public readonly float VisibleBodyFraction;
+        internal CroppedFramingResult(float aimScreenY, float visibleBelowAimMetres, float visibleBodyFraction)
+        { AimScreenY = aimScreenY; VisibleBelowAimMetres = visibleBelowAimMetres; VisibleBodyFraction = visibleBodyFraction; }
+    }
+
     public static class GroupFramingPolicy
     {
         private const double Deg2Rad = Math.PI / 180.0;
@@ -175,6 +200,69 @@ namespace ValheimBroadcaster.Core
             // Invert phi_aim back to the composer's Y-down screen fraction.
             double aimScreenY = Math.Tan(phiAimSolved) / (2.0 * tanHalf);
             return new FramingFillResult((float)d, (float)aimScreenY);
+        }
+
+        /// <summary>
+        /// TIGHT-SPACE cropped composition. When the physical boom room
+        /// (<paramref name="availableDistanceMetres"/>) is less than the full-fill
+        /// distance the camera cannot pull back far enough to fit the whole body at
+        /// the fixed lens. Instead of bending the lens (inviolate) we PIN THE HEAD
+        /// with its headroom and let the bottom frame edge CROP the body feet-up: the
+        /// shot degrades gracefully full shot -> medium close -> close-up as the space
+        /// shrinks, while the head is always kept.
+        ///
+        /// The head point (aim + <paramref name="aboveAimMetres"/>) is forced to the
+        /// fixed top target screenY = -0.5 + <paramref name="topGapFraction"/>, whose
+        /// angle below the optical axis is htheta = atan(2*(-0.5+topGap)*tan(vfov/2))
+        /// (negative, toward the top edge). At this distance the head sits at
+        /// phi_aim - atan(above/d) = htheta, so phi_aim = htheta + atan(above/d) and
+        /// aimScreenY = tan(phi_aim)/(2*tan(vfov/2)), clamped to the composer's
+        /// [-0.45, 0.45] limit. The bottom frame edge is at btheta = atan(2*0.5*
+        /// tan(vfov/2)); the body visible below the aim is d*tan(btheta - phi_aim)
+        /// (floored at 0). The visible body fraction is clamp01((visibleBelow + above)
+        /// / (belowAimFull + above)). At the full-fill distance visibleBelow reaches
+        /// belowAimFull and the fraction is ~1 (reproduces the FramingFill composition);
+        /// closer distances give a decreasing fraction.
+        /// </summary>
+        public static CroppedFramingResult CroppedFraming(
+            float fixedVfovDeg, float availableDistanceMetres, float aboveAimMetres,
+            float belowAimFullMetres, float topGapFraction)
+        {
+            if (!Finite(fixedVfovDeg) || fixedVfovDeg <= 1f || fixedVfovDeg >= 170f)
+                throw new ArgumentOutOfRangeException(nameof(fixedVfovDeg));
+            if (!Finite(availableDistanceMetres) || availableDistanceMetres <= 0.5f)
+                throw new ArgumentOutOfRangeException(nameof(availableDistanceMetres));
+            if (!Finite(aboveAimMetres) || aboveAimMetres <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(aboveAimMetres));
+            if (!Finite(belowAimFullMetres) || belowAimFullMetres <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(belowAimFullMetres));
+            if (!Finite(topGapFraction) || topGapFraction < 0f || topGapFraction > 0.4f)
+                throw new ArgumentOutOfRangeException(nameof(topGapFraction));
+
+            double half = fixedVfovDeg * 0.5 * Deg2Rad;
+            double tanHalf = Math.Tan(half);
+            double d = availableDistanceMetres;
+
+            // Head target screen Y (Y-down, negative = above centre) -> its angle below
+            // the optical axis. htheta is negative (the head is toward the top edge).
+            double headScreenY = -0.5 + topGapFraction;
+            double htheta = Math.Atan(2.0 * headScreenY * tanHalf);
+            // Pin the head: phi_aim - atan(above/d) = htheta.
+            double phiAim = htheta + Math.Atan(aboveAimMetres / d);
+            double aimScreenY = Math.Tan(phiAim) / (2.0 * tanHalf);
+            // Clamp the aim to the composer's limit; the effective aim angle follows.
+            double aimClamped = aimScreenY < -0.45 ? -0.45 : (aimScreenY > 0.45 ? 0.45 : aimScreenY);
+            double phiAimEff = Math.Atan(2.0 * aimClamped * tanHalf);
+
+            // Bottom frame edge angle, then the body visible below the aim at this
+            // distance (floored at 0 - a very close shot may crop above the aim line).
+            double btheta = Math.Atan(2.0 * 0.5 * tanHalf);
+            double visibleBelow = d * Math.Tan(btheta - phiAimEff);
+            if (visibleBelow < 0.0) visibleBelow = 0.0;
+
+            double frac = (visibleBelow + aboveAimMetres) / (belowAimFullMetres + aboveAimMetres);
+            if (frac < 0.0) frac = 0.0; else if (frac > 1.0) frac = 1.0;
+            return new CroppedFramingResult((float)aimClamped, (float)visibleBelow, (float)frac);
         }
 
         /// <summary>

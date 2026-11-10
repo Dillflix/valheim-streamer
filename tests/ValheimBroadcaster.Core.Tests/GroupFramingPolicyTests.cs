@@ -23,6 +23,12 @@ internal static class GroupFramingPolicyTests
         yield return ("A small low creature at w=1 grows the group below span and lifts the fill aim toward the head", GroupFillSmallCreatureTiltsDown);
         yield return ("The fill solve rejects non-finite and out-of-range inputs", FillContracts);
         yield return ("Combining group spans rejects non-finite and out-of-range inputs", CombineGroupSpansContracts);
+        yield return ("The cropped tight-space solve pins the head on its top target edge", CroppedHeadPinned);
+        yield return ("The cropped bottom edge crops the body feet-up where predicted", CroppedBottomCrops);
+        yield return ("At the full-fill distance the cropped solve reproduces the fill composition", CroppedFullDistanceReproducesFill);
+        yield return ("Closer distances give a strictly decreasing visible body fraction", CroppedFractionDecreases);
+        yield return ("The real 50mm tight ladder lands in its full/medium/close-up bands", CroppedRealLadder);
+        yield return ("The cropped solve rejects non-finite and out-of-range inputs", CroppedContracts);
         yield return ("The policy rejects non-finite and out-of-range inputs", ContractValidation);
     }
 
@@ -287,6 +293,98 @@ internal static class GroupFramingPolicyTests
         double head = ProjectScreenY(vfov, grouped.AimScreenY, group.Above, grouped.DistanceMetres, -1);
         Near(0.5 - bottomGap, feet, "grouped feet land on target", 1e-3);
         Near(-0.5 + topGap, head, "grouped head lands on target", 1e-3);
+    }
+
+    private static void CroppedHeadPinned()
+    {
+        // In tight space the head must land EXACTLY on its top target edge (-0.5 +
+        // topGap) at the given distance, whatever the distance (while the aim is not
+        // clamped). Verify across a spread of fov / distance / span / topGap combos by
+        // forward-projecting the head through the solved aimScreenY.
+        (float vfov, float d, float above, float belowFull, float top)[] cases =
+        {
+            (26.9915f, 5.0f,  0.73f, 1.77f, 0.06f),
+            (26.9915f, 3.5f,  0.73f, 1.77f, 0.06f),
+            (18.1805f, 6.0f,  0.73f, 1.77f, 0.06f),
+            (35f,      3.0f,  0.90f, 2.00f, 0.08f),
+            (45f,      2.5f,  0.60f, 1.50f, 0.10f),
+        };
+        foreach (var c in cases)
+        {
+            CroppedFramingResult r = GroupFramingPolicy.CroppedFraming(c.vfov, c.d, c.above, c.belowFull, c.top);
+            // Skip the head-pin assertion when the aim is clamped at the composer limit
+            // (a very close shot); then the head cannot stay perfectly on target.
+            if (Math.Abs(r.AimScreenY) >= 0.45f - 1e-4f) continue;
+            double head = ProjectScreenY(c.vfov, r.AimScreenY, c.above, c.d, -1);
+            double headTarget = -0.5 + c.top;
+            Near(headTarget, head, $"head pinned on top target (vfov {c.vfov}, d {c.d})", 1e-3);
+        }
+    }
+
+    private static void CroppedBottomCrops()
+    {
+        // The reported visible-below metres must land exactly on the bottom frame edge
+        // (+0.5) when forward-projected through the solved aim. The body below that
+        // point is cropped; the fraction reflects (visibleBelow + above) / full.
+        const float vfov = 26.9915f, above = 0.73f, belowFull = 1.77f, top = 0.06f;
+        float d = 3.5f;
+        CroppedFramingResult r = GroupFramingPolicy.CroppedFraming(vfov, d, above, belowFull, top);
+        Check(r.VisibleBelowAimMetres > 0f, "expected some body visible below the aim at d=3.5.");
+        double edge = ProjectScreenY(vfov, r.AimScreenY, r.VisibleBelowAimMetres, d, +1);
+        Near(0.5, edge, "visible-below metres land on the bottom frame edge", 2e-3);
+        double expectedFrac = (r.VisibleBelowAimMetres + above) / (belowFull + above);
+        Near(expectedFrac, r.VisibleBodyFraction, "fraction matches visible/full", 1e-4);
+    }
+
+    private static void CroppedFullDistanceReproducesFill()
+    {
+        // At the full-fill distance the body fits; the cropped solve must report a
+        // fraction of ~1 and an aim that matches the FramingFill aim (the two solvers
+        // agree at the boundary). Use the locked 50mm size-0.9 fill.
+        const float vfov = 26.9915f, below = 1.77f, above = 0.73f, size = 0.9f, top = 0.6f;
+        FramingFillResult fill = GroupFramingPolicy.FramingFill(vfov, below, above, size, top);
+        float topGap = top * (1f - size); // 0.06
+        CroppedFramingResult r = GroupFramingPolicy.CroppedFraming(vfov, fill.DistanceMetres, above, below, topGap);
+        Near(fill.AimScreenY, r.AimScreenY, "cropped aim matches the fill aim at full distance", 2e-3);
+        Check(r.VisibleBodyFraction >= 0.99f, $"full-distance fraction should be ~1, got {r.VisibleBodyFraction}.");
+    }
+
+    private static void CroppedFractionDecreases()
+    {
+        // As the camera is forced CLOSER the visible body fraction must strictly
+        // decrease (feet crop away first). Monotone in distance.
+        const float vfov = 26.9915f, above = 0.73f, belowFull = 1.77f, top = 0.06f;
+        float f58 = GroupFramingPolicy.CroppedFraming(vfov, 5.8f, above, belowFull, top).VisibleBodyFraction;
+        float f35 = GroupFramingPolicy.CroppedFraming(vfov, 3.5f, above, belowFull, top).VisibleBodyFraction;
+        float f20 = GroupFramingPolicy.CroppedFraming(vfov, 2.0f, above, belowFull, top).VisibleBodyFraction;
+        Check(f58 > f35 && f35 > f20, $"fraction not strictly decreasing with distance: {f58}, {f35}, {f20}.");
+        Check(f58 >= 0.99f, $"d=5.8 should still be ~full, got {f58}.");
+    }
+
+    private static void CroppedRealLadder()
+    {
+        // The locked 50mm ladder (26.9915 deg, above 0.73, belowFull 1.77, topGap 0.06):
+        // d=5.81 full (~1.0), d=3.5 medium band (0.45-0.85), d=2.0 close-up (< 0.45).
+        const float vfov = 26.9915f, above = 0.73f, belowFull = 1.77f, top = 0.06f;
+        float full = GroupFramingPolicy.CroppedFraming(vfov, 5.81f, above, belowFull, top).VisibleBodyFraction;
+        float med = GroupFramingPolicy.CroppedFraming(vfov, 3.5f, above, belowFull, top).VisibleBodyFraction;
+        float close = GroupFramingPolicy.CroppedFraming(vfov, 2.0f, above, belowFull, top).VisibleBodyFraction;
+        Check(full >= 0.85f, $"d=5.81 not in the full band: {full}.");
+        Check(med >= 0.45f && med < 0.85f, $"d=3.5 not in the medium band: {med}.");
+        Check(close < 0.45f, $"d=2.0 not in the close-up band: {close}.");
+    }
+
+    private static void CroppedContracts()
+    {
+        Throws(() => GroupFramingPolicy.CroppedFraming(1f, 5f, 0.7f, 1.7f, 0.06f));        // fov <= 1
+        Throws(() => GroupFramingPolicy.CroppedFraming(170f, 5f, 0.7f, 1.7f, 0.06f));      // fov >= 170
+        Throws(() => GroupFramingPolicy.CroppedFraming(float.NaN, 5f, 0.7f, 1.7f, 0.06f));
+        Throws(() => GroupFramingPolicy.CroppedFraming(27f, 0.5f, 0.7f, 1.7f, 0.06f));     // distance <= 0.5
+        Throws(() => GroupFramingPolicy.CroppedFraming(27f, 5f, 0f, 1.7f, 0.06f));         // above <= 0
+        Throws(() => GroupFramingPolicy.CroppedFraming(27f, 5f, 0.7f, 0f, 0.06f));         // belowFull <= 0
+        Throws(() => GroupFramingPolicy.CroppedFraming(27f, 5f, 0.7f, 1.7f, -0.01f));      // topGap < 0
+        Throws(() => GroupFramingPolicy.CroppedFraming(27f, 5f, 0.7f, 1.7f, 0.41f));       // topGap > 0.4
+        Throws(() => GroupFramingPolicy.CroppedFraming(27f, float.PositiveInfinity, 0.7f, 1.7f, 0.06f));
     }
 
     private static void CombineGroupSpansContracts()
