@@ -228,6 +228,37 @@ namespace ValheimBroadcaster.Core
         }
 
         /// <summary>
+        /// Combine the PLAYER's own vertical spans with an engaged enemy's spans
+        /// (both measured below/above the player's aim line, the enemy's already
+        /// projected to equivalent metres at the player's planar distance by the
+        /// caller) into GROUP spans, weighted by the sparse-gate group weight. The
+        /// FramingFill solve then receives group-consistent spans so the aim and
+        /// dolly balance the whole picture instead of the player alone: a small low
+        /// creature grows the below span (aim tilts DOWN, empty sky shrinks); a tall
+        /// enemy grows the above span (headroom adapts).
+        ///
+        /// groupBelow = Lerp(playerBelow, max(playerBelow, enemyBelowEq), weight);
+        /// groupAbove = Lerp(playerAbove, max(playerAbove, enemyAboveEq), weight).
+        /// At weight 0 the result is the player's own spans (solo identity); at
+        /// weight 1 it is the element-wise max (the group must contain both). The
+        /// max keeps the player always framed - the group never crops the player to
+        /// fit a smaller enemy. Returns (below, above) as a tuple; the caller folds
+        /// margins before calling and feeds the result straight to FramingFill.
+        /// </summary>
+        public static (float Below, float Above) CombineGroupSpans(
+            float playerBelow, float playerAbove, float enemyBelowEq, float enemyAboveEq, float weight)
+        {
+            if (!Finite(playerBelow) || playerBelow < 0f) throw new ArgumentOutOfRangeException(nameof(playerBelow));
+            if (!Finite(playerAbove) || playerAbove < 0f) throw new ArgumentOutOfRangeException(nameof(playerAbove));
+            if (!Finite(enemyBelowEq) || enemyBelowEq < 0f) throw new ArgumentOutOfRangeException(nameof(enemyBelowEq));
+            if (!Finite(enemyAboveEq) || enemyAboveEq < 0f) throw new ArgumentOutOfRangeException(nameof(enemyAboveEq));
+            if (!Finite(weight) || weight < 0f || weight > 1f) throw new ArgumentOutOfRangeException(nameof(weight));
+            float below = playerBelow + (Math.Max(playerBelow, enemyBelowEq) - playerBelow) * weight;
+            float above = playerAbove + (Math.Max(playerAbove, enemyAboveEq) - playerAbove) * weight;
+            return (below, above);
+        }
+
+        /// <summary>
         /// Head-band fallback for an enemy too tall to fit full-body within the
         /// dolly cap. Keeps the enemy's HEAD in frame (feet may crop): the aboveAim
         /// span is unchanged (head top + margin), and the belowAim span is REDUCED

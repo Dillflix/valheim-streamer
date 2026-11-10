@@ -193,6 +193,7 @@ internal static class Program
             .Concat(OcclusionRecoveryPolicyTests.Cases())
             .Concat(CombatFramingPolicyTests.Cases())
             .Concat(GroupFramingPolicyTests.Cases())
+            .Concat(ScreenCompositionPolicyTests.Cases())
             .Concat(ObserverContextTests.Cases()).ToArray();
 
         int failed = 0;

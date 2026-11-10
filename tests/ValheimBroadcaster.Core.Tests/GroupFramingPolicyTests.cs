@@ -18,7 +18,11 @@ internal static class GroupFramingPolicyTests
         yield return ("A symmetric body with symmetric gaps centres the aim on the span", FillSymmetricCentres);
         yield return ("The real solo and combat fill cases land in their expected distance bands", FillRealCases);
         yield return ("A full-frame fill (size 1) packs the body edge-to-edge with no gap", FillFullFrame);
+        yield return ("Combining group spans: w=0 is player identity, w=1 is element-wise max", CombineGroupSpansEndpoints);
+        yield return ("Combining group spans lerps the midpoint between identity and max", CombineGroupSpansMidpoint);
+        yield return ("A small low creature at w=1 grows the group below span and lifts the fill aim toward the head", GroupFillSmallCreatureTiltsDown);
         yield return ("The fill solve rejects non-finite and out-of-range inputs", FillContracts);
+        yield return ("Combining group spans rejects non-finite and out-of-range inputs", CombineGroupSpansContracts);
         yield return ("The policy rejects non-finite and out-of-range inputs", ContractValidation);
     }
 
@@ -233,6 +237,68 @@ internal static class GroupFramingPolicyTests
         double head = ProjectScreenY(26.9915f, r.AimScreenY, 0.73f, r.DistanceMetres, -1);
         Near(0.5, feet, "full-frame feet on the bottom edge", 1e-3);
         Near(-0.5, head, "full-frame head on the top edge", 1e-3);
+    }
+
+    private static void CombineGroupSpansEndpoints()
+    {
+        // w = 0: the group is exactly the player's own spans (solo identity).
+        var id = GroupFramingPolicy.CombineGroupSpans(1.77f, 0.73f, 2.6f, 0.4f, 0f);
+        Near(1.77f, id.Below, "w=0 below is the player span");
+        Near(0.73f, id.Above, "w=0 above is the player span");
+        // w = 1: element-wise max (the group must contain both actors).
+        var max = GroupFramingPolicy.CombineGroupSpans(1.77f, 0.73f, 2.6f, 0.4f, 1f);
+        Near(2.6f, max.Below, "w=1 below is the max of player and enemy");
+        Near(0.73f, max.Above, "w=1 above keeps the larger player span (enemy shorter)");
+        // A taller enemy grows the above span at w=1.
+        var tall = GroupFramingPolicy.CombineGroupSpans(1.77f, 0.73f, 0.5f, 2.25f, 1f);
+        Near(1.77f, tall.Below, "w=1 below keeps the larger player span (enemy low feet)");
+        Near(2.25f, tall.Above, "w=1 above is the max for a tall enemy");
+    }
+
+    private static void CombineGroupSpansMidpoint()
+    {
+        // At w = 0.5 each span is halfway between the player value and the max.
+        var mid = GroupFramingPolicy.CombineGroupSpans(1.77f, 0.73f, 2.6f, 1.0f, 0.5f);
+        Near(1.77f + 0.5f * (2.6f - 1.77f), mid.Below, "below lerps to the midpoint");
+        Near(0.73f + 0.5f * (1.0f - 0.73f), mid.Above, "above lerps to the midpoint");
+    }
+
+    private static void GroupFillSmallCreatureTiltsDown()
+    {
+        // Player spans (below 1.77, above 0.73). A small low creature projects to an
+        // equivalent 2.6 m below the player's aim line (its body sits low in frame).
+        // At w = 1 the group below span grows to 2.6 while the above stays 0.73.
+        const float vfov = 18.1805f; // combat lens
+        var player = GroupFramingPolicy.FramingFill(vfov, 1.77f, 0.73f, 0.9f, 0.6f);
+        var group = GroupFramingPolicy.CombineGroupSpans(1.77f, 0.73f, 2.6f, 0.4f, 1f);
+        var grouped = GroupFramingPolicy.FramingFill(vfov, group.Below, group.Above, 0.9f, 0.6f);
+        // Projection-verified direction: growing the BELOW span (the small creature
+        // sits low, far below the player's aim line) forces the solved aim to move UP
+        // toward the head to keep the now-lower feet on their fixed screen target.
+        // Screen Y is Y-down, so "up" is MORE NEGATIVE. The grouped aim is therefore
+        // LESS than (above) the player-only aim. Downstream this means the camera
+        // framing lifts so the low creature's extent is captured instead of empty sky.
+        Check(grouped.AimScreenY < player.AimScreenY,
+            $"group aim did not lift toward the head: player {player.AimScreenY}, group {grouped.AimScreenY}.");
+        // Forward-projection exactness (same oracle as the fill tests): the combined
+        // feet/head land on their target edges for the grouped spans.
+        double gap = 1.0 - 0.9, topGap = 0.6 * gap, bottomGap = 0.4 * gap;
+        double feet = ProjectScreenY(vfov, grouped.AimScreenY, group.Below, grouped.DistanceMetres, +1);
+        double head = ProjectScreenY(vfov, grouped.AimScreenY, group.Above, grouped.DistanceMetres, -1);
+        Near(0.5 - bottomGap, feet, "grouped feet land on target", 1e-3);
+        Near(-0.5 + topGap, head, "grouped head lands on target", 1e-3);
+    }
+
+    private static void CombineGroupSpansContracts()
+    {
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(-1f, 0.7f, 1f, 1f, 0.5f));  // playerBelow < 0
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(1f, -1f, 1f, 1f, 0.5f));    // playerAbove < 0
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(1f, 1f, -1f, 1f, 0.5f));    // enemyBelowEq < 0
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(1f, 1f, 1f, -1f, 0.5f));    // enemyAboveEq < 0
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(1f, 1f, 1f, 1f, -0.01f));   // weight < 0
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(1f, 1f, 1f, 1f, 1.01f));    // weight > 1
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(float.NaN, 1f, 1f, 1f, 0.5f));
+        Throws(() => GroupFramingPolicy.CombineGroupSpans(1f, 1f, 1f, 1f, float.NaN));
     }
 
     private static void FillContracts()

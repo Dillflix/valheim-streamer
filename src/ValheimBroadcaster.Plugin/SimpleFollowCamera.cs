@@ -95,6 +95,22 @@ internal sealed class SimpleFollowCamera : IDisposable
     // (headroom) than below the feet.
     private const float FramingSizeConst = 0.9f;       // Body spans ~90% of frame height (operator: closer, larger character).
     private const float TopGapShare = 0.6f;            // 60% of the leftover gap above the head, 40% below the feet.
+    // Screen-space composition layer (pure policy): solo side follows lateral motion
+    // (lead room), combat shares a small lead-room bias, and the group vertical
+    // balance is folded into the fill via CombineGroupSpans. This adapter measures
+    // the player's lateral velocity in camera space and eases the solo X slide.
+    private readonly ScreenCompositionPolicy composition = new ScreenCompositionPolicy();
+    private const float SoloXEaseSeconds = 1.0f;       // Slow weighted slide through centre when the solo side flips.
+    private const float LeadEaseSeconds = 0.8f;        // Eased combat lead-room bias.
+    private const float VelocitySmoothSeconds = 0.3f;  // Low-pass on the lateral screen velocity.
+    private float soloScreenX = SoloScreenX;           // Live eased solo thirds X (seeded LEFT).
+    private float soloScreenXVelocity;
+    private float leadOffsetX;                          // Live eased combat lead-room bias.
+    private float leadOffsetVelocity;
+    private float lateralScreenVelocity;               // Smoothed lateral velocity in camera space (m/s).
+    private Vector3 lastVelocitySamplePosition;        // Previous frame player position for the velocity delta.
+    private bool hasVelocitySample;
+    private float soloReasonRight;                      // Diagnostic latch: >0 when the solo side is RIGHT.
     private const float AimEaseSeconds = 0.8f;         // SmoothDamp settle for the eased aim-Y.
     private float aimScreenY = SoloScreenY;            // Live eased aim-pin Y-down fraction (seeded to the legacy pin).
     private float aimScreenYVelocity;
@@ -157,6 +173,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (combatFov <= 0f) combatFov = soloFov;
         camera.Lens.FieldOfView = combatFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
+        UpdateLateralVelocity(subjectPosition, dt);
         UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, dollyRadius, dt);
         UpdateCombatFraming(actor, settings, subjectPosition, dollyRadius, soloFov, aimHeight, dt);
         // Dolly group framing: ease the live orbit radius toward the fit the fixed
@@ -188,7 +205,9 @@ internal sealed class SimpleFollowCamera : IDisposable
                 $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
                     ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
-                $"; fill d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "");
+                $"; fill d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "") +
+                (soloReasonRight > 0f ? "; side R" : "") +
+                (Mathf.Abs(leadOffsetX) > 0.01f ? $"; lead {(leadOffsetX >= 0f ? "+" : "")}{leadOffsetX:F2}" : "");
         }
         LastFailure = "none";
         return true;
@@ -240,16 +259,25 @@ internal sealed class SimpleFollowCamera : IDisposable
     private void UpdateCombatFraming(Character actor, BroadcastSettings settings, Vector3 subjectPosition,
         float radius, float soloFov, float aimHeight, float dt)
     {
+        double compNow = Time.unscaledTimeAsDouble;
         if (!settings.CombatFraming.Value)
         {
             combatFov = soloFov;
             if (combatTargetId != 0) ResetCombat();
+            // Solo composition: the player trails its lateral motion onto a thirds
+            // line (lead room ahead). The policy picks the side; the eased soloScreenX
+            // slides slowly through centre on a flip (never a snap). No combat lead
+            // room and no group spans in solo (no enemy).
+            ScreenCompositionDecision comp = composition.Observe(compNow, lateralScreenVelocity);
+            soloReasonRight = comp.Side == SoloCompositionSide.Right ? 1f : 0f;
+            leadOffsetX = Mathf.SmoothDamp(leadOffsetX, 0f, ref leadOffsetVelocity, LeadEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
+            soloScreenX = Mathf.SmoothDamp(soloScreenX, comp.PlayerScreenX, ref soloScreenXVelocity, SoloXEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
             // Solo fill: solve BOTH the distance and the aim-Y from the player's body
             // so the body fills FramingSizeConst of the frame. SimpleFollowDistance is
             // NOT a floor here (demoted to a seed) - the dolly may come closer than the
             // configured distance; that is the fill's whole point.
-            desiredDollyRadius = Mathf.Clamp(SolvePlayerDolly(actor, soloFov, aimHeight, out float soloFillAimY), 2f, DollyMaxMetres);
-            EaseAim(soloFillAimY, SoloScreenX, dt);
+            desiredDollyRadius = Mathf.Clamp(SolvePlayerDolly(actor, soloFov, aimHeight, subjectPosition, out float soloFillAimY), 2f, DollyMaxMetres);
+            EaseAim(soloFillAimY, soloScreenX + leadOffsetX, dt);
             return;
         }
         // The thirds separation must be solved from the SAME blended fov the lens
@@ -295,15 +323,32 @@ internal sealed class SimpleFollowCamera : IDisposable
         // the policy releases. No snaps.
         combatBlend = Mathf.SmoothDamp(combatBlend, decision.Weight, ref combatBlendVelocity, 0.8f, Mathf.Infinity, Mathf.Max(dt, 0f));
         combatFov = Mathf.Lerp(soloFov, combatFovTarget, combatBlend);
+        // Screen-space composition: observe the player's lateral motion once per
+        // frame. In combat the SIDE comes from CombatFramingPolicy stickiness (the
+        // enemy owns the thirds), so the solo side only governs the released/solo
+        // target the blend eases back toward; the lead offset is the small shared
+        // bias applied to BOTH compositions this frame.
+        ScreenCompositionDecision combatComp = composition.Observe(compNow, lateralScreenVelocity);
+        soloReasonRight = combatComp.Side == SoloCompositionSide.Right ? 1f : 0f;
+        float combatLeadTarget = decision.Phase == CombatFramingPhase.Combat ? combatComp.LeadOffsetX : 0f;
+        leadOffsetX = Mathf.SmoothDamp(leadOffsetX, combatLeadTarget, ref leadOffsetVelocity, LeadEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
+        // The solo rail is the policy's trailing-lead-room side; the combat rail is
+        // the player opposite the enemy. Ease the solo X slowly (flip through centre)
+        // and blend toward the combat rail by the engage weight. Adding leadOffsetX
+        // to the composer target pivots the WHOLE composition - the enemy's thirds
+        // line shifts with it automatically (its azimuth solve is relative to the aim).
+        soloScreenX = Mathf.SmoothDamp(soloScreenX, combatComp.PlayerScreenX, ref soloScreenXVelocity, SoloXEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
         float sideSign = combatSide >= 0 ? 1f : -1f;
-        float engagedX = -sideSign * ThirdsScreenX; // Enemy on side => player opposite.
-        float combatScreenX = Mathf.Lerp(SoloScreenX, engagedX, combatBlend);
+        float engagedX = -sideSign * ThirdsScreenX + leadOffsetX; // Enemy on side => player opposite, shifted by the shared lead.
+        float combatScreenX = Mathf.Lerp(soloScreenX + leadOffsetX, engagedX, combatBlend);
         // Dolly fill: the fixed (blended) lens must FILL the frame with the player's
         // body (rule 1), and fit the engaged enemy while it reads as one picture with
         // the player (rule 2, sparse-gated). The lens never bends - the fit is absorbed
         // by the orbit radius; the player fill also yields the aim-Y to ease toward.
+        // In combat with a live framed enemy the fill uses GROUP spans so a low
+        // creature lifts the aim / a tall enemy adds headroom (vertical balance).
         float lensFov = Mathf.Clamp(combatFov, 10f, 100f);
-        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, out float fillAimY);
+        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, subjectPosition, out float fillAimY);
         // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
         EaseAim(fillAimY, combatScreenX, dt);
         float effectiveNeed = playerNeed;
@@ -317,6 +362,39 @@ internal sealed class SimpleFollowCamera : IDisposable
         // need (player, or max with the weighted enemy), clamped to [2, DollyMax]. The
         // dolly may come closer than the configured distance.
         desiredDollyRadius = Mathf.Clamp(effectiveNeed, 2f, DollyMaxMetres);
+    }
+
+    // Project the player's world velocity onto the PRESENTED camera-right axis and
+    // low-pass it, so the composition policy sees lateral screen-space motion (m/s,
+    // +right/-left). The camera-right axis comes from the orbit horizontal axis: the
+    // cam->player planar forward is dir(h); right = forward rotated -90 deg. No
+    // per-frame allocation. Before the first presented frame or on a warp this holds
+    // zero (hasVelocitySample re-seeds cleanly).
+    private void UpdateLateralVelocity(Vector3 subjectPosition, float dt)
+    {
+        if (!hasVelocitySample || dt <= 0f)
+        {
+            lastVelocitySamplePosition = subjectPosition;
+            hasVelocitySample = true;
+            return;
+        }
+        Vector3 delta = subjectPosition - lastVelocitySamplePosition;
+        lastVelocitySamplePosition = subjectPosition;
+        delta.y = 0f;
+        // A teleport/warp produces a huge delta; ignore it (ResetRecovery clears the
+        // sample on warp, but guard anyway so one frame never spikes the velocity).
+        if (!TargetRoster.Finite(delta) || delta.sqrMagnitude > WarpDistanceMetres * WarpDistanceMetres)
+        { lateralScreenVelocity = 0f; return; }
+        float axis = orbit!.HorizontalAxis.Value * Mathf.Deg2Rad;
+        // cam->player planar forward = (sin h, 0, cos h); camera-right is that turned
+        // -90 deg about up => (cos h, 0, -sin h). Positive dot = moving screen-right.
+        Vector3 right = new Vector3(Mathf.Cos(axis), 0f, -Mathf.Sin(axis));
+        float lateralMetres = Vector3.Dot(delta, right);
+        float instantaneous = lateralMetres / Mathf.Max(dt, 1e-4f);
+        if (!(instantaneous > float.MinValue && instantaneous < float.MaxValue)) instantaneous = 0f;
+        // Exponential low-pass over ~VelocitySmoothSeconds.
+        float a = 1f - Mathf.Exp(-dt / Mathf.Max(0.01f, VelocitySmoothSeconds));
+        lateralScreenVelocity += (instantaneous - lateralScreenVelocity) * a;
     }
 
     // Ease the live aim-pin toward the solved (aimY, screenX) and write it to the
@@ -344,15 +422,65 @@ internal sealed class SimpleFollowCamera : IDisposable
     // fillAimY for the caller to ease the composer toward. No DollyMax cap here (the
     // player is rule 1); the caller clamps for safety. At 50 mm this lands ~6.5 m
     // full-frame, not the ~8.2 m the fit-only solve produced.
-    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, out float fillAimY)
+    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, Vector3 subjectPosition, out float fillAimY)
     {
         float height = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
         float belowAim = aimHeight + PlayerFeetMargin;
         float aboveAim = Mathf.Max(0f, height - aimHeight) + PlayerHeadMargin;
+        // Group vertical balance (behavior C): in combat with a live framed enemy
+        // (weight > 0), combine the player's spans with the enemy's vertical extents
+        // (projected to equivalent metres at the player's planar distance) so the
+        // fill solves a group-consistent aim/dolly - a low creature lifts the aim and
+        // adds dolly, a tall enemy adds headroom. Player-only when solo or w == 0.
+        if (combatTargetId != 0 && TryEnemyGroupSpans(aimHeight, subjectPosition, out float enemyBelowEq, out float enemyAboveEq, out float weight))
+        {
+            var group = GroupFramingPolicy.CombineGroupSpans(belowAim, aboveAim, enemyBelowEq, enemyAboveEq, weight);
+            belowAim = group.Below; aboveAim = group.Above;
+        }
         FramingFillResult fill = GroupFramingPolicy.FramingFill(
             lensFov, belowAim, aboveAim, FramingSizeConst, TopGapShare);
         fillAimY = fill.AimScreenY;
         return fill.DistanceMetres;
+    }
+
+    // Project the engaged enemy's vertical extents (below/above the PLAYER's aim
+    // line) to equivalent metres at the player's planar distance, for the group
+    // vertical balance. equivalentMetres = tan(angleFromAimLine) * playerPlanarDist,
+    // clamped to [0, 6]. The angles reuse the presented camera pose (same model as
+    // RequiredDistanceForEnemy). Returns false (player-only solve) when there is no
+    // live enemy Character or the sparse weight is zero.
+    private bool TryEnemyGroupSpans(float aimHeight, Vector3 subjectPosition,
+        out float enemyBelowEq, out float enemyAboveEq, out float weight)
+    {
+        enemyBelowEq = enemyAboveEq = weight = 0f;
+        Character? enemy = FindCharacter(combatTargetId);
+        if (!enemy) return false;
+        float scale = Mathf.Max(0.1f, enemy!.transform.lossyScale.y);
+        float enemyHeight = Mathf.Clamp(enemy.GetHeight(), 0.3f, 24f) * scale;
+        Vector3 enemyPos = enemy.transform.position;
+        Vector3 planar = enemyPos - subjectPosition; planar.y = 0f;
+        if (!TargetRoster.Finite(planar)) return false;
+        float sep = planar.magnitude;
+        weight = GroupFramingPolicy.GroupWeight(sep, GroupFullMetres, GroupZeroMetres);
+        if (weight <= 0f) return false;
+        // The player's planar (camera-space) distance is the live orbit radius; the
+        // enemy stands on the ground plane, so its feet are at the aim line minus
+        // aimHeight and its head at (height - aimHeight) above. Convert each extent to
+        // an equivalent vertical metre at the PLAYER's planar distance via the same
+        // small-angle tangent relation the enemy-need solve uses: the apparent angle
+        // of a vertical extent v at the enemy's planar distance (orbit radius + axial
+        // offset) is atan(v / dEnemy); the equivalent metre at the player distance is
+        // tan(that angle) * dPlayer = v * dPlayer / dEnemy.
+        float dPlayer = Mathf.Max(1f, dollyRadius);
+        float axis = orbit!.HorizontalAxis.Value * Mathf.Deg2Rad;
+        Vector3 camForward = new Vector3(Mathf.Sin(axis), 0f, Mathf.Cos(axis));
+        float axialOffset = Vector3.Dot(planar, camForward);
+        float dEnemy = Mathf.Max(1f, dPlayer + axialOffset);
+        float enemyBelowMetres = aimHeight;                       // aim line down to the enemy feet.
+        float enemyAboveMetres = Mathf.Max(0f, enemyHeight - aimHeight); // aim line up to the enemy head.
+        enemyBelowEq = Mathf.Clamp(enemyBelowMetres * dPlayer / dEnemy, 0f, 6f);
+        enemyAboveEq = Mathf.Clamp(enemyAboveMetres * dPlayer / dEnemy, 0f, 6f);
+        return true;
     }
 
     // The player orbit radius at which the engaged enemy also fits vertically, the
@@ -531,6 +659,11 @@ internal sealed class SimpleFollowCamera : IDisposable
         // distance (0 => the next solve seeds dollyRadius = SimpleFollowDistance).
         dollyRadius = 0f; dollyVelocity = 0f; desiredDollyRadius = 0f; dollyHeadBand = false;
         aimScreenY = SoloScreenY; aimScreenYVelocity = 0f; // Reseed the eased aim to the legacy pin.
+        // Screen-space composition: side back to LEFT, lead 0, velocity sample voided.
+        composition.Reset();
+        soloScreenX = SoloScreenX; soloScreenXVelocity = 0f;
+        leadOffsetX = 0f; leadOffsetVelocity = 0f;
+        lateralScreenVelocity = 0f; hasVelocitySample = false; soloReasonRight = 0f;
         ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 
