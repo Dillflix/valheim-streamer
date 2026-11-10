@@ -365,6 +365,71 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
       suites green (Core 1518, CM 128, Hooks 45), 0 warn / 0 err. Runtime footage
       verification outstanding.
 
+15. **Eyeline-on-top-third doctrine (2026-11-10) — head safety margins ERADICATED;
+    the player's EYELINE owns the whole vertical composition. Operator order: "head
+    safety margins never should have been added." Supersedes the VERTICAL parts of
+    #12 (FramingFill) and #14 (CroppedFraming); their dolly cap / boom probe / sparse
+    gate / head-band / Layer 1 / thirds / lead / lens machinery all REMAIN.**
+    - **The doctrine:** the player's eyeline sits on the frame TOP-THIRD line (screen
+      Y = -1/6 in Cinemachine Y-down fractions). The camera DISTANCE is solved so the
+      FEET land exactly on the bottom edge. Only character height is available, so
+      eyeline height = `EyelineFraction` (0.93, tunable from footage) * height. NO head
+      margin / NO headroom gap anywhere. Feet margins STAY (feet-in-frame is rule 1).
+      Works identically outdoors (feet on the bottom edge) and in a tight space (the
+      boom cap pulls the camera in -> feet crop automatically, the eye NEVER leaves the
+      top-third line). The eyeline invariance under crop is THE point of the doctrine.
+    - **New Core pure solver `EyelineFraming`** (sibling of GroupFramingPolicy in
+      GroupFramingPolicy.cs; static, ArgumentOutOfRangeException contracts, house style):
+      - `AimYForEyeline(fixedVfovDeg, eyelineScreenY, aimToEyeMetres, distanceMetres)`
+        — CLOSED FORM. T=tan(vfov/2); eyeAngle=atan(2*eyelineScreenY*T) (negative = above
+        centre); phi_aim = eyeAngle + atan(aimToEye/distance) (the aim sits aimToEye BELOW
+        the eye in world); aimScreenY = tan(phi_aim)/(2*T), clamped [-0.45,0.45]. Contracts:
+        vfov (1,170), eyelineScreenY [-0.45,0.45], aimToEye >= 0 finite, distance > 0.3.
+      - `DistanceForFeetAtEyeline(fixedVfovDeg, eyelineScreenY, aimToEyeMetres, belowAimMetres)`
+        — bisection on d in [0.5,60], tol 1e-4, in ANGLE space: g(d) = phi_feet(d) - half
+        where phi_feet(d) = eyeAngle + atan(aimToEye/d) + atan(belowAim/d). Both atan terms
+        shrink with d, so g is STRICTLY DECREASING (documented) — a single root where the
+        feet sit on the bottom edge angle (half). Angle space is used (not screenY) because
+        screenY wraps through tan's pole when phi_feet > 90 deg at tiny d. Contracts as
+        above, belowAim > 0.
+    - **Mechanisms REMOVED (every head-margin / headroom mechanism found):**
+      - `FramingFill` + `FramingFillResult` (Core) — the fill solved a framingSize/topGap
+        composition that parked headroom above the head. DELETED (+ its 6 tests).
+      - `CroppedFraming` + `CroppedFramingResult` (Core) — pinned head+margin at a topGap
+        from the frame top. DELETED (+ its 6 tests).
+      - `CombineGroupSpans` (Core) — fed group AIM blending; the eyeline owns vertical now,
+        so the aim blend is gone. DELETED (+ its 4 tests). (Enemy DISTANCE needs stay.)
+      - Plugin consts `FramingSizeConst` (0.9), `TopGapShare` (0.6), `TightTopGapMin` (0.01),
+        `PlayerHeadMargin` (0.35), `EnemyHeadMargin` (0.25). DELETED.
+      - Plugin `ResolveTightAim` (CroppedFraming path + the #52 head-margin taper
+        `aboveTight = aboveAim - nearness*PlayerHeadMargin`) -> replaced by `ResolveEyelineAim`.
+      - Plugin `TryEnemyGroupSpans` (group vertical balance projection) -> DELETED.
+      - Enemy ABOVE-span lost its margin in BOTH the group projection (deleted) and the
+        `RequiredDistanceForEnemy` call site: enemyAbove = max(0.01, enemyHeight - aimHeight),
+        NO margin. HeadBandBelowSpan oversized-enemy rule unchanged (content rule, not safety).
+    - **New Plugin consts:** `EyelineFraction = 0.93f`, `EyelineScreenY = -(1f/6f)`.
+    - **Plugin flow (SimpleFollowCamera, solo AND combat):** eyeHeight = EyelineFraction*h
+      (same scale clamps as aimHeight); aimToEye = max(0.01, eyeHeight - aimHeight);
+      fillDistance = DistanceForFeetAtEyeline(lensFov, EyelineScreenY, aimToEye, aimHeight +
+      PlayerFeetMargin). desiredDolly = clamp(max(fillDistance, enemy-need chain), TightFloor,
+      DollyMax) then min with boom-room availableDistance (tight cap) exactly as before. aimY
+      = AimYForEyeline(lensFov, EyelineScreenY, aimToEye, LIVE boom-capped radius) so aim and
+      boom agree; the existing 0.8 s aimScreenY SmoothDamp carries it. tight diagnostics:
+      visible fraction = (visibleBelowAim + headTopAboveAim)/fullBody, head top = h - aimHeight
+      (no margin). Diagnostic tail changed "; fill d=.." -> "; eyeline d=N.Nm aimY=-0.NN".
+    - **Exact solved distances (h=1.9, aim=0.8h=1.52, eye=0.93h=1.767, aimToEye=0.247,
+      belowAim=1.77, eyelineY=-1/6):**
+      - 50 mm (26.9915 deg): **d = 6.2520 m, aimY = -0.0841** (slightly below -1/6, as the
+        aim is below the eye in world). Eye lands on -0.16667, feet on +0.50000.
+      - 75 mm (18.1805 deg): **d = 9.4205 m, aimY = -0.0846.** Eye on -0.16667, feet +0.50000.
+    - **Tests: +8 EyelineFraming (projection oracle), -16 deleted (FramingFill 6 + CroppedFraming
+      6 + CombineGroupSpans/group-fill 4) => NET -8. Core 1518 -> 1510.** Cases: eye pin exact
+      across lens/distance combos; feet on the bottom edge at the solved distance; minimality
+      (d-0.05 crops feet); eyeline invariance under crop (the doctrine); real 50/75mm bands +
+      aim between eyeline and centre; tiny aimToEye collapses aim onto the eyeline; both
+      contract sets. All three suites green (Core 1510, CM 128, Hooks 45), 0 warn / 0 err.
+      Runtime footage verification outstanding.
+
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
   will hang off.
