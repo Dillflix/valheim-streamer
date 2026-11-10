@@ -81,6 +81,26 @@ internal sealed class SimpleFollowCamera : IDisposable
     private int combatSide;
     private int combatTargetId;
     private float combatDistance;
+    // Dolly group framing (GroupFraming DollyOnly semantics on the player-anchored
+    // rig): the fixed lens never bends; a fit is absorbed by the camera distance.
+    // dollyRadius is the live, eased orbit radius presented each frame; it replaces
+    // the raw SimpleFollowDistance assignment so player feet (rule 1) and an
+    // engaged enemy (rule 2) stay framed at a fixed focal length. The composer
+    // keeps pinning the PLAYER, so native group framing (which needs a group
+    // LookAt) is deliberately NOT used - rule-1 hard limits must stay on the player.
+    private const float AimScreenY = SoloScreenY;      // The aim-pin's Y-down screen position (0.05).
+    private const float PlayerFeetMargin = 0.25f;      // Metres of air below the player's feet.
+    private const float PlayerHeadMargin = 0.35f;      // Metres of air above the player's head.
+    private const float EnemyFeetMargin = 0.15f;       // Tighter enemy margins: it is the secondary subject.
+    private const float EnemyHeadMargin = 0.25f;
+    private const float GroupFullMetres = 10f;         // Sparse gate: full weight within this planar separation.
+    private const float GroupZeroMetres = 16f;         // Beyond this the enemy never affects framing (still fights/thirds).
+    private const float DollyMaxMetres = 18f;          // Absolute cap on the presented orbit radius.
+    private const float DollyEaseSeconds = 0.7f;       // SmoothDamp settle (GroupFraming Damping concept), within the 1-2s ease allowance.
+    private float dollyRadius;                          // Live eased orbit radius.
+    private float dollyVelocity;
+    private float desiredDollyRadius;                   // Target radius this frame (player + weighted enemy need).
+    private bool dollyHeadBand;                         // The head-band crop is active this frame (oversized enemy).
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
 
@@ -110,8 +130,11 @@ internal sealed class SimpleFollowCamera : IDisposable
             ResetRecovery(); // A teleported subject invalidates every stale occlusion observation.
         }
         lastSubjectPosition = subjectPosition;
+        // Seed the live dolly radius to the configured distance before the first
+        // ease; a rebind/reset/warp zeroes it so it re-seeds cleanly here.
+        if (dollyRadius <= 0f) dollyRadius = radius;
         lookPoint!.position = subjectPosition + Vector3.up * aimHeight;
-        orbit!.Radius = radius;
+        orbit!.Radius = dollyRadius;
         orbit.TargetOffset = new Vector3(0f, aimHeight, 0f);
         if (output) camera!.Lens.PullInheritedPropertiesFromCamera(output);
         camera!.Lens.ModeOverride = LensSettings.OverrideModes.Perspective;
@@ -125,8 +148,16 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (combatFov <= 0f) combatFov = soloFov;
         camera.Lens.FieldOfView = combatFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
-        UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, radius, dt);
-        UpdateCombatFraming(actor, settings, subjectPosition, radius, soloFov, dt);
+        UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, dollyRadius, dt);
+        UpdateCombatFraming(actor, settings, subjectPosition, dollyRadius, soloFov, aimHeight, dt);
+        // Dolly group framing: ease the live orbit radius toward the fit the fixed
+        // lens cannot absorb, then present it. UpdateCombatFraming computed the
+        // desired radius into desiredDollyRadius using this frame's blended lens and
+        // the engaged enemy (if any); here we smooth-settle and apply it.
+        dollyRadius = Mathf.SmoothDamp(dollyRadius, desiredDollyRadius, ref dollyVelocity,
+            DollyEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
+        dollyRadius = Mathf.Clamp(dollyRadius, 1f, DollyMaxMetres);
+        orbit.Radius = dollyRadius;
         // ManualCameraUpdate owns exact elapsed time and native skipped-frame compensation.
         ManualCameraUpdate.Update(camera, Vector3.up, dt);
         CameraState state = camera.State;
@@ -143,11 +174,12 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (now >= diagnosticsAt)
         {
             diagnosticsAt = now + 0.25f;
-            Diagnostics = $"Simple follow: Cinemachine 3.1.7; distance {radius:F1}m (actual {Vector3.Distance(position, subjectPosition):F1}m); " +
+            Diagnostics = $"Simple follow: Cinemachine 3.1.7; distance {dollyRadius:F1}m (actual {Vector3.Distance(position, subjectPosition):F1}m); " +
                 $"screen ({ScreenPosition.x:F2}, {ScreenPosition.y:F2}); recentering behind subject; fov {fov:F0}; " +
                 $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
-                    ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "");
+                    ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
+                (dollyRadius > radius + 0.2f ? $"; dolly {dollyRadius:F1}m" + (dollyHeadBand ? " (head)" : "") : "");
         }
         LastFailure = "none";
         return true;
@@ -197,9 +229,17 @@ internal sealed class SimpleFollowCamera : IDisposable
     // frame, exactly like Layer 1; on release we stop writing and recentering
     // resumes. No cuts, ever.
     private void UpdateCombatFraming(Character actor, BroadcastSettings settings, Vector3 subjectPosition,
-        float radius, float soloFov, float dt)
+        float radius, float soloFov, float aimHeight, float dt)
     {
-        if (!settings.CombatFraming.Value) { combatFov = soloFov; if (combatTargetId != 0) ResetCombat(); return; }
+        if (!settings.CombatFraming.Value)
+        {
+            combatFov = soloFov;
+            if (combatTargetId != 0) ResetCombat();
+            // Solo still dollies: the player's own feet may exceed the configured
+            // distance at a long lens, so solve the player need every frame.
+            desiredDollyRadius = SolvePlayerDolly(actor, soloFov, aimHeight, radius);
+            return;
+        }
         // The thirds separation must be solved from the SAME blended fov the lens
         // carries this frame, never a read-back - as the lens tightens to 75 mm
         // the thirds lines narrow in lockstep so the enemy stays pinned on its
@@ -252,6 +292,89 @@ internal sealed class SimpleFollowCamera : IDisposable
             composition.ScreenPosition = new Vector2(combatScreenX, SoloScreenY);
             aim.Composition = composition;
         }
+        // Dolly group framing: the fixed (blended) lens must fit the player's full
+        // body always (rule 1), and the engaged enemy while it reads as one picture
+        // with the player (rule 2, sparse-gated). The lens never bends - the fit is
+        // absorbed by the orbit radius. Solve the need into desiredDollyRadius; the
+        // caller eases toward it and clamps to [1, DollyMax].
+        float lensFov = Mathf.Clamp(combatFov, 10f, 100f);
+        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, radius);
+        float effectiveNeed = playerNeed;
+        dollyHeadBand = false;
+        if (combatTargetId != 0)
+        {
+            float enemyNeed = SolveEnemyDolly(lensFov, aimHeight, subjectPosition, radius, playerNeed);
+            if (enemyNeed > 0f) effectiveNeed = Mathf.Max(playerNeed, enemyNeed);
+        }
+        desiredDollyRadius = Mathf.Clamp(Mathf.Max(radius, effectiveNeed), 1f, DollyMaxMetres);
+    }
+
+    // The orbit radius at which the player's whole body (feet to head, with air
+    // margins) fits at the fixed lens, with the aim pinned at AimScreenY. Real
+    // size: Character.GetHeight() * lossyScale.y. playerNeed is never conceptually
+    // capped by DollyMax (the player is rule 1) - at 50 mm / 6 m it is ~8 m, at
+    // 75 mm ~12 m, both under the 18 m cap - but the caller clamps for safety.
+    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, float configuredRadius)
+    {
+        float height = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
+        float belowAim = aimHeight + PlayerFeetMargin;
+        float aboveAim = Mathf.Max(0f, height - aimHeight) + PlayerHeadMargin;
+        float need = GroupFramingPolicy.RequiredDistanceForVerticalSpan(lensFov, AimScreenY, belowAim, aboveAim);
+        return Mathf.Max(configuredRadius, need);
+    }
+
+    // The player orbit radius at which the engaged enemy also fits vertically, the
+    // enemy standing on the player ground plane at an axial depth along the current
+    // camera forward. When the full body cannot fit within DollyMax the enemy is
+    // oversized: retry keeping only the top head band (feet may crop, rule 3).
+    // Returns 0 when there is no live enemy Character to measure.
+    private float SolveEnemyDolly(float lensFov, float aimHeight, Vector3 subjectPosition,
+        float radius, float playerNeed)
+    {
+        Character? enemy = FindCharacter(combatTargetId);
+        if (!enemy) return 0f;
+        float scale = Mathf.Max(0.1f, enemy!.transform.lossyScale.y);
+        float enemyHeight = Mathf.Clamp(enemy.GetHeight(), 0.3f, 24f) * scale;
+        Vector3 enemyPos = enemy.transform.position;
+        Vector3 planar = enemyPos - subjectPosition; planar.y = 0f;
+        float sep = planar.magnitude;
+        if (!TargetRoster.Finite(planar)) return 0f;
+        // Sparse gate: a far enemy never drags the camera back (still fights/thirds).
+        float weight = GroupFramingPolicy.GroupWeight(sep, GroupFullMetres, GroupZeroMetres);
+        if (weight <= 0f) return 0f;
+        // Enemy axial depth relative to the player along the camera forward (planar).
+        // camera->player forward is dir(orbit axis); enemy nearer the camera gives a
+        // negative offset (camera must dolly further out to hold it).
+        float axis = orbit!.HorizontalAxis.Value * Mathf.Deg2Rad;
+        Vector3 camForward = new Vector3(Mathf.Sin(axis), 0f, Mathf.Cos(axis)); // cam->player planar direction.
+        float axialOffset = Vector3.Dot(planar, camForward);
+        // Enemy vertical spans from the player aim point (enemy feet on ground plane).
+        float enemyBelow = aimHeight + EnemyFeetMargin;
+        float enemyAbove = Mathf.Max(0f, enemyHeight - aimHeight) + EnemyHeadMargin;
+        float enemyNeedFull = GroupFramingPolicy.RequiredDistanceForEnemy(
+            lensFov, AimScreenY, enemyBelow, enemyAbove, axialOffset);
+        float enemyNeed = enemyNeedFull;
+        if (enemyNeedFull > DollyMaxMetres)
+        {
+            // Oversized: keep the head band (top max(0.8, 30% height)); crop feet.
+            float headKeep = Mathf.Max(0.8f, 0.30f * enemyHeight);
+            float aboveExtent = Mathf.Max(0f, enemyHeight - aimHeight); // head top above aim, no margin.
+            float reducedBelow = GroupFramingPolicy.HeadBandBelowSpan(aboveExtent, headKeep);
+            enemyNeed = GroupFramingPolicy.RequiredDistanceForEnemy(
+                lensFov, AimScreenY, reducedBelow, enemyAbove, axialOffset);
+            dollyHeadBand = true;
+        }
+        // Blend the enemy contribution in by weight: effective eases from playerNeed
+        // (weight 0, enemy ignored) to the full enemy need (weight 1).
+        return Mathf.Lerp(playerNeed, enemyNeed, weight);
+    }
+
+    // Bounded lookup of a live Character by instance id (the engaged combat target).
+    private static Character? FindCharacter(int instanceId)
+    {
+        foreach (Character c in Character.GetAllCharacters())
+            if (c && c.GetInstanceID() == instanceId) return c;
+        return null;
     }
 
     // Build the hostile candidate list with no per-frame allocations: a pooled
@@ -372,6 +495,9 @@ internal sealed class SimpleFollowCamera : IDisposable
     {
         recovery.Reset(); candidates.Clear();
         hasPresented = steering = false; lastOcclusion = 0; probeReadyAt = 0;
+        // A fresh vantage, teleport or rebind re-seeds the dolly from the configured
+        // distance (0 => the next solve seeds dollyRadius = SimpleFollowDistance).
+        dollyRadius = 0f; dollyVelocity = 0f; desiredDollyRadius = 0f; dollyHeadBand = false;
         ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 
