@@ -145,7 +145,7 @@ internal sealed class SimpleFollowCamera : IDisposable
     private const float TightProbeMargin = 0.15f;       // Back off the solid hit by this before using it as the cap.
     private const float TightProbeExtra = 0.5f;         // Probe this far past the desired fill distance (headroom to detect "clear").
     private const float TightFloor = 1.3f;              // Deoccluder min distance (1) + margin: never closer than this.
-    private const float TightTopGapMax = 0.13f;         // Headroom above the head at the close-up floor (frame fraction).
+    private const float TightTopGapMin = 0.01f;         // Close-up headroom: the head may ride the frame top (operator rule).
     private const float TightShrinkSeconds = 0.25f;     // Fast collapse when the room shrinks (target < current).
     private const float TightRecoverSeconds = 1.5f;     // Slow re-open when the room grows (target > current), no pumping.
     private const float TightBandFull = 0.85f;          // Visible-body fraction >= this reads as a full shot.
@@ -558,13 +558,13 @@ internal sealed class SimpleFollowCamera : IDisposable
         float avail = availableDistance;
         if (avail >= fillDistance - 0.1f) return fillAimY; // Room enough: the fill owns the shot.
         tightActive = true;
-        // Headroom GROWS as the shot crops: at the fill boundary it matches the
-        // full shot's gap (6%), ramping to TightTopGapMax by the close-up floor.
-        // The full-shot 6% is too thin once the camera is near - composer damping
-        // and terrain bob overshoot it and the head kisses the frame top.
+        // Headroom SHRINKS as the shot crops (operator rule: in a medium close-up
+        // the head may ride the frame top). At the fill boundary it matches the
+        // full shot's gap (6%), collapsing to near-zero by the close-up floor so
+        // the cropped frame is all character, no dead sky.
         float fillTopGap = TopGapShare * (1f - FramingSizeConst);
         float nearness = Mathf.InverseLerp(fillDistance, TightFloor, avail);
-        float topGap = Mathf.Lerp(fillTopGap, TightTopGapMax, nearness);
+        float topGap = Mathf.Lerp(fillTopGap, TightTopGapMin, nearness);
         float d = Mathf.Max(0.51f, avail);
         CroppedFramingResult crop = GroupFramingPolicy.CroppedFraming(lensFov, d, aboveAim, belowAim, topGap);
         tightFrameFraction = crop.VisibleBodyFraction;
