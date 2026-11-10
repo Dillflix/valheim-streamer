@@ -242,6 +242,69 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
       cases), monotonicity in framing size, symmetric body centres the aim, the two
       real distance bands + aim sign, full-frame (size 1) edge-to-edge, and contracts.
 
+13. **Screen-space composition layer (2026-11-09) — three operator-ordered behaviors
+    on the live simple-follow camera. No cuts, everything eased, feet always framed,
+    lenses INVIOLATE (solo 50 / combat 75 mm), all of #1-#12 intact.**
+    - **New pure Core policy `ScreenCompositionPolicy`** (sealed, explicit double clock,
+      ArgumentOutOfRangeException contracts, zero per-frame allocations, house style).
+      One `Observe(now, lateralScreenVelocity)` drives two coupled outputs:
+      - **A. Solo side follows motion (lead room).** The player TRAILS its lateral
+        screen-space motion onto a thirds line so the empty two-thirds ahead is lead
+        room. Output `PlayerScreenX` = -1/6 (LEFT) or +1/6 (RIGHT). Sign rule: moving
+        RIGHT -> player on the LEFT thirds (room opens right), moving LEFT -> RIGHT
+        thirds. The side only flips when sustained OPPOSITE lateral motion holds past
+        `SustainSeconds = 1.5s`; brief spurts (0.8s) and oscillation keep the current
+        side; stationary (|v| < `MotionThresholdMetresPerSecond = 1.2`) keeps it.
+        Initial/default side = LEFT (operator's standing preference). Backwards clock
+        resets. A `Reason` token ("stationary"/"leading motion"/"confirming side flip").
+      - **B. Combat lead-room bias (small, shared).** Second output `LeadOffsetX` in
+        [-0.05, +0.05], biased AWAY from the sustained motion (moving right -> negative),
+        ramping 0..1 over the same 1.5s sustain window, zero when stationary/oscillating.
+        `LeadOffsetMagnitude = 0.05`.
+    - **Plugin (SimpleFollowCamera) wiring:**
+      - **Lateral velocity** = player world position delta / dt, projected onto the
+        PRESENTED camera-right axis (from the orbit horizontal axis: cam->player
+        forward = (sin h, 0, cos h), right = (cos h, 0, -sin h)), low-passed over
+        `VelocitySmoothSeconds = 0.3s` (exponential 1-exp(-dt/tau)). Warp-sized deltas
+        and non-finite values zeroed; `hasVelocitySample` re-seeds cleanly after a warp.
+      - **Solo X** eased with `Mathf.SmoothDamp` `SoloXEaseSeconds = 1.0s` (slow weighted
+        slide through centre on a flip, never a snap). The composer target is
+        `soloScreenX + leadOffsetX`. Combat X flow UNCHANGED otherwise: the combat side
+        still comes from `CombatFramingPolicy` stickiness; combat X = `Lerp(soloScreenX +
+        leadOffsetX, -side*(1/6) + leadOffsetX, combatBlend)`. On release the blend eases
+        back to the solo policy's side. `leadOffsetX` eased `LeadEaseSeconds = 0.8s`, only
+        non-zero while the combat phase is engaged (zero target in solo).
+      - **C. Group vertical balance.** New pure Core `GroupFramingPolicy.CombineGroupSpans(
+        playerBelow, playerAbove, enemyBelowEq, enemyAboveEq, weight)` ->
+        (below, above): groupBelow = Lerp(playerBelow, max(playerBelow, enemyBelowEq), w);
+        groupAbove = Lerp(playerAbove, max(playerAbove, enemyAboveEq), w). The max keeps
+        the player always framed (never cropped to fit a smaller enemy). `SolvePlayerDolly`
+        now feeds these GROUP spans to `FramingFill` whenever combat has a live framed
+        enemy with sparse weight > 0 (player-only solve when solo or w == 0). The enemy's
+        vertical extents are projected to equivalent metres at the player's planar
+        distance in the Plugin (`TryEnemyGroupSpans`): equivalentMetres = extent *
+        dPlayer / dEnemy (dEnemy = orbit radius + axial offset along cam forward), clamped
+        [0, 6]. The angle/pose math stays in the Plugin (needs the live camera pose); the
+        span combination is pure Core (testable).
+      - **Projection-verified aim direction (the spec's open question):** a small low
+        creature grows the group BELOW span; to keep the lowered feet on their fixed
+        screen target the solved aimScreenY moves MORE NEGATIVE (UP toward the head,
+        Y-down), and the dolly pulls back — the framing lifts so the creature's extent
+        is captured instead of empty sky. (Player-only aimY -0.174 -> grouped -0.239 at
+        the combat lens, verified by forward projection in the test suite.)
+      - Diagnostics line extended: "; side R" when the solo side is RIGHT, "; lead +0.NN"
+        when |leadX| > 0.01. The "; fill d=.. aimY=.." tail is unchanged.
+      - Reset/rebind/warp: `composition.Reset()` (side -> LEFT, lead 0), soloScreenX ->
+        SoloScreenX, leadOffsetX 0, velocity sample voided. Enemy hard visibility (the
+        dolly fit / head-band) is UNAFFECTED by the lead bias.
+    - **Tests: +12 Core (1500 -> 1512).** ScreenCompositionPolicy (8): default LEFT;
+      sustained opposite motion >= 1.5s flips; 0.8s spurt never flips; oscillation keeps
+      side; stationary keeps side; lead offset sign/magnitude/clamp/zero-when-stationary;
+      clock rollback reset; contracts. GroupFramingPolicy CombineGroupSpans (4): w=0
+      identity, w=1 max, midpoint lerp, group-fill small-creature aim direction +
+      projection exactness, contracts. All three suites green (Core 1512, CM 128, Hooks
+      45), 0 warn / 0 err. Runtime footage verification outstanding.
+
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
   will hang off.
