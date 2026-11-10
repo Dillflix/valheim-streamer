@@ -186,6 +186,61 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
     - Distance-law note: dollying OUT never parks the camera; FollowDistanceInvariant
       and the deoccluder are untouched. The lens is INVIOLATE throughout (#10's
       rejected fov-floor is gone).
+12. **Framing FILL (2026-11-09) — supersedes #11's fit-only minimum + fixed shoulder
+    pin.** Live symptom after #44: the player read TOO SMALL and the camera sat too
+    far (~8.24 m solo). Root cause: #11's `RequiredDistanceForVerticalSpan` guarantees
+    the body FITS but not that it FILLS, and the fixed composer pin (shoulder at
+    screen Y +0.05) wasted the frame top — feet at the bottom edge, head barely past
+    centre, ~40% empty sky. The operator's rule for solo: 50 mm lens, the character
+    FILLS the frame (full-frame body) on the LEFT THIRDS.
+    - **New Core pure solver `GroupFramingPolicy.FramingFill(fixedVfovDeg,
+      belowAimMetres, aboveAimMetres, framingSize, topGapShare)` -> readonly struct
+      `FramingFillResult { DistanceMetres, AimScreenY }`** (Cinemachine GroupFraming
+      FramingSize concept): given the body span below/above the AIM POINT (margins
+      folded by the caller) and a fixed vfov, solve BOTH the camera distance AND the
+      aim-pin's screen Y so the body spans exactly `framingSize` (fraction of frame
+      height): feet land at screenY = +0.5 - bottomGap, head at -0.5 + topGap, where
+      topGap = topGapShare*(1-framingSize), bottomGap = (1-topGapShare)*(1-framingSize).
+      Exact perspective projection (matches the repo tests): a point at signed angle
+      phi below forward projects to screenY = tan(phi)/(2*tan(vfov/2)); aim at
+      phi_aim = atan(2*aimScreenY*tan(vfov/2)); feet at phi_aim + atan(below/d), head
+      at phi_aim - atan(above/d). Solved by bisection on phi_aim: d_feet =
+      below/tan(phiFeet - phi_aim), d_head = above/tan(phi_aim - phiHead); g(phi_aim) =
+      d_feet - d_head is strictly increasing (monotone — documented), one root where
+      the two agree. Contracts: vfov (1,170), spans > 0, framingSize (0.1,1],
+      topGapShare [0,1]; ArgumentOutOfRangeException. Degenerate narrow bands guarded
+      by clamping the aim search to the composer's [-0.45,0.45] limit minus a 0.5 deg
+      guard. #11's `RequiredDistanceForVerticalSpan`/`RequiredDistanceForEnemy`/
+      `GroupWeight`/`HeadBandBelowSpan` all STAY — the enemy/sparse/head-band machinery
+      is unchanged; only the player's own fit minimum + fixed pin are replaced by the
+      fill. `FramingSizeConst = 0.8`, `TopGapShare = 0.6` (more headroom than foot-room).
+    - **Plugin (SimpleFollowCamera):** solo screen X moves from -0.08 to **-(1/6)**
+      (LEFT THIRDS). The fixed `SoloScreenY=0.05` pin is replaced by a live `aimScreenY`
+      field eased (SmoothDamp ~0.8 s) toward the solved fill aim-Y; the composer
+      ScreenPosition becomes (easedX, easedAimY). Each frame `SolvePlayerDolly` calls
+      `FramingFill` at the current blended lens fov (belowAim = aimHeight+0.25,
+      aboveAim = (h-aimHeight)+0.35) and returns both the fill distance and the aim-Y.
+      Distance target: `desired = clamp(max(fillDistance, weightedEnemyNeed), 2, DollyMax)`
+      — **SimpleFollowDistance is REMOVED from the max (demoted to a seed/fallback).**
+      The #44 enemy-need solves now receive the live eased aim-Y instead of the 0.05
+      constant. Diagnostics gained "; fill d=N.Nm aimY=-0.NN". In combat the enemy may
+      still pull the camera farther (priority 2), shrinking the player below full-frame
+      — accepted; sparse gate + head-band unchanged.
+    - **SimpleFollowDistance demoted to SEED:** config stays bound (default 6, 2-30) and
+      seeds dollyRadius on create/reset/warp and when spans are unavailable; its
+      description now documents that the live distance is solved to FILL and may come
+      CLOSER than the configured value. The config is NOT deleted.
+    - **Solved real cases (verified, player h=1.9, aimHeight 1.52, margins 0.25/0.35
+      => belowAim 1.77, aboveAim 0.73, framingSize 0.8, topGapShare 0.6):**
+      - 50 mm solo (26.9915 deg vFov): **distance 6.4707 m, aimScreenY -0.1420**
+        (aim ABOVE frame centre — the fill lifts the aim so the body fills top-to-bottom
+        instead of parking feet at the bottom edge). Down from #11's ~8.24 m.
+      - 75 mm combat baseline (18.1805 deg vFov): **distance 9.7387 m, aimScreenY
+        -0.1444** (player-only fill; enemy fit may pull farther in a live two-shot).
+    - Tests: +6 Core cases — forward-projection exactness (feet/head on their target
+      edges within 1e-3 across vfov/span/framingSize/topShare combos incl. both real
+      cases), monotonicity in framing size, symmetric body centres the aim, the two
+      real distance bands + aim sign, full-frame (size 1) edge-to-edge, and contracts.
 
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+

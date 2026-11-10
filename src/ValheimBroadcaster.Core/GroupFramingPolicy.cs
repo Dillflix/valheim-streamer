@@ -20,6 +20,25 @@ namespace ValheimBroadcaster.Core
     /// dominates a full-body fit; the up half-angle (aim toward head) is larger.
     /// All distances are in metres; all angles in degrees at the public boundary.
     /// </summary>
+    /// <summary>
+    /// The solved camera placement for a FramingSize-style fill: how far the
+    /// camera sits on its boom and where the aim-pin lands on screen (Y-down
+    /// fraction) so the body spans a target fraction of the frame height. Unlike
+    /// the fit-only <see cref="GroupFramingPolicy.RequiredDistanceForVerticalSpan"/>
+    /// (which only guarantees the body FITS, with the aim pinned at a constant),
+    /// the fill solves BOTH unknowns so the body FILLS the frame.
+    /// </summary>
+    public readonly struct FramingFillResult
+    {
+        /// <summary>Camera distance on the boom, in metres.</summary>
+        public readonly float DistanceMetres;
+        /// <summary>Aim-pin screen Y (Y-down fraction of the half-frame). Negative
+        /// pins the aim above centre (more foot-room), positive below (more head-room).</summary>
+        public readonly float AimScreenY;
+        internal FramingFillResult(float distanceMetres, float aimScreenY)
+        { DistanceMetres = distanceMetres; AimScreenY = aimScreenY; }
+    }
+
     public static class GroupFramingPolicy
     {
         private const double Deg2Rad = Math.PI / 180.0;
@@ -62,6 +81,100 @@ namespace ValheimBroadcaster.Core
             double dBelow = belowAimMetres > 0f ? belowAimMetres / Math.Tan(down) : 0.0;
             double dAbove = aboveAimMetres > 0f ? aboveAimMetres / Math.Tan(up) : 0.0;
             return (float)Math.Max(dBelow, dAbove);
+        }
+
+        /// <summary>
+        /// FramingSize-style FILL solve (Cinemachine GroupFraming FramingSize
+        /// concept): given a body that extends <paramref name="belowAimMetres"/>
+        /// below and <paramref name="aboveAimMetres"/> above the AIM POINT (margins
+        /// already folded in by the caller), at a FIXED vertical fov, solve BOTH the
+        /// camera distance AND the aim-pin's screen Y so the body spans exactly
+        /// <paramref name="framingSize"/> of the frame height - the feet land at
+        /// screenY = +0.5 - bottomGap and the head at screenY = -0.5 + topGap, where
+        /// topGap = topGapShare*(1-framingSize) and bottomGap = (1-topGapShare)*
+        /// (1-framingSize). Unlike the fit-only solve this does NOT leave the aim at a
+        /// fixed pin and waste frame on one side; it positions the aim so the body
+        /// truly FILLS the chosen fraction.
+        ///
+        /// Exact projection model (matches the repo tests): a point at signed angle
+        /// phi below the camera forward axis projects to screenY = tan(phi)/(2*tan(
+        /// vfov/2)); the aim sits at phi_aim = atan(2*aimScreenY*tan(vfov/2)); feet are
+        /// at phi_aim + atan(below/d), head at phi_aim - atan(above/d).
+        ///
+        /// Solved by bisection on the aim angle phi_aim. The feet constraint gives
+        /// d_feet = below / tan(phiFeet - phi_aim) and the head constraint gives
+        /// d_head = above / tan(phi_aim - phiHead), where phiFeet/phiHead are the fixed
+        /// target angles of the bottom/top edges of the body band. As phi_aim rises
+        /// (aim moves toward the feet) d_feet increases and d_head decreases, so
+        /// g(phi_aim) = d_feet - d_head is strictly increasing - a single monotone
+        /// root, found by bisection, where the two agree and the body fills the band.
+        /// </summary>
+        public static FramingFillResult FramingFill(
+            float fixedVfovDeg, float belowAimMetres, float aboveAimMetres,
+            float framingSize, float topGapShare)
+        {
+            if (!Finite(fixedVfovDeg) || fixedVfovDeg <= 1f || fixedVfovDeg >= 170f)
+                throw new ArgumentOutOfRangeException(nameof(fixedVfovDeg));
+            if (!Finite(belowAimMetres) || belowAimMetres <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(belowAimMetres));
+            if (!Finite(aboveAimMetres) || aboveAimMetres <= 0f)
+                throw new ArgumentOutOfRangeException(nameof(aboveAimMetres));
+            if (!Finite(framingSize) || framingSize <= 0.1f || framingSize > 1f)
+                throw new ArgumentOutOfRangeException(nameof(framingSize));
+            if (!Finite(topGapShare) || topGapShare < 0f || topGapShare > 1f)
+                throw new ArgumentOutOfRangeException(nameof(topGapShare));
+
+            double half = fixedVfovDeg * 0.5 * Deg2Rad;
+            double tanHalf = Math.Tan(half);
+
+            double gap = 1.0 - framingSize;
+            double topGap = topGapShare * gap;
+            double bottomGap = (1.0 - topGapShare) * gap;
+            // Target screen Y of the body's bottom (feet) and top (head) edges.
+            double feetScreenY = 0.5 - bottomGap;   // Y-down: positive, toward the bottom edge.
+            double headScreenY = -0.5 + topGap;      // Y-down: negative, toward the top edge.
+            // Fixed target angles for those edges under this fov.
+            double phiFeet = Math.Atan(2.0 * feetScreenY * tanHalf);
+            double phiHead = Math.Atan(2.0 * headScreenY * tanHalf);
+
+            // Bisect phi_aim over the span's interior. phi_aim lives strictly between
+            // phiHead and phiFeet (the aim is inside the body band); clamp the search
+            // to the aimScreenY [-0.45, 0.45] limit the composer and the fit solve
+            // share, and guard a degenerate near-zero angle difference (< 0.5 deg).
+            double phiLimit = Math.Atan(2.0 * 0.45 * tanHalf);
+            double guard = 0.5 * Deg2Rad;
+            double lo = Math.Max(phiHead + guard, -phiLimit);
+            double hi = Math.Min(phiFeet - guard, phiLimit);
+            if (hi <= lo)
+                throw new ArgumentOutOfRangeException(nameof(framingSize),
+                    "Framing size leaves no room to place the aim inside the frame at this fov.");
+
+            // g(phi_aim) = d_feet - d_head is strictly increasing. Bisect for its root.
+            double DFeet(double phiAim) => belowAimMetres / Math.Tan(phiFeet - phiAim);
+            double DHead(double phiAim) => aboveAimMetres / Math.Tan(phiAim - phiHead);
+            double g(double phiAim) => DFeet(phiAim) - DHead(phiAim);
+
+            double gLo = g(lo), gHi = g(hi);
+            double phiAimSolved;
+            if (gLo >= 0.0) phiAimSolved = lo;        // Root at/left of range: clamp.
+            else if (gHi <= 0.0) phiAimSolved = hi;   // Root at/right of range: clamp.
+            else
+            {
+                double a = lo, b = hi;
+                for (int i = 0; i < 80; i++)
+                {
+                    double mid = 0.5 * (a + b);
+                    double gm = g(mid);
+                    if (gm > 0.0) b = mid; else a = mid;
+                    if (b - a < 1e-10) break;
+                }
+                phiAimSolved = 0.5 * (a + b);
+            }
+
+            double d = 0.5 * (DFeet(phiAimSolved) + DHead(phiAimSolved));
+            // Invert phi_aim back to the composer's Y-down screen fraction.
+            double aimScreenY = Math.Tan(phiAimSolved) / (2.0 * tanHalf);
+            return new FramingFillResult((float)d, (float)aimScreenY);
         }
 
         /// <summary>

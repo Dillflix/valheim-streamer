@@ -13,6 +13,12 @@ internal static class GroupFramingPolicyTests
         yield return ("Enemy depth offset shifts the required player distance", EnemyDepthOffset);
         yield return ("The oversized head-band reduces the below-aim span to crop feet", HeadBandReduction);
         yield return ("The fit at the realistic 50mm and 75mm lenses matches the spec", LensSanity);
+        yield return ("The fill solve lands feet and head exactly on their target screen edges", FillProjectsExactly);
+        yield return ("The fill solve is monotone: a smaller framing size pushes the camera in", FillMonotone);
+        yield return ("A symmetric body with symmetric gaps centres the aim on the span", FillSymmetricCentres);
+        yield return ("The real solo and combat fill cases land in their expected distance bands", FillRealCases);
+        yield return ("A full-frame fill (size 1) packs the body edge-to-edge with no gap", FillFullFrame);
+        yield return ("The fill solve rejects non-finite and out-of-range inputs", FillContracts);
         yield return ("The policy rejects non-finite and out-of-range inputs", ContractValidation);
     }
 
@@ -147,6 +153,100 @@ internal static class GroupFramingPolicyTests
         Near(12.32f, combat, "75 mm player need", 0.05);
         Check(solo > 6f, "50 mm player need did not exceed the 6 m default.");
         Check(combat < 18f, "75 mm player need exceeded the 18 m dolly cap.");
+    }
+
+    // Forward-project a point metresFromAim away given the SOLVED aim screen Y, for
+    // the fill oracle (same tangent model as ProjectScreenY but parameterised by the
+    // solved aim rather than a fixed pin).
+    private static void FillProjectsExactly()
+    {
+        // A spread of fov / span / framingSize / topGapShare combos, including the two
+        // real locked cases. For each, the feet must land on +0.5 - bottomGap and the
+        // head on -0.5 + topGap to 1e-3.
+        (float vfov, float below, float above, float size, float top)[] cases =
+        {
+            (26.9915f, 1.77f, 0.73f, 0.80f, 0.60f),   // solo locked case
+            (18.1805f, 1.77f, 0.73f, 0.80f, 0.60f),   // combat baseline case
+            (30f,      1.20f, 1.20f, 0.90f, 0.50f),
+            (45f,      2.00f, 0.50f, 0.70f, 0.30f),
+            (18.1805f, 1.67f, 2.25f, 0.85f, 0.60f),   // enemy-ish spans
+            (60f,      1.00f, 1.00f, 0.60f, 0.80f),
+        };
+        foreach (var c in cases)
+        {
+            FramingFillResult r = GroupFramingPolicy.FramingFill(c.vfov, c.below, c.above, c.size, c.top);
+            double gap = 1.0 - c.size;
+            double topGap = c.top * gap;
+            double bottomGap = (1.0 - c.top) * gap;
+            double feetTarget = 0.5 - bottomGap;
+            double headTarget = -0.5 + topGap;
+            double feet = ProjectScreenY(c.vfov, r.AimScreenY, c.below, r.DistanceMetres, +1);
+            double head = ProjectScreenY(c.vfov, r.AimScreenY, c.above, r.DistanceMetres, -1);
+            Near(feetTarget, feet, $"feet land on target (vfov {c.vfov}, size {c.size})", 1e-3);
+            Near(headTarget, head, $"head lands on target (vfov {c.vfov}, size {c.size})", 1e-3);
+            // The spanned fraction (feet - head) must equal the framing size.
+            Near(c.size, feet - head, $"body spans the framing size (vfov {c.vfov})", 2e-3);
+        }
+    }
+
+    private static void FillMonotone()
+    {
+        // Shrinking the framing size (body fills LESS of the frame) must move the
+        // camera FARTHER out; growing it must pull in. Distance is monotone in size.
+        float dBig = GroupFramingPolicy.FramingFill(26.9915f, 1.77f, 0.73f, 0.9f, 0.6f).DistanceMetres;
+        float dMid = GroupFramingPolicy.FramingFill(26.9915f, 1.77f, 0.73f, 0.8f, 0.6f).DistanceMetres;
+        float dSmall = GroupFramingPolicy.FramingFill(26.9915f, 1.77f, 0.73f, 0.6f, 0.6f).DistanceMetres;
+        Check(dBig < dMid && dMid < dSmall, $"distance not monotone in framing size: {dBig}, {dMid}, {dSmall}.");
+    }
+
+    private static void FillSymmetricCentres()
+    {
+        // Symmetric body (equal below/above) with a symmetric gap split (topGapShare
+        // 0.5) must centre the aim: aimScreenY ~ 0 and feet/head symmetric about 0.
+        FramingFillResult r = GroupFramingPolicy.FramingFill(30f, 1.2f, 1.2f, 0.8f, 0.5f);
+        Near(0.0, r.AimScreenY, "symmetric body centres the aim", 1e-3);
+        double feet = ProjectScreenY(30f, r.AimScreenY, 1.2f, r.DistanceMetres, +1);
+        double head = ProjectScreenY(30f, r.AimScreenY, 1.2f, r.DistanceMetres, -1);
+        Near(0.4, feet, "symmetric feet on +0.4", 1e-3);   // size 0.8 => gap 0.2, half each side
+        Near(-0.4, head, "symmetric head on -0.4", 1e-3);
+    }
+
+    private static void FillRealCases()
+    {
+        // The two locked cases. Spec expects solo ~6.3-6.8 m with a NEGATIVE aim
+        // (aim above centre), combat ~9.5-10.2 m. Assert the bands and the aim sign.
+        FramingFillResult solo = GroupFramingPolicy.FramingFill(26.9915f, 1.77f, 0.73f, 0.8f, 0.6f);
+        FramingFillResult combat = GroupFramingPolicy.FramingFill(18.1805f, 1.77f, 0.73f, 0.8f, 0.6f);
+        Check(solo.DistanceMetres > 6.0f && solo.DistanceMetres < 7.0f,
+            $"solo fill distance {solo.DistanceMetres} outside the expected ~6.3-6.8 m band.");
+        Check(solo.AimScreenY < 0f, $"solo fill aim should be negative (above centre), got {solo.AimScreenY}.");
+        Check(combat.DistanceMetres > 9.3f && combat.DistanceMetres < 10.4f,
+            $"combat fill distance {combat.DistanceMetres} outside the expected ~9.5-10.2 m band.");
+    }
+
+    private static void FillFullFrame()
+    {
+        // framingSize = 1 means zero gap: the feet must reach exactly +0.5 and the
+        // head exactly -0.5 (edge to edge), whatever the gap split.
+        FramingFillResult r = GroupFramingPolicy.FramingFill(26.9915f, 1.77f, 0.73f, 1f, 0.6f);
+        double feet = ProjectScreenY(26.9915f, r.AimScreenY, 1.77f, r.DistanceMetres, +1);
+        double head = ProjectScreenY(26.9915f, r.AimScreenY, 0.73f, r.DistanceMetres, -1);
+        Near(0.5, feet, "full-frame feet on the bottom edge", 1e-3);
+        Near(-0.5, head, "full-frame head on the top edge", 1e-3);
+    }
+
+    private static void FillContracts()
+    {
+        Throws(() => GroupFramingPolicy.FramingFill(1f, 1f, 1f, 0.8f, 0.6f));            // fov <= 1
+        Throws(() => GroupFramingPolicy.FramingFill(170f, 1f, 1f, 0.8f, 0.6f));          // fov >= 170
+        Throws(() => GroupFramingPolicy.FramingFill(float.NaN, 1f, 1f, 0.8f, 0.6f));
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 0f, 1f, 0.8f, 0.6f));           // below <= 0
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 1f, 0f, 0.8f, 0.6f));           // above <= 0
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 1f, 1f, 0.1f, 0.6f));           // size <= 0.1
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 1f, 1f, 1.01f, 0.6f));          // size > 1
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 1f, 1f, 0.8f, -0.01f));         // topShare < 0
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 1f, 1f, 0.8f, 1.01f));          // topShare > 1
+        Throws(() => GroupFramingPolicy.FramingFill(30f, 1f, 1f, float.NaN, 0.6f));
     }
 
     private static void ContractValidation()
