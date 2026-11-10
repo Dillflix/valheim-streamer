@@ -126,6 +126,25 @@ internal sealed class SimpleFollowCamera : IDisposable
     private float dollyVelocity;
     private float desiredDollyRadius;                   // Target radius this frame (player + weighted enemy need).
     private bool dollyHeadBand;                         // The head-band crop is active this frame (oversized enemy).
+    // Tight-space shot ladder: in caves/buildings the camera cannot reach the
+    // full-fill distance, so it moves CLOSER while keeping the same lens and the
+    // thirds composition - the shot degrades full -> medium close -> close-up as
+    // the space shrinks (head always kept, feet crop up). Each frame a sphere-cast
+    // probes the physical boom room along the ideal boom direction; a hysteresis
+    // field shrinks FAST (doorways cramp quickly) and recovers SLOW (never pumps).
+    private const float TightProbeRadius = 0.35f;       // Sphere-cast radius: matches the deoccluder margin ethos.
+    private const float TightProbeMargin = 0.15f;       // Back off the solid hit by this before using it as the cap.
+    private const float TightProbeExtra = 0.5f;         // Probe this far past the desired fill distance (headroom to detect "clear").
+    private const float TightFloor = 1.3f;              // Deoccluder min distance (1) + margin: never closer than this.
+    private const float TightShrinkSeconds = 0.25f;     // Fast collapse when the room shrinks (target < current).
+    private const float TightRecoverSeconds = 1.5f;     // Slow re-open when the room grows (target > current), no pumping.
+    private const float TightBandFull = 0.85f;          // Visible-body fraction >= this reads as a full shot.
+    private const float TightBandMedium = 0.45f;        // >= this (and < full) reads as a medium close-up.
+    private readonly RaycastHit[] boomHits = new RaycastHit[8]; // Non-alloc sphere-cast buffer for the boom probe.
+    private float availableDistance;                    // Hysteresis-smoothed physical boom room (metres).
+    private float availableVelocity;
+    private bool tightActive;                           // Tight mode engaged this frame (available < fill).
+    private float tightFrameFraction;                   // Visible body fraction this frame (diagnostics bands).
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
 
@@ -206,6 +225,9 @@ internal sealed class SimpleFollowCamera : IDisposable
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
                     ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
                 $"; fill d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "") +
+                (tightActive
+                    ? $"; tight d={availableDistance:F1}m frame={(tightFrameFraction >= TightBandFull ? "full" : tightFrameFraction >= TightBandMedium ? "medium" : "close-up")} {tightFrameFraction * 100f:F0}%"
+                    : "") +
                 (soloReasonRight > 0f ? "; side R" : "") +
                 (Mathf.Abs(leadOffsetX) > 0.01f ? $"; lead {(leadOffsetX >= 0f ? "+" : "")}{leadOffsetX:F2}" : "");
         }
@@ -276,8 +298,16 @@ internal sealed class SimpleFollowCamera : IDisposable
             // so the body fills FramingSizeConst of the frame. SimpleFollowDistance is
             // NOT a floor here (demoted to a seed) - the dolly may come closer than the
             // configured distance; that is the fill's whole point.
-            desiredDollyRadius = Mathf.Clamp(SolvePlayerDolly(actor, soloFov, aimHeight, subjectPosition, out float soloFillAimY), 2f, DollyMaxMetres);
-            EaseAim(soloFillAimY, soloScreenX + leadOffsetX, dt);
+            float soloFill = SolvePlayerDolly(actor, soloFov, aimHeight, subjectPosition, out float soloFillAimY, out float soloBelow, out float soloAbove);
+            // Tight-space: cap the radius by the physical boom room and, when cramped,
+            // switch the aim to the head-pinned cropped composition (feet crop up). The
+            // thirds/lead X flow is COMPLETELY unchanged (operator: maintain thirds).
+            UpdateBoomRoom(subjectPosition, aimHeight, soloFill, dt);
+            float soloAimTarget = ResolveTightAim(soloFov, soloFill, soloFillAimY, soloBelow, soloAbove);
+            // Physical space wins: cap by the boom room. The floor is TightFloor (1.3)
+            // so tight spaces can bring the camera in below the 2 m fill minimum.
+            desiredDollyRadius = Mathf.Clamp(Mathf.Min(soloFill, availableDistance), TightFloor, DollyMaxMetres);
+            EaseAim(soloAimTarget, soloScreenX + leadOffsetX, dt);
             return;
         }
         // The thirds separation must be solved from the SAME blended fov the lens
@@ -348,9 +378,15 @@ internal sealed class SimpleFollowCamera : IDisposable
         // In combat with a live framed enemy the fill uses GROUP spans so a low
         // creature lifts the aim / a tall enemy adds headroom (vertical balance).
         float lensFov = Mathf.Clamp(combatFov, 10f, 100f);
-        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, subjectPosition, out float fillAimY);
+        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, subjectPosition, out float fillAimY, out float combatBelow, out float combatAbove);
+        // Tight-space: probe the physical boom room this frame (behavior B.1/B.2).
+        UpdateBoomRoom(subjectPosition, aimHeight, playerNeed, dt);
+        // When cramped, the aim comes from the player-only cropped solve (enemy fit is
+        // already best-effort; documented decision #14) - the head stays pinned, feet
+        // crop up. Thirds/lead X unchanged. Otherwise the fill aim owns the shot.
+        float combatAimTarget = ResolveTightAim(lensFov, playerNeed, fillAimY, combatBelow, combatAbove);
         // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
-        EaseAim(fillAimY, combatScreenX, dt);
+        EaseAim(combatAimTarget, combatScreenX, dt);
         float effectiveNeed = playerNeed;
         dollyHeadBand = false;
         if (combatTargetId != 0)
@@ -358,10 +394,56 @@ internal sealed class SimpleFollowCamera : IDisposable
             float enemyNeed = SolveEnemyDolly(lensFov, aimHeight, subjectPosition, radius, playerNeed);
             if (enemyNeed > 0f) effectiveNeed = Mathf.Max(playerNeed, enemyNeed);
         }
-        // SimpleFollowDistance is NOT a floor (demoted to a seed) - desired is the fill
-        // need (player, or max with the weighted enemy), clamped to [2, DollyMax]. The
-        // dolly may come closer than the configured distance.
-        desiredDollyRadius = Mathf.Clamp(effectiveNeed, 2f, DollyMaxMetres);
+        // Physical space wins (behavior B.4): the enemy need is also capped by the
+        // boom room - min() applied AFTER the max chain, before the clamp. Floor
+        // TightFloor (1.3) so tight combat can pull the camera in below 2 m.
+        effectiveNeed = Mathf.Min(effectiveNeed, availableDistance);
+        desiredDollyRadius = Mathf.Clamp(effectiveNeed, TightFloor, DollyMaxMetres);
+    }
+
+    // Tight-space boom-room probe (behavior B.1/B.2). Sphere-cast from the player
+    // aim point along the CURRENT ideal boom direction (the unit vector from the aim
+    // toward the ideal orbit position at the live azimuth/elevation - the same
+    // geometry Layer 1 uses) and find the nearest solid. The raw room is that hit
+    // distance minus a small margin, or the desired fill distance when nothing solid
+    // is within reach. A hysteresis field then shrinks FAST and recovers SLOW so a
+    // doorway edge never pumps the shot. Floored at TightFloor. No per-frame alloc.
+    private void UpdateBoomRoom(Vector3 subjectPosition, float aimHeight, float desiredFillDistance, float dt)
+    {
+        if (solidMask == 0) solidMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
+        // Re-seed the boom room to the full fill distance after a reset/rebind/warp
+        // (availableDistance zeroed there) so a fresh vantage never starts cramped.
+        if (availableDistance <= 0f) { availableDistance = Mathf.Max(TightFloor, desiredFillDistance); availableVelocity = 0f; }
+        Vector3 aimPoint = subjectPosition + Vector3.up * aimHeight;
+        float azimuth = orbit!.HorizontalAxis.Value;
+        // Ideal orbit position at the current axis/elevation; the boom direction is
+        // from the aim toward that position (same Euler(elev, azimuth, 0)*(0,0,-r) rig).
+        Vector3 idealOffset = Quaternion.Euler(ElevationDegrees, azimuth, 0f) * new Vector3(0f, 0f, -1f);
+        Vector3 boomDir = idealOffset; // Already a unit direction (the -r is just a length).
+        if (!TargetRoster.Finite(boomDir) || boomDir.sqrMagnitude < 0.0001f) { availableDistance = desiredFillDistance; availableVelocity = 0f; return; }
+        boomDir.Normalize();
+        float maxDist = desiredFillDistance + TightProbeExtra;
+        float raw = desiredFillDistance;
+        int count = Physics.SphereCastNonAlloc(aimPoint, TightProbeRadius, boomDir, boomHits,
+            maxDist, solidMask, QueryTriggerInteraction.Ignore);
+        float nearest = float.MaxValue;
+        bool hit = false;
+        for (int i = 0; i < count; i++)
+        {
+            if (!Solid(boomHits[i].collider)) continue;
+            float hd = boomHits[i].distance;
+            // A zero-distance hit means the aim point is embedded in solid; ignore it
+            // so an overlap at the origin does not collapse the boom to the floor.
+            if (hd <= 0.01f) continue;
+            if (hd < nearest) { nearest = hd; hit = true; }
+        }
+        if (hit) raw = Mathf.Max(0f, nearest - TightProbeMargin);
+        float target = Mathf.Max(TightFloor, raw);
+        // Hysteresis: shrink fast toward a smaller room, recover slow toward a larger.
+        float ease = target < availableDistance ? TightShrinkSeconds : TightRecoverSeconds;
+        availableDistance = Mathf.SmoothDamp(availableDistance, target, ref availableVelocity,
+            ease, Mathf.Infinity, Mathf.Max(dt, 0f));
+        if (availableDistance < TightFloor) availableDistance = TightFloor;
     }
 
     // Project the player's world velocity onto the PRESENTED camera-right axis and
@@ -422,7 +504,8 @@ internal sealed class SimpleFollowCamera : IDisposable
     // fillAimY for the caller to ease the composer toward. No DollyMax cap here (the
     // player is rule 1); the caller clamps for safety. At 50 mm this lands ~6.5 m
     // full-frame, not the ~8.2 m the fit-only solve produced.
-    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, Vector3 subjectPosition, out float fillAimY)
+    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, Vector3 subjectPosition,
+        out float fillAimY, out float belowAimOut, out float aboveAimOut)
     {
         float height = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
         float belowAim = aimHeight + PlayerFeetMargin;
@@ -437,10 +520,35 @@ internal sealed class SimpleFollowCamera : IDisposable
             var group = GroupFramingPolicy.CombineGroupSpans(belowAim, aboveAim, enemyBelowEq, enemyAboveEq, weight);
             belowAim = group.Below; aboveAim = group.Above;
         }
+        belowAimOut = belowAim; aboveAimOut = aboveAim;
         FramingFillResult fill = GroupFramingPolicy.FramingFill(
             lensFov, belowAim, aboveAim, FramingSizeConst, TopGapShare);
         fillAimY = fill.AimScreenY;
         return fill.DistanceMetres;
+    }
+
+    // Tight-space resolve (behavior B.3/B.5): decide this frame's aim-Y target and
+    // the radius cap given the solved fill distance, the body spans and the smoothed
+    // boom room. When the room is >= the fill distance (within a small deadband) we
+    // are NOT cramped - keep the fill aim and the fill distance. When the room is
+    // smaller, TIGHT MODE: the camera sits at the available distance and the aim
+    // comes from CroppedFraming (head pinned with its headroom, feet crop up). The
+    // visible-body fraction drives the diagnostics band. Returns the aim-Y target to
+    // ease toward; writes the frame fraction and sets tightActive.
+    private float ResolveTightAim(float lensFov, float fillDistance, float fillAimY, float belowAim, float aboveAim)
+    {
+        tightActive = false;
+        tightFrameFraction = 1f;
+        float avail = availableDistance;
+        if (avail >= fillDistance - 0.1f) return fillAimY; // Room enough: the fill owns the shot.
+        tightActive = true;
+        // topGap mirrors the fill's leftover-gap split so the head sits where the full
+        // shot would place it; CroppedFraming keeps it there as the body crops.
+        float topGap = TopGapShare * (1f - FramingSizeConst);
+        float d = Mathf.Max(0.51f, avail);
+        CroppedFramingResult crop = GroupFramingPolicy.CroppedFraming(lensFov, d, aboveAim, belowAim, topGap);
+        tightFrameFraction = crop.VisibleBodyFraction;
+        return crop.AimScreenY;
     }
 
     // Project the engaged enemy's vertical extents (below/above the PLAYER's aim
@@ -658,6 +766,9 @@ internal sealed class SimpleFollowCamera : IDisposable
         // A fresh vantage, teleport or rebind re-seeds the dolly from the configured
         // distance (0 => the next solve seeds dollyRadius = SimpleFollowDistance).
         dollyRadius = 0f; dollyVelocity = 0f; desiredDollyRadius = 0f; dollyHeadBand = false;
+        // Tight-space: re-seed the boom room to "open" (0 => the next solve seeds it to
+        // the desired fill distance) so a fresh vantage/warp never starts cramped.
+        availableDistance = 0f; availableVelocity = 0f; tightActive = false; tightFrameFraction = 1f;
         aimScreenY = SoloScreenY; aimScreenYVelocity = 0f; // Reseed the eased aim to the legacy pin.
         // Screen-space composition: side back to LEFT, lead 0, velocity sample voided.
         composition.Reset();

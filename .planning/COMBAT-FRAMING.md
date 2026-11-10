@@ -305,6 +305,66 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
       projection exactness, contracts. All three suites green (Core 1512, CM 128, Hooks
       45), 0 warn / 0 err. Runtime footage verification outstanding.
 
+14. **Tight-space shot ladder (2026-11-09) — in caves/buildings the camera moves
+    CLOSER while the lens stays INVIOLATE and the thirds composition is MAINTAINED;
+    the shot degrades gracefully full shot -> medium close -> close-up as the space
+    shrinks. The head is ALWAYS kept with its headroom; the body crops feet-up.**
+    - **New Core pure solver `GroupFramingPolicy.CroppedFraming(fixedVfovDeg,
+      availableDistanceMetres, aboveAimMetres, belowAimFullMetres, topGapFraction)`
+      -> readonly struct `CroppedFramingResult { AimScreenY, VisibleBelowAimMetres,
+      VisibleBodyFraction }`.** Given the camera CANNOT reach the full-fill distance
+      and must sit at `availableDistance`, it PINS THE HEAD (head point = aim + above
+      projects to the fixed top target screenY = -0.5 + topGap) and lets the bottom
+      frame edge CROP the body. Closed form: htheta = atan(2*(-0.5+topGap)*tan(vfov/2))
+      (negative, up); phi_aim = htheta + atan(above/d); aimScreenY = tan(phi_aim)/
+      (2*tan(vfov/2)), clamped [-0.45, 0.45]; bottom edge btheta = atan(2*0.5*
+      tan(vfov/2)); visibleBelow = d*tan(btheta - phi_aim) (clamp >= 0);
+      VisibleBodyFraction = clamp01((visibleBelow + above)/(belowAimFull + above)).
+      Contracts: finite, distance > 0.5, spans > 0, vfov (1,170), topGap [0, 0.4];
+      ArgumentOutOfRangeException. At the full-fill distance the fraction is ~1 and the
+      aim reproduces the FramingFill composition (the two solvers agree at the boundary).
+    - **Measured 50 mm ladder (26.9915 deg, above 0.73, belowFull 1.77, topGap 0.06):**
+      - d = 5.81 m: aimY = -0.1736, visibleBelow = 1.917, **fraction = 1.000 — "full"**
+        (at the exact fill distance 5.742 the cropped aim = the fill aim -0.1706).
+      - d = 3.5 m:  aimY = -0.0052, visibleBelow = 0.849, **fraction = 0.632 — "medium"**.
+      - d = 2.0 m:  aimY = +0.2975, visibleBelow = 0.188, **fraction = 0.367 — "close-up"**.
+      Diagnostic bands: fraction >= 0.85 "full", 0.45-0.85 "medium", < 0.45 "close-up".
+    - **Plugin (SimpleFollowCamera) wiring — lens, thirds, lead, Layer 1 all UNCHANGED:**
+      - **Boom-room probe (each frame, solo AND combat):** Physics.SphereCastNonAlloc
+        from the player aim point along the CURRENT ideal boom direction (unit vector
+        toward the ideal orbit position at the live azimuth/elevation — the same rig
+        Layer 1 uses), sphere radius 0.35 m, max distance = desiredFillDistance + 0.5 m,
+        same solid mask (Default/static_solid/piece/terrain), QueryTriggerInteraction.
+        Ignore, Solid() filter (no triggers/Characters, skip zero-distance embeds).
+        available = nearest solid hit ? hitDistance - 0.15 : fillDistance. Non-alloc
+        buffer (boomHits[8]).
+      - **Hysteresis (so doorways do not pump):** a smoothed `availableDistance` field
+        shrinks FAST (SmoothDamp 0.25 s when target < current) and recovers SLOW
+        (SmoothDamp 1.5 s when target > current). Floored at 1.3 m (deoccluder min
+        distance 1 + margin). Re-seeds to the fill distance on reset/rebind/warp.
+      - **Radius cap:** desiredDollyRadius = min(existing desired [fill / enemy chain],
+        availableDistance), floor 1.3 m (below the 2 m fill minimum), cap DollyMax 18 m.
+        The enemy need is capped by availableDistance with a min() AFTER the existing
+        max chain, before the clamp (physical space wins).
+      - **Tight mode:** when availableDistance < fillDistance - 0.1 m, the aim-Y target
+        comes from `CroppedFraming(lensFov, availableDistance, aboveAim, belowAim,
+        topGap = TopGapShare*(1-FramingSizeConst) = 0.06)` instead of FramingFill; the
+        existing 0.8 s aimScreenY ease carries it. In combat the aim uses the player-only
+        cropped solve (enemy fit stays best-effort; the enemy may still be larger than
+        the crop — accepted, same as the sparse/head-band best-effort elsewhere).
+      - **Diagnostics:** append "; tight d=N.Nm frame=<full|medium|close-up> NN%" when
+        tight mode is active (bands above). The "; fill d=.. aimY=.." tail is unchanged.
+      - **Layer 1 unchanged:** it arcs for occlusion (azimuth); this handles radial
+        cramping (radius). They compose — tight mode caps the radius, recovery picks the
+        azimuth, and the probe follows the recovered azimuth each frame.
+    - **Tests: +6 Core (1512 -> 1518).** CroppedFraming: head pinned exactly on its top
+      target edge across fov/distance/span/topGap combos (projection oracle); bottom
+      edge crops the body feet-up where predicted; full-fill distance reproduces the fill
+      aim + fraction ~1; fraction strictly decreasing as the camera is forced closer; the
+      real 50 mm ladder lands in its full/medium/close-up bands; contracts. All three
+      suites green (Core 1518, CM 128, Hooks 45), 0 warn / 0 err. Runtime footage
+      verification outstanding.
+
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
   will hang off.
