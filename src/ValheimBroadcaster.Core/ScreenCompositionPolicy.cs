@@ -71,6 +71,10 @@ namespace ValheimBroadcaster.Core
         /// <summary>Full magnitude of the combat lead offset (screen fraction) once
         /// the motion direction is sustained.</summary>
         public const float LeadOffsetMagnitude = 0.05f;
+        /// <summary>The look-target aim must be off the camera forward by at least
+        /// this horizontal angle to open LOOK ROOM toward it. Below this the motion
+        /// trailing rule stays in charge.</summary>
+        public const float LookRoomThresholdDegrees = 10f;
 
         private double lastNow = -1;
         private SoloCompositionSide side = SoloCompositionSide.Left; // Operator's standing default.
@@ -93,40 +97,57 @@ namespace ValheimBroadcaster.Core
         /// Observe one frame. <paramref name="now"/> is a monotonic clock (a rollback
         /// resets the machine). <paramref name="lateralScreenVelocity"/> is the
         /// player's lateral velocity in camera space (m/s, +right / -left), smoothed
-        /// by the adapter. Returns the solo thirds target, the shared combat lead
-        /// offset, the resolved side and a reason.
+        /// by the adapter. <paramref name="lookOffsetDegrees"/> is the signed
+        /// horizontal angle of the look-target aim relative to the CAMERA forward
+        /// (+right / -left; caller passes DeltaAngle(cameraAzimuth, aimAzimuth), 0
+        /// when the aim is invalid). Returns the solo thirds target, the shared combat
+        /// lead offset, the resolved side and a reason.
         /// </summary>
-        public ScreenCompositionDecision Observe(double now, float lateralScreenVelocity)
+        public ScreenCompositionDecision Observe(double now, float lateralScreenVelocity, float lookOffsetDegrees = 0f)
         {
             if (!Finite(now) || now < 0) throw new ArgumentOutOfRangeException(nameof(now));
             if (!Finite(lateralScreenVelocity)) throw new ArgumentOutOfRangeException(nameof(lateralScreenVelocity));
+            if (!Finite(lookOffsetDegrees)) throw new ArgumentOutOfRangeException(nameof(lookOffsetDegrees));
             if (lastNow >= 0 && now < lastNow) Reset();
             lastNow = now;
 
             int sign = lateralScreenVelocity > MotionThresholdMetresPerSecond ? +1
                      : lateralScreenVelocity < -MotionThresholdMetresPerSecond ? -1 : 0;
 
-            // --- Solo side hysteresis (trailing lead room) ---
-            // The player trails its motion: moving RIGHT (+1) wants the player on the
-            // LEFT thirds so the room opens right, and vice versa. So the side the
-            // player should hold for motion sign s is: s > 0 -> Left, s < 0 -> Right.
-            // The current side is correct when the motion already matches it; the
-            // pending flip run only counts motion OPPOSITE the current side.
-            SoloCompositionSide motionWantsSide = sign > 0 ? SoloCompositionSide.Left
-                                                : sign < 0 ? SoloCompositionSide.Right
-                                                : side;
-            if (sign == 0 || motionWantsSide == side)
+            // --- Solo side arbiter (LOOK ROOM and trailing lead room) ---
+            // One sustain machine feeds from two wants; LOOK ROOM wins conflicts.
+            //   Trailing motion: the player trails its motion, so moving RIGHT (+1)
+            //   wants the player on the LEFT thirds (room opens right); moving LEFT
+            //   wants RIGHT. want(motion) = +1(right motion) -> Left, -1 -> Right.
+            //   Look room: the player gives room TOWARD the look target, so the player
+            //   sits OPPOSITE the look direction - looking RIGHT (+off) wants the
+            //   player on the LEFT thirds, looking LEFT wants RIGHT. Same mapping, so
+            //   look reuses the sign->side rule below with a +1/-1 look sign.
+            // Look OUTRANKS motion: when the look is off past the threshold it is the
+            // sole want; motion fills in only when the look is centred/invalid.
+            int lookSign = lookOffsetDegrees > LookRoomThresholdDegrees ? +1
+                         : lookOffsetDegrees < -LookRoomThresholdDegrees ? -1 : 0;
+            int wantSign = lookSign != 0 ? lookSign : sign;
+            bool lookDriven = lookSign != 0;
+
+            // want(s): s > 0 -> player LEFT (room/look opens right), s < 0 -> RIGHT.
+            SoloCompositionSide wantSide = wantSign > 0 ? SoloCompositionSide.Left
+                                         : wantSign < 0 ? SoloCompositionSide.Right
+                                         : side;
+            if (wantSign == 0 || wantSide == side)
             {
-                // Stationary, or motion confirms the current side: no pending flip.
+                // Stationary/centred, or the want confirms the current side: no flip.
                 pendingDirection = 0; pendingSince = -1;
             }
             else
             {
-                // Motion opposes the current side. Start or continue the sustain run.
-                if (pendingDirection != sign) { pendingDirection = sign; pendingSince = now; }
+                // The want opposes the current side. Start or continue the sustain run.
+                // A change of want sign restarts the run (a look want replacing a
+                // motion want of the other sign re-arms the same single timer).
+                if (pendingDirection != wantSign) { pendingDirection = wantSign; pendingSince = now; }
                 if (now - pendingSince >= SustainSeconds)
                 {
-                    side = motionWantsSide;
+                    side = wantSide;
                     pendingDirection = 0; pendingSince = -1;
                 }
             }
@@ -152,7 +173,8 @@ namespace ValheimBroadcaster.Core
             }
 
             float playerScreenX = side == SoloCompositionSide.Left ? -ThirdsScreenX : ThirdsScreenX;
-            string reason = pendingSince >= 0 ? "confirming side flip"
+            string reason = pendingSince >= 0 ? (lookDriven ? "confirming look room" : "confirming side flip")
+                          : lookDriven ? "look room"
                           : sign == 0 ? "stationary"
                           : "leading motion";
             return new ScreenCompositionDecision(playerScreenX, leadOffset, side, reason);

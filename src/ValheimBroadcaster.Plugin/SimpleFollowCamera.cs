@@ -152,6 +152,25 @@ internal sealed class SimpleFollowCamera : IDisposable
     private float availableVelocity;
     private bool tightActive;                           // Tight mode engaged this frame (available < fill).
     private float tightFrameFraction;                   // Visible body fraction this frame (diagnostics bands).
+    // LOOK-TARGET doctrine (operator order 2026-11-11): the camera follows the
+    // player's gaze. The replicated aim ray is the player's ZDO s_lookTarget (the
+    // owner writes eyePos + lookDir*100 every 0.2s; GetLookDir is owner-only and
+    // must NOT be read on a remote). We read it off the followed actor's cached
+    // ZNetView, build aimDir = normalize(lookTarget - eye), and SMOOTH it (the raw
+    // signal steps at ~5 Hz) with a slerp low-pass before deriving an azimuth. An
+    // aimed enemy becomes THE framing priority; the solo camera settles BEHIND the
+    // gaze; look room gives the player room toward the look target.
+    private ZNetView? subjectView;                     // Cached per binding; rebind clears it.
+    private const float AimSmoothTimeConstant = 0.25f; // Slerp low-pass tau: 5 Hz updates must not step the camera.
+    private const float AimGraceSeconds = 1.0f;        // Brief zero/invalid aim keeps the last smoothed aim this long.
+    private const float AimConeDegrees = 15f;          // Aim cone: an enemy within this of the aim is "aimed at".
+    private const float SoloLookSteerMinSpeed = 4f;    // Gentlest azimuth writer: floor deg/s.
+    private const float SoloLookSteerMaxSpeed = 20f;   // Gentlest azimuth writer: cap deg/s.
+    private Vector3 aimDirSmoothed;                     // Slerp-smoothed world aim direction (horizontal+pitch).
+    private bool hasAimSample;                          // A smoothed aim sample exists (seeds the slerp).
+    private float aimAzimuthDegrees;                    // World azimuth of the smoothed aim (atan2(x,z) - matches bearings).
+    private bool aimValid;                              // The aim is valid this frame (within grace of a real sample).
+    private double aimLastValidAt = -1;                 // Last unscaled time a real (non-zero, finite) look target was read.
     internal string LastFailure { get; private set; } = "Awaiting player";
     internal string Diagnostics { get; private set; } = "Simple follow: awaiting player";
 
@@ -200,6 +219,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         camera.Lens.FieldOfView = combatFov;
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
         UpdateLateralVelocity(subjectPosition, dt);
+        UpdateAimSensing(actor, dt);
         UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, dollyRadius, dt);
         UpdateCombatFraming(actor, settings, subjectPosition, dollyRadius, soloFov, aimHeight, dt);
         // Dolly group framing: ease the live orbit radius toward the fit the fixed
@@ -230,7 +250,9 @@ internal sealed class SimpleFollowCamera : IDisposable
                 $"screen ({aim!.Composition.ScreenPosition.x:F2}, {aimScreenY:F2}); recentering behind subject; fov {fov:F0}; " +
                 $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
-                    ? $"; combat: {name} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
+                    ? $"; combat: {name}{(combat.TargetByAim ? " (aimed)" : "")} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
+                (aimValid
+                    ? $"; aim {aimAzimuthDegrees:F0}deg off {Mathf.DeltaAngle(orbit!.HorizontalAxis.Value, aimAzimuthDegrees):F0}deg" : "") +
                 $"; eyeline d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "") +
                 (tightActive
                     ? $"; tight d={availableDistance:F1}m frame={(tightFrameFraction >= TightBandFull ? "full" : tightFrameFraction >= TightBandMedium ? "medium" : "close-up")} {tightFrameFraction * 100f:F0}%"
@@ -240,6 +262,73 @@ internal sealed class SimpleFollowCamera : IDisposable
         }
         LastFailure = "none";
         return true;
+    }
+
+    // LOOK-TARGET aim sensing. Read the followed player's replicated aim ray from
+    // its ZDO (s_lookTarget, written by the owner at ~5 Hz as eyePos+lookDir*100),
+    // build the world aim direction from the eye point, and slerp-smooth it so the
+    // 5 Hz steps never jolt the camera. GetLookDir is owner-only and deliberately
+    // NOT used. A brief zero/invalid read (sentinel Vector3.zero) keeps the last
+    // smoothed aim for AimGraceSeconds before the aim is declared invalid.
+    private void UpdateAimSensing(Character actor, float dt)
+    {
+        double now = Time.unscaledTimeAsDouble;
+        // Cache the ZNetView per binding; a rebind nulls it so it re-fetches here.
+        if (!subjectView) subjectView = actor.GetComponent<ZNetView>();
+        ZDO? zdo = subjectView ? subjectView.GetZDO() : null;
+        Vector3 rawDir = default;
+        bool haveRaw = false;
+        if (zdo != null && zdo.IsValid())
+        {
+            Vector3 lookTarget = zdo.GetVec3(ZDOVars.s_lookTarget, Vector3.zero);
+            // Valid iff non-sentinel AND finite.
+            if (TargetRoster.Finite(lookTarget) && lookTarget.sqrMagnitude > 0.01f)
+            {
+                Vector3 eye = actor.GetEyePoint();
+                if (!TargetRoster.Finite(eye)) eye = actor.transform.position + Vector3.up * 1.6f; // Aim-height fallback.
+                Vector3 toTarget = lookTarget - eye;
+                if (TargetRoster.Finite(toTarget) && toTarget.sqrMagnitude > 1e-4f)
+                { rawDir = toTarget.normalized; haveRaw = true; aimLastValidAt = now; }
+            }
+        }
+        if (haveRaw)
+        {
+            if (!hasAimSample) { aimDirSmoothed = rawDir; hasAimSample = true; }
+            else
+            {
+                // Slerp low-pass: fraction 1-exp(-dt/tau) toward the raw direction.
+                float a = 1f - Mathf.Exp(-Mathf.Max(dt, 0f) / Mathf.Max(0.01f, AimSmoothTimeConstant));
+                aimDirSmoothed = Vector3.Slerp(aimDirSmoothed, rawDir, Mathf.Clamp01(a));
+            }
+        }
+        // Valid while we have a smoothed sample AND the last real read is within grace.
+        aimValid = hasAimSample && aimLastValidAt >= 0 && (now - aimLastValidAt) <= AimGraceSeconds;
+        if (hasAimSample)
+        {
+            Vector3 planar = aimDirSmoothed; planar.y = 0f;
+            if (planar.sqrMagnitude > 1e-6f)
+                aimAzimuthDegrees = Mathf.Atan2(planar.x, planar.z) * Mathf.Rad2Deg; // atan2(x,z): matches bearings.
+        }
+    }
+
+    // Solo behind-gaze steer: gently slew the orbit horizontal axis toward the aim
+    // azimuth so the camera settles BEHIND the player relative to their gaze and the
+    // look target lands center-depth. Writing the axis cancels native recentering
+    // this frame (proven Layer 1/combat pattern). This is the GENTLEST writer in the
+    // stack - speed clamp(|remaining|*1, 4, 20) deg/s. When the aim is invalid it
+    // writes nothing and native stay-behind recentering resumes unchanged. The caller
+    // gates this on (not Layer 1 steering) and (not combat two-shot steering).
+    private void SoloLookSteer(float dt)
+    {
+        if (!aimValid) return;
+        float value = orbit!.HorizontalAxis.Value;
+        float remaining = Mathf.DeltaAngle(value, aimAzimuthDegrees);
+        float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1f, SoloLookSteerMinSpeed, SoloLookSteerMaxSpeed);
+        float step = Mathf.Min(speed * Mathf.Max(dt, 0f), Mathf.Abs(remaining));
+        if (step <= 0f) return;
+        float next = Mathf.MoveTowardsAngle(value, aimAzimuthDegrees, step);
+        if (next > 180f) next -= 360f; else if (next < -180f) next += 360f;
+        orbit.HorizontalAxis.Value = next;
     }
 
     // Layer 1: the ONLY authorized vantage-change trigger is sustained severe
@@ -297,7 +386,14 @@ internal sealed class SimpleFollowCamera : IDisposable
             // line (lead room ahead). The policy picks the side; the eased soloScreenX
             // slides slowly through centre on a flip (never a snap). No combat lead
             // room and no group spans in solo (no enemy).
-            ScreenCompositionDecision comp = composition.Observe(compNow, lateralScreenVelocity);
+            // Solo look-direction steering: settle the orbit BEHIND the player's
+            // gaze so the look target lands center-depth. This is the gentlest axis
+            // writer in the stack and only runs when Layer 1 is not steering and the
+            // aim is valid; when invalid we write nothing and native recentering
+            // resumes. (Combat's two-shot solve owns the axis when engaged.)
+            SoloLookSteer(dt);
+            float soloLook = aimValid ? Mathf.DeltaAngle(orbit!.HorizontalAxis.Value, aimAzimuthDegrees) : 0f;
+            ScreenCompositionDecision comp = composition.Observe(compNow, lateralScreenVelocity, soloLook);
             soloReasonRight = comp.Side == SoloCompositionSide.Right ? 1f : 0f;
             leadOffsetX = Mathf.SmoothDamp(leadOffsetX, 0f, ref leadOffsetVelocity, LeadEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
             soloScreenX = Mathf.SmoothDamp(soloScreenX, comp.PlayerScreenX, ref soloScreenXVelocity, SoloXEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
@@ -342,7 +438,12 @@ internal sealed class SimpleFollowCamera : IDisposable
             for (int i = 0; i < combatCandidates.Count; i++)
                 if (combatCandidates[i].Id == combatTargetId) { combatDistance = combatCandidates[i].Distance; break; }
         // Occlusion recovery wins the orbit while it steers; the combat policy
-        // still ran above so its state keeps flowing (spec priority rule).
+        // still ran above so its state keeps flowing (spec priority rule). When the
+        // policy is in Solo (released/bridging) the combat two-shot does NOT write
+        // the axis, so the solo look steer takes over (behind-gaze) - priority:
+        // Layer 1 > combat two-shot > solo look steer > native recentering.
+        if (!steering && decision.Phase != CombatFramingPhase.Combat)
+            SoloLookSteer(dt);
         if (!steering && decision.Phase == CombatFramingPhase.Combat)
         {
             float remaining = Mathf.DeltaAngle(cameraAzimuth, decision.TargetAzimuthDegrees);
@@ -369,7 +470,8 @@ internal sealed class SimpleFollowCamera : IDisposable
         // enemy owns the thirds), so the solo side only governs the released/solo
         // target the blend eases back toward; the lead offset is the small shared
         // bias applied to BOTH compositions this frame.
-        ScreenCompositionDecision combatComp = composition.Observe(compNow, lateralScreenVelocity);
+        float combatLook = aimValid ? Mathf.DeltaAngle(orbit.HorizontalAxis.Value, aimAzimuthDegrees) : 0f;
+        ScreenCompositionDecision combatComp = composition.Observe(compNow, lateralScreenVelocity, combatLook);
         soloReasonRight = combatComp.Side == SoloCompositionSide.Right ? 1f : 0f;
         float combatLeadTarget = decision.Phase == CombatFramingPhase.Combat ? combatComp.LeadOffsetX : 0f;
         leadOffsetX = Mathf.SmoothDamp(leadOffsetX, combatLeadTarget, ref leadOffsetVelocity, LeadEaseSeconds, Mathf.Infinity, Mathf.Max(dt, 0f));
@@ -634,9 +736,13 @@ internal sealed class SimpleFollowCamera : IDisposable
             Vector3 dir = delta / distance;
             bool inFront = Vector3.Dot(forward, dir) >= CombatConeDot;
             float bearing = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg; // World azimuth (+Z = 0), matches orbit axis.
+            // Aim offset: absolute horizontal angle of this enemy's bearing from the
+            // player's aim azimuth. 180 when the aim is invalid (the aimed rule then
+            // never fires and legacy selection is preserved byte-for-byte).
+            float aimOffset = aimValid ? Mathf.Abs(Mathf.DeltaAngle(aimAzimuthDegrees, bearing)) : 180f;
             int id = enemy.GetInstanceID();
             if (!combatNames.ContainsKey(id)) combatNames[id] = CombatName(enemy);
-            combatCandidates.Add(new CombatCandidate(id, bearing, distance, inFront, true));
+            combatCandidates.Add(new CombatCandidate(id, bearing, distance, inFront, true, aimOffset));
         }
     }
 
@@ -739,6 +845,11 @@ internal sealed class SimpleFollowCamera : IDisposable
         soloScreenX = SoloScreenX; soloScreenXVelocity = 0f;
         leadOffsetX = 0f; leadOffsetVelocity = 0f;
         lateralScreenVelocity = 0f; hasVelocitySample = false; soloReasonRight = 0f;
+        // Look-target aim: clear the smoothed direction, validity and grace so a
+        // fresh vantage/teleport never steers from a stale gaze. The ZNetView is
+        // re-fetched on the next sense (Bind also clears it on a subject change).
+        subjectView = null; aimDirSmoothed = default; hasAimSample = false;
+        aimAzimuthDegrees = 0f; aimValid = false; aimLastValidAt = -1;
         ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 

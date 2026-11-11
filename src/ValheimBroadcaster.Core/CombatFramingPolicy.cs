@@ -16,7 +16,11 @@ namespace ValheimBroadcaster.Core
     /// The CURRENT target is retained while alive and present even when it falls
     /// behind (InFront=false), so a fleeing player keeps the enemy framed; the
     /// caller must therefore still pass behind-the-player enemies (within range,
-    /// alive) with InFront=false so death and range-exit remain observable.</summary>
+    /// alive) with InFront=false so death and range-exit remain observable.
+    /// AimOffsetDegrees is the absolute angular distance (horizontal only) of this
+    /// enemy's bearing from the player's look-target aim azimuth, computed by the
+    /// caller; it is 180 when the aim is invalid. An enemy inside the aim cone is
+    /// THE framing priority and overrides distance-first selection.</summary>
     public readonly struct CombatCandidate
     {
         public readonly int Id;
@@ -24,9 +28,17 @@ namespace ValheimBroadcaster.Core
         public readonly float Distance;
         public readonly bool InFront;
         public readonly bool Alive;
-        public CombatCandidate(int id, float bearingDegrees, float distance, bool inFront, bool alive)
-        { Id = id; BearingDegrees = bearingDegrees; Distance = distance; InFront = inFront; Alive = alive; }
+        /// <summary>Absolute horizontal angle between this enemy's bearing and the
+        /// player's aim azimuth, degrees in [0,180]. 180 when the aim is invalid.</summary>
+        public readonly float AimOffsetDegrees;
+        public CombatCandidate(int id, float bearingDegrees, float distance, bool inFront, bool alive,
+            float aimOffsetDegrees = 180f)
+        { Id = id; BearingDegrees = bearingDegrees; Distance = distance; InFront = inFront; Alive = alive;
+          AimOffsetDegrees = aimOffsetDegrees; }
         internal bool Qualifies => Alive && InFront;
+        /// <summary>Alive and inside the aim cone (the player is looking at it);
+        /// such a candidate engages combat even outside the forward cone.</summary>
+        internal bool Aimed(float aimConeDegrees) => Alive && AimOffsetDegrees <= aimConeDegrees;
     }
 
     /// <summary>Outcome of one observation. TargetId is the engaged enemy (or 0
@@ -78,6 +90,13 @@ namespace ValheimBroadcaster.Core
         /// reach the opposite rail. The adapter may ease composition faster or
         /// slower, but exposing it here lets the state own a weighted feel.</summary>
         public const double WeightEaseSeconds = 0.8;
+        /// <summary>An enemy whose aim offset is within this cone is "aimed at":
+        /// the player is looking at it, so it becomes THE framing priority.</summary>
+        public const float AimConeDegrees = 15f;
+        /// <summary>The aimed candidate must be the consistent smallest-offset
+        /// aimed enemy for this long before it STEALS the current target, so a
+        /// sweep of the aim across a crowd never flickers the frame.</summary>
+        public const double AimStealSustainSeconds = 0.35;
 
         private CombatFramingPhase phase;
         private double lastNow = -1;
@@ -88,9 +107,15 @@ namespace ValheimBroadcaster.Core
         private int targetId;
         private int targetSide;               // +1 enemy-right / player-left, -1 mirrored. Sticky per target.
         private float targetAzimuth;
+        private int aimedId;                   // The aimed candidate currently sustaining toward a steal (0 = none).
+        private double aimedSince = -1;        // Clock origin of the current unbroken aimed-candidate run.
+        private bool targetByAim;              // The current target holds the slot via aim (disables distance hysteresis).
 
         public CombatFramingPhase Phase => phase;
         public int TargetId => targetId;
+        /// <summary>True when the current combat target holds its slot because the
+        /// player is aiming at it (overriding distance-first selection).</summary>
+        public bool TargetByAim => targetByAim;
 
         /// <summary>Observe one frame. now is a monotonic clock (a rollback is a
         /// world reload and resets the machine); cameraAzimuthDegrees is the orbit
@@ -113,6 +138,9 @@ namespace ValheimBroadcaster.Core
                 CombatCandidate candidate = candidates[i];
                 if (!Finite(candidate.BearingDegrees) || !Finite(candidate.Distance) || candidate.Distance < 0)
                     throw new ArgumentOutOfRangeException(nameof(candidates));
+                if (!Finite(candidate.AimOffsetDegrees) || candidate.AimOffsetDegrees < 0 ||
+                    candidate.AimOffsetDegrees > 180)
+                    throw new ArgumentOutOfRangeException(nameof(candidates));
             }
             if (lastNow >= 0 && now < lastNow) Reset();
             lastNow = now;
@@ -125,8 +153,13 @@ namespace ValheimBroadcaster.Core
         private CombatFramingDecision ObserveSolo(double now, float cameraAzimuthDegrees, float separationDegrees,
             float orbitRadius, IReadOnlyList<CombatCandidate>? candidates)
         {
+            // An aimed enemy (the player is looking at it) satisfies ACQUISITION
+            // even outside the forward cone - it is the intended subject. It still
+            // honours the 0.35s engage sustain so a passing glance never flips the
+            // frame. The closest-in-front rule is the fallback acquisition path.
+            bool aimed = ClosestAimed(candidates, out CombatCandidate aimedBest);
             bool found = Closest(candidates, out CombatCandidate best);
-            if (!found)
+            if (!aimed && !found)
             {
                 qualifyingSince = -1;
                 return Settled(CombatFramingPhase.Solo, now, 0, "solo follow");
@@ -134,11 +167,12 @@ namespace ValheimBroadcaster.Core
             if (qualifyingSince < 0) qualifyingSince = now;
             if (now - qualifyingSince < EngageSustainSeconds)
                 return Settled(CombatFramingPhase.Solo, now, 0, "confirming engagement");
-            // Gate met: engage. Fix the sticky side and target now.
+            // Gate met: engage. An aimed enemy wins the acquisition over closest.
             phase = CombatFramingPhase.Combat;
             qualifyingSince = -1; starvedSince = -1;
-            Engage(best, cameraAzimuthDegrees, separationDegrees, orbitRadius);
-            return Steer(now, "combat engaged");
+            if (aimed) { Engage(aimedBest, cameraAzimuthDegrees, separationDegrees, orbitRadius); targetByAim = true; }
+            else { Engage(best, cameraAzimuthDegrees, separationDegrees, orbitRadius); targetByAim = false; }
+            return Steer(now, aimed ? "combat engaged (aimed)" : "combat engaged");
         }
 
         private CombatFramingDecision ObserveCombat(double now, float cameraAzimuthDegrees, float separationDegrees,
@@ -154,30 +188,70 @@ namespace ValheimBroadcaster.Core
             // A challenger or promotion must be InFront (Closest only ranks
             // qualifying candidates), so new targets never acquire from behind.
             bool haveChallenger = Closest(candidates, out CombatCandidate best);
-            if (!haveCurrent && !haveChallenger)
+            // The aimed candidate (player looking at it) outranks distance. Track an
+            // unbroken run of the SAME aimed candidate; it STEALS after a short
+            // sustain so a sweep across a crowd never flickers the frame.
+            bool aimed = ClosestAimed(candidates, out CombatCandidate aimedBest);
+            if (aimed && aimedBest.Id != aimedId) { aimedId = aimedBest.Id; aimedSince = now; }
+            else if (!aimed) { aimedId = 0; aimedSince = -1; }
+
+            if (!haveCurrent && !haveChallenger && !aimed)
             {
-                // The current target is dead/absent and nothing in front can take
-                // over: run the release gate while holding the last solved azimuth
-                // so the shot never snaps.
+                // The current target is dead/absent and nothing (in front or aimed)
+                // can take over: run the release gate while holding the last solved
+                // azimuth so the shot never snaps.
                 if (starvedSince < 0) starvedSince = now;
                 if (now - starvedSince >= ReleaseSustainSeconds)
                 {
                     phase = CombatFramingPhase.Solo;
-                    targetId = 0; targetSide = 0; starvedSince = -1;
+                    targetId = 0; targetSide = 0; starvedSince = -1; targetByAim = false;
+                    aimedId = 0; aimedSince = -1;
                     return Settled(CombatFramingPhase.Solo, now, 0, "combat released");
                 }
                 return Steer(now, "bridging kill");
             }
             starvedSince = -1;
+            // AIMED TARGET RULE: an aimed candidate steals the slot once it has been
+            // the consistent aimed enemy for AimStealSustainSeconds (an aim sweep
+            // never completes the sustain). The current target going aimed again, or
+            // staying the aimed one, holds the slot BY AIM and disables distance
+            // hysteresis entirely while it lasts.
+            if (aimed && aimedBest.Id == targetId && haveCurrent)
+            {
+                // The current target is the one being aimed at: keep it, by aim.
+                targetByAim = true;
+                targetAzimuth = SolveOrbitAzimuth(current.BearingDegrees, current.Distance,
+                    orbitRadius, separationDegrees, targetSide);
+                return Steer(now, "combat (aimed)");
+            }
+            if (aimed && now - aimedSince >= AimStealSustainSeconds)
+            {
+                // A different aimed candidate held the aim long enough: steal.
+                Engage(aimedBest, cameraAzimuthDegrees, separationDegrees, orbitRadius);
+                targetByAim = true;
+                return Steer(now, "retarget (aimed)");
+            }
             // Retarget when the current target is gone (dead/out-of-range) and a
-            // front candidate can take over, or a front challenger clears the
-            // hysteresis margin against a still-live current. A fresh target
-            // re-fixes its side and azimuth; the adapter eases the orbit to it.
+            // front candidate can take over. A fresh target re-fixes its side and
+            // azimuth; the adapter eases the orbit to it.
             if (!haveCurrent)
             {
+                if (!haveChallenger)
+                {
+                    // Nothing in front; only an aimed candidate not yet past its
+                    // steal sustain remains. Bridge until it steals or starves.
+                    if (starvedSince < 0) starvedSince = now;
+                    return Steer(now, "bridging kill");
+                }
                 Engage(best, cameraAzimuthDegrees, separationDegrees, orbitRadius);
+                targetByAim = false;
                 return Steer(now, "retarget on loss");
             }
+            // While an aimed candidate holds the current slot, distance hysteresis is
+            // DISABLED (aim outranks distance). targetByAim is cleared here: if the
+            // current target is NOT the aimed one and no steal fired, it holds by
+            // distance rules again.
+            targetByAim = false;
             if (haveChallenger && ShouldReplace(current, best))
             {
                 Engage(best, cameraAzimuthDegrees, separationDegrees, orbitRadius);
@@ -259,6 +333,7 @@ namespace ValheimBroadcaster.Core
             lastNow = qualifyingSince = starvedSince = -1;
             weightSince = 0; weightBase = 0; weightRail = 0;
             targetId = 0; targetSide = 0; targetAzimuth = 0;
+            aimedId = 0; aimedSince = -1; targetByAim = false;
         }
 
         // Closest qualifying candidate (in-cone, alive). Ties resolve to the
@@ -273,6 +348,24 @@ namespace ValheimBroadcaster.Core
                 if (!candidate.Qualifies) continue;
                 if (!found || candidate.Distance < best.Distance ||
                     (candidate.Distance == best.Distance && candidate.Id < best.Id))
+                { best = candidate; found = true; }
+            }
+            return found;
+        }
+
+        // The smallest-aim-offset alive candidate inside the aim cone, if any. The
+        // player is literally looking at it, so it qualifies for engage/steal even
+        // from behind the forward cone. Ties resolve to the lower id for determinism.
+        private static bool ClosestAimed(IReadOnlyList<CombatCandidate>? candidates, out CombatCandidate best)
+        {
+            best = default;
+            bool found = false;
+            for (int i = 0; candidates != null && i < candidates.Count; i++)
+            {
+                CombatCandidate candidate = candidates[i];
+                if (!candidate.Aimed(AimConeDegrees)) continue;
+                if (!found || candidate.AimOffsetDegrees < best.AimOffsetDegrees ||
+                    (candidate.AimOffsetDegrees == best.AimOffsetDegrees && candidate.Id < best.Id))
                 { best = candidate; found = true; }
             }
             return found;

@@ -430,6 +430,65 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
       contract sets. All three suites green (Core 1510, CM 128, Hooks 45), 0 warn / 0 err.
       Runtime footage verification outstanding.
 
+16. **Look-target doctrine (2026-11-11) — the camera follows the player's GAZE.**
+    Operator order: (1) point the camera at the player's look target so whatever
+    they are looking at is in frame; (2) the enemy the look-target points at is THE
+    framing priority (overrides closest-first); (3) the player's thirds side gives
+    LOOK ROOM toward the look target. House rules intact: no cuts, everything eased,
+    lenses INVIOLATE (solo 50 / combat 75 mm), eyeline-on-top-third doctrine (#15)
+    untouched, Layer 1 occlusion recovery outranks everything, zero per-frame allocs.
+    - **Aim signal = the REPLICATED `ZDOVars.s_lookTarget`** (PLAYER-ACTION-API §3a):
+      the owner writes `eyePos + GetLookDir()*100` to the ZDO every 0.2 s (~5 Hz);
+      every client reads `zdo.GetVec3(ZDOVars.s_lookTarget, Vector3.zero)` (zero =
+      unset sentinel). `GetLookDir()`/`m_lookDir` are OWNER-ONLY and are NOT used.
+      Aim ray = `normalize(lookTarget - GetEyePoint())`; `GetEyePoint()` is public and
+      remote-safe. ZDO via `GetComponent<ZNetView>().GetZDO()`, cached per binding.
+    - **Plugin aim sensing (SimpleFollowCamera.UpdateAimSensing):** read per frame;
+      valid iff `sqrMagnitude > 0.01` AND finite. SMOOTH the raw direction with a
+      SLERP low-pass, time constant `AimSmoothTimeConstant = 0.25 s` (the 5 Hz steps
+      must not jolt the camera — the slerp eases across each 0.2 s refresh so the
+      azimuth is continuous between updates). Keep `aimAzimuthDegrees`
+      (atan2(x,z) — SAME convention as candidate bearings), `aimValid`, and a 1.0 s
+      grace (`AimGraceSeconds`) so a brief zero/invalid read holds the last smoothed
+      aim before declaring invalid. Rebind/reset/warp clears the cached ZNetView and
+      all aim smoothing/validity.
+    - **Aim-priority selection (CombatFramingPolicy):** `CombatCandidate` gains
+      `AimOffsetDegrees` (caller-computed `|DeltaAngle(aimAzimuth, bearing)|`, 180 when
+      aim invalid; contract [0,180] finite). AIMED TARGET RULE: among alive candidates
+      within `AimConeDegrees = 15f`, the smallest-offset one is desired; it STEALS the
+      current target after `AimStealSustainSeconds = 0.35 s` of being the consistent
+      aimed candidate (an aim sweep across a crowd never completes the sustain). While
+      an aimed candidate holds the slot (`TargetByAim`), distance challenger hysteresis
+      is DISABLED (aim outranks distance). An aimed enemy also satisfies ACQUISITION
+      from Solo even OUTSIDE the 80-deg front cone (the player is literally looking at
+      it), still honouring the 0.35 s engage sustain. Aim moving off a held target
+      falls back to normal retention (no instant drop). Aim invalid (180) preserves
+      every legacy behavior byte-for-byte (regression-tested both ways).
+    - **Solo behind-gaze steering (SoloLookSteer):** when NOT combat-steering and NOT
+      Layer 1 steering and aim valid, gently slew `orbit.HorizontalAxis` toward
+      `aimAzimuth` so the camera settles BEHIND the player's gaze (look target lands
+      center-depth). Speed `clamp(|remaining|*1, 4, 20)` deg/s — the GENTLEST writer in
+      the stack. Aim invalid → write nothing (native stay-behind recentering resumes).
+    - **Axis-writer precedence (documented in code):** Layer 1 recovery > combat
+      two-shot > solo look steer > native recentering.
+    - **Look-room side (ScreenCompositionPolicy):** `Observe` gains optional
+      `lookOffsetDegrees` (caller: `DeltaAngle(cameraAzimuth, aimAzimuth)`; 0 when
+      invalid). When `|lookOffset| >= LookRoomThresholdDegrees = 10f` sustained >= the
+      SAME `SustainSeconds = 2.0`, the player sits on the thirds OPPOSITE the look
+      (looking right → player left) — LOOK ROOM OUTRANKS motion-trailing. One arbiter:
+      the look want and the motion want feed the single existing pending-side timer;
+      the look want wins conflicts and is the sole want while past threshold, else the
+      motion rule stays in charge. Invalid look (0) = pure legacy motion behavior.
+    - **Diagnostics:** "; aim <az>deg off <lookOffset>deg" when valid; the combat
+      target is marked "(aimed)" when it holds via `TargetByAim`.
+    - **Tests: +11 Core (1510 -> 1521).** CombatFramingPolicy +7 (aimed steal after
+      0.35 s; sweep never steals; aim-invalid legacy parity run both ways;
+      aimed-outside-cone acquires; aimed retained when aim leaves; aim disables
+      distance hysteresis; aim-offset contract). ScreenCompositionPolicy +4 (look flips
+      side; sub-threshold defers to motion; look wins a conflict; invalid-look legacy
+      parity). All three suites green (Core 1521, CM 128, Hooks 45), 0 warn / 0 err.
+      Runtime footage verification outstanding.
+
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
   will hang off.
