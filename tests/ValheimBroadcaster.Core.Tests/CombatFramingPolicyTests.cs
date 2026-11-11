@@ -23,6 +23,13 @@ internal static class CombatFramingPolicyTests
         yield return ("An infeasibly close enemy clamps to the achievable maximum", OrbitSolveClamp);
         yield return ("A clock rollback resets the state machine", ClockRollbackResets);
         yield return ("The policy rejects non-finite and out-of-range inputs", ContractValidation);
+        yield return ("An aimed enemy steals from a closer non-aimed after the sustain", AimedStealsCloser);
+        yield return ("Sweeping the aim across two enemies never steals", AimSweepNeverSteals);
+        yield return ("An invalid aim (180) preserves every legacy behavior", AimInvalidIsLegacy);
+        yield return ("An aimed enemy outside the forward cone still acquires", AimedOutsideConeAcquires);
+        yield return ("An aimed target is retained when the aim moves off", AimedRetainedWhenAimLeaves);
+        yield return ("While aimed, distance hysteresis is disabled", AimDisablesDistanceHysteresis);
+        yield return ("The aim-offset field is contract-validated", AimOffsetContract);
     }
 
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
@@ -31,6 +38,11 @@ internal static class CombatFramingPolicyTests
 
     private static CombatCandidate E(int id, float bearing, float distance, bool inFront = true, bool alive = true) =>
         new CombatCandidate(id, bearing, distance, inFront, alive);
+
+    // An enemy with an explicit aim offset (180 = aim invalid / not looking at it).
+    private static CombatCandidate A(int id, float bearing, float distance, float aimOffset,
+        bool inFront = true, bool alive = true) =>
+        new CombatCandidate(id, bearing, distance, inFront, alive, aimOffset);
 
     private const double Step = 1.0 / 30;
     private const float Radius = 6f;
@@ -357,6 +369,134 @@ internal static class CombatFramingPolicyTests
         // Null and empty candidate lists are legal.
         policy.Observe(1, 0f, Sep, Radius, null);
         policy.Observe(2, 0f, Sep, Radius, Array.Empty<CombatCandidate>());
+    }
+
+    // An aimed enemy (offset within the 15-deg cone) STEALS from a closer
+    // non-aimed target after AimStealSustainSeconds of being the consistent aimed
+    // candidate - aim outranks distance.
+    private static void AimedStealsCloser()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        // Engage the near enemy (6 m); nothing is aimed at yet (both offset 180).
+        Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { E(1, 0f, 6f), A(2, 20f, 12f, 180f) });
+        Check(policy.TargetId == 1, "Setup engaged the wrong target.");
+        // Under the steal sustain the closer non-aimed target is still held.
+        var early = Drive(policy, ref now, CombatFramingPolicy.AimStealSustainSeconds - 0.15, 0f,
+            new[] { E(1, 0f, 6f), A(2, 20f, 12f, 3f) });
+        Check(early.TargetId == 1, "The aimed enemy stole before its sustain elapsed.");
+        // Past the sustain it steals despite being farther.
+        var stolen = Drive(policy, ref now, 0.3, 0f,
+            new[] { E(1, 0f, 6f), A(2, 20f, 12f, 3f) });
+        Check(stolen.TargetId == 2 && policy.TargetByAim,
+            "The aimed enemy failed to steal after its sustain.");
+    }
+
+    // Sweeping the aim across two enemies (each aimed for < the steal sustain)
+    // never completes a steal - prevents flicker as the aim crosses a crowd.
+    private static void AimSweepNeverSteals()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { E(1, 0f, 6f), E(2, 20f, 7f), E(3, 40f, 8f) });
+        Check(policy.TargetId == 1, "Setup engaged the wrong target.");
+        // Aim lands briefly on enemy 2, then enemy 3, each under the 0.35s sustain.
+        for (int i = 0; i < 6; i++)
+        {
+            int aimedId = (i % 2 == 0) ? 2 : 3;
+            Drive(policy, ref now, CombatFramingPolicy.AimStealSustainSeconds - 0.1, 0f,
+                new[] { E(1, 0f, 6f),
+                    A(2, 20f, 7f, aimedId == 2 ? 3f : 180f),
+                    A(3, 40f, 8f, aimedId == 3 ? 3f : 180f) });
+        }
+        Check(policy.TargetId == 1, "A sweeping aim stole the target without a sustained hold.");
+    }
+
+    // Aim invalid (offset 180 on every candidate) must preserve legacy behavior
+    // byte-for-byte: run the StrongChallengerSteals scenario both with the legacy
+    // E() factory and with explicit 180 offsets and assert identical outcomes.
+    private static void AimInvalidIsLegacy()
+    {
+        CombatFramingDecision RunLegacy()
+        {
+            var p = new CombatFramingPolicy(); double n = 0;
+            Drive(p, ref n, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f, new[] { E(1, 0f, 10f) });
+            return Drive(p, ref n, 0.2, 0f, new[] { E(1, 0f, 10f), E(2, 0f, 7f) });
+        }
+        CombatFramingDecision RunAimInvalid()
+        {
+            var p = new CombatFramingPolicy(); double n = 0;
+            Drive(p, ref n, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f, new[] { A(1, 0f, 10f, 180f) });
+            return Drive(p, ref n, 0.2, 0f, new[] { A(1, 0f, 10f, 180f), A(2, 0f, 7f, 180f) });
+        }
+        var legacy = RunLegacy();
+        var invalid = RunAimInvalid();
+        Check(legacy.TargetId == invalid.TargetId && legacy.TargetId == 2,
+            "Aim-invalid diverged from legacy challenger-steal selection.");
+        Check(legacy.PlayerScreenSide == invalid.PlayerScreenSide, "Aim-invalid diverged on side.");
+        Near(legacy.TargetAzimuthDegrees, invalid.TargetAzimuthDegrees, "aim-invalid azimuth parity");
+    }
+
+    // An aimed enemy BEHIND the forward cone (InFront=false) still acquires from
+    // Solo after the engage sustain - the player is literally looking at it.
+    private static void AimedOutsideConeAcquires()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        var decision = Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { A(1, 150f, 8f, 4f, inFront: false, alive: true) });
+        Check(decision.Phase == CombatFramingPhase.Combat && decision.TargetId == 1,
+            "An aimed behind-cone enemy failed to acquire from Solo.");
+        Check(policy.TargetByAim, "An aim-acquired target did not report TargetByAim.");
+    }
+
+    // An aimed target, once engaged, is not instantly dropped when the aim moves
+    // off it - it falls back to normal retention (held while alive and present).
+    private static void AimedRetainedWhenAimLeaves()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { A(1, 0f, 8f, 3f) });
+        Check(policy.TargetId == 1 && policy.TargetByAim, "Setup failed to aim-acquire.");
+        // Aim moves off (offset 180); no other candidate. The target is retained by
+        // normal rules, not dropped, and TargetByAim clears.
+        var held = Drive(policy, ref now, 1.0, 0f, new[] { A(1, 0f, 8f, 180f) });
+        Check(held.Phase == CombatFramingPhase.Combat && held.TargetId == 1,
+            "The target was dropped when the aim moved off instead of retained.");
+        Check(!policy.TargetByAim, "TargetByAim did not clear once the aim left.");
+    }
+
+    // While an aimed candidate holds the slot, a closer in-front non-aimed
+    // challenger that WOULD clear distance hysteresis cannot steal (aim outranks).
+    private static void AimDisablesDistanceHysteresis()
+    {
+        var policy = new CombatFramingPolicy();
+        double now = 0;
+        // Engage enemy 1 while aiming at it; a much closer non-aimed enemy 2 sits
+        // in front at 5 m (would otherwise be a 50%+5m steal).
+        Drive(policy, ref now, CombatFramingPolicy.EngageSustainSeconds + 0.1, 0f,
+            new[] { A(1, 0f, 10f, 3f), E(2, 0f, 5f) });
+        Check(policy.TargetId == 1 && policy.TargetByAim, "Setup failed to aim-engage enemy 1.");
+        var held = Drive(policy, ref now, 1.0, 0f, new[] { A(1, 0f, 10f, 3f), E(2, 0f, 5f) });
+        Check(held.TargetId == 1, "A closer non-aimed challenger stole while the target was aimed.");
+    }
+
+    private static void AimOffsetContract()
+    {
+        var policy = new CombatFramingPolicy();
+        foreach (float bad in new[] { -1f, 181f, float.NaN, float.PositiveInfinity })
+        {
+            bool threw = false;
+            try { policy.Observe(1, 0f, Sep, Radius, new[] { A(1, 0f, 8f, bad) }); }
+            catch (ArgumentOutOfRangeException) { threw = true; }
+            Check(threw, $"Accepted an invalid aim offset {bad}.");
+        }
+        // 0 and 180 are the valid extremes.
+        policy.Observe(1, 0f, Sep, Radius, new[] { A(1, 0f, 8f, 0f) });
+        policy.Observe(2, 0f, Sep, Radius, new[] { A(1, 0f, 8f, 180f) });
     }
 
     private static void Throws(Action action)
