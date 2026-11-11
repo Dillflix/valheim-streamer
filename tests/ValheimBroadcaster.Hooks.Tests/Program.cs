@@ -53,6 +53,7 @@ internal static class Program
             Check("Embedded package uses a 32-bit length prefix", package.Body.Instructions.First(i => i.Operand is MethodReference).Operand is MethodReference length && length.Name == "ReadInt32");
             ConnectionRecoveryAudits.Run(game, Check);
             WaterClearanceAudits.Run(game, Check);
+            BoneEyelineAudits.Run(game, Check);
             Console.WriteLine($"{checks} real-assembly structural checks passed. This does not run Unity, Harmony patches, or multiplayer.");
             return 0;
         }

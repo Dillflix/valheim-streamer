@@ -23,9 +23,16 @@ internal sealed class SimpleFollowCamera : IDisposable
     // Near-level elevation so the camera rides just above the shoulder line
     // of the orbit centre at the configured radius.
     private const float ElevationDegrees = 5f;
-    // The aim point sits at this fraction of character height above the root;
-    // aiming at the root transform itself reads too low.
-    private const float AimHeightFraction = 0.8f;
+    // BONE-EYELINE doctrine (operator order 2026-11-11): the character's EYE BONE
+    // is the single measured quantity for ALL framing spans. eyeHeight =
+    // GetEyePoint().y - root.y (a world-space delta already carries the transform
+    // scale - NO lossyScale multiply on the bone path); aim height and head top
+    // are fixed fractions of it. The capsule NEVER resizes on crouch/sit (the game
+    // never writes CapsuleCollider.height), so GetHeight() is a posture-blind
+    // proxy demoted to FALLBACK-ONLY (missing/invalid m_eye).
+    private const float AimFromEyeFraction = 0.8602f;  // Aim = 0.8602*eye (0.8/0.93: preserves the standing aim point; THE tunable).
+    private const float HeadAboveEyeFactor = 1.0753f;  // Head top = 1.0753*eye (1/0.93: crown ~7.5% above the eyes).
+    private const float EyeHeightSmoothSeconds = 0.35f; // Low-pass tau: kills run-cycle eye bob, passes sustained crouch/sit in ~1 s.
     private GameObject? owner;
     private CinemachineCamera? camera;
     private CinemachineOrbitalFollow? orbit;
@@ -34,6 +41,17 @@ internal sealed class SimpleFollowCamera : IDisposable
     private Transform? lookPoint;
     private Character? subject;
     private Vector3 lastSubjectPosition;
+    // Bone-eyeline state: smoothed measured eye heights (metres above the root).
+    // The eye bone bobs with the run cycle, so the raw per-frame measurement is
+    // low-passed (tau EyeHeightSmoothSeconds) before any span derives from it.
+    // The player low-pass reseeds on rebind/warp/Reset (zeroed there); the enemy
+    // low-pass reseeds on engaged-target change. Plain floats - zero per-frame
+    // allocations.
+    private float playerEyeHeight;      // Smoothed player eye height.
+    private bool playerEyeFromBone;     // This frame's player measurement source (diagnostics).
+    private float enemyEyeHeight;       // Smoothed engaged-enemy eye height.
+    private bool enemyEyeFromBone;      // Engaged-enemy measurement source (diagnostics).
+    private int enemyEyeTargetId;       // The target the enemy smoothing belongs to.
     internal float ObstacleDisplacement => obstacles && camera ? obstacles!.GetCameraDisplacementDistance(camera!) : 0;
     // Layer 1: occlusion recovery. The policy owns all thresholds and the
     // state machine; this adapter only measures solid occlusion, probes
@@ -64,9 +82,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     // EYELINE sits on the frame's top-third line (Y-down -1/6) and the camera
     // DISTANCE is solved so the feet land on the bottom edge. NO head margins / NO
     // headroom anywhere - the eyeline pin owns the vertical composition. Only the
-    // feet margin survives (feet-in-frame is rule 1). EyelineFraction is the tunable
-    // the operator adjusts from footage; only character height is available.
-    private const float EyelineFraction = 0.93f;      // Eye height = 0.93 * character height (tunable).
+    // feet margin survives (feet-in-frame is rule 1). The eyeline itself is the
+    // MEASURED eye bone (bone-eyeline doctrine above); EyelineFraction survives
+    // ONLY for the capsule fallback when a character has no eye bone.
+    private const float EyelineFraction = 0.93f;      // FALLBACK ONLY: eye = 0.93 * capsule height when m_eye is missing.
     private const float EyelineScreenY = -(1f / 6f);  // Top-third line (Y-down; negative = above centre).
     // Combat eases to a LONGER lens than solo for a compressed, pulled-in
     // battle look; the thirds solve fits both actors at any fov. A full-frame
@@ -189,17 +208,31 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (!actor) return Fail("Camera subject unavailable");
         EnsureCreated();
         float radius = Mathf.Max(1f, settings.SimpleFollowDistance.Value);
-        float aimHeight = Mathf.Clamp(actor.GetHeight() * AimHeightFraction, 0.5f, 14f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
         Vector3 subjectPosition = actor.transform.position;
         if (!TargetRoster.Finite(subjectPosition)) return Fail("Camera subject position unavailable");
+        // Bone eyeline: measure the raw eye height this frame (eye bone primary,
+        // capsule fallback). The bone tracks the REAL posture - crouch/sit lowers
+        // it, which the posture-blind capsule never does.
+        float rawEyeHeight = BoneEyeHeight(actor, 14f);
+        playerEyeFromBone = rawEyeHeight > 0f;
+        if (!playerEyeFromBone)
+            rawEyeHeight = Mathf.Clamp(actor.GetHeight() * EyelineFraction, 0.5f, 14f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
         bool rebind = subject != actor || !camera!.Follow;
-        if (rebind) Bind(actor, radius, aimHeight, subjectPosition);
+        if (rebind) Bind(actor, radius, AimFromEyeFraction * rawEyeHeight, subjectPosition);
         else if ((subjectPosition - lastSubjectPosition).sqrMagnitude > WarpDistanceMetres * WarpDistanceMetres)
         {
             camera!.OnTargetObjectWarped(actor.transform, subjectPosition - lastSubjectPosition);
             ResetRecovery(); // A teleported subject invalidates every stale occlusion observation.
         }
         lastSubjectPosition = subjectPosition;
+        // Low-pass AFTER the rebind/warp reset (those zero the field) so a fresh
+        // binding reseeds instantly to the raw measurement - no sweep from stale
+        // state. Same exponential pattern as lateralScreenVelocity.
+        if (playerEyeHeight <= 0f) playerEyeHeight = rawEyeHeight;
+        else playerEyeHeight += (rawEyeHeight - playerEyeHeight) * (1f - Mathf.Exp(-Mathf.Max(dt, 0f) / EyeHeightSmoothSeconds));
+        // Everything derives from the smoothed eye: the aim point is a fixed
+        // fraction of the eye height (aiming at the root reads too low).
+        float aimHeight = AimFromEyeFraction * playerEyeHeight;
         // Seed the live dolly radius to the configured distance before the first
         // ease; a rebind/reset/warp zeroes it so it re-seeds cleanly here.
         if (dollyRadius <= 0f) dollyRadius = radius;
@@ -220,7 +253,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         camera.Lens.NearClipPlane = Mathf.Max(0.01f, output ? output.nearClipPlane : 0.3f);
         UpdateLateralVelocity(subjectPosition, dt);
         UpdateAimSensing(actor, dt);
-        UpdateOcclusionRecovery(actor, subjectPosition, aimHeight, dollyRadius, dt);
+        UpdateOcclusionRecovery(subjectPosition, aimHeight, dollyRadius, dt);
         UpdateCombatFraming(actor, settings, subjectPosition, dollyRadius, soloFov, aimHeight, dt);
         // Dolly group framing: ease the live orbit radius toward the fit the fixed
         // lens cannot absorb, then present it. UpdateCombatFraming computed the
@@ -250,10 +283,12 @@ internal sealed class SimpleFollowCamera : IDisposable
                 $"screen ({aim!.Composition.ScreenPosition.x:F2}, {aimScreenY:F2}); recentering behind subject; fov {fov:F0}; " +
                 $"occlusion {lastOcclusion * 100f:F0}%" + (steering ? $"; arc recovery → {steerTarget:F0}°" : "") +
                 (combatTargetId != 0 && combatNames.TryGetValue(combatTargetId, out string? name)
-                    ? $"; combat: {name}{(combat.TargetByAim ? " (aimed)" : "")} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" : "") +
+                    ? $"; combat: {name}{(combat.TargetByAim ? " (aimed)" : "")} {combatDistance:F1}m, enemy {(combatSide >= 0 ? 'R' : 'L')} thirds" +
+                      (enemyEyeHeight > 0f ? $", eye {enemyEyeHeight:F2}{(enemyEyeFromBone ? "" : " (capsule)")}" : "") : "") +
                 (aimValid
                     ? $"; aim {aimAzimuthDegrees:F0}deg off {Mathf.DeltaAngle(orbit!.HorizontalAxis.Value, aimAzimuthDegrees):F0}deg" : "") +
                 $"; eyeline d={dollyRadius:F1}m aimY={aimScreenY:F2}" + (dollyHeadBand ? " (head)" : "") +
+                $"; eye h={playerEyeHeight:F2}" + (playerEyeFromBone ? "" : " (capsule)") +
                 (tightActive
                     ? $"; tight d={availableDistance:F1}m frame={(tightFrameFraction >= TightBandFull ? "full" : tightFrameFraction >= TightBandMedium ? "medium" : "close-up")} {tightFrameFraction * 100f:F0}%"
                     : "") +
@@ -284,8 +319,11 @@ internal sealed class SimpleFollowCamera : IDisposable
             // Valid iff non-sentinel AND finite.
             if (TargetRoster.Finite(lookTarget) && lookTarget.sqrMagnitude > 0.01f)
             {
-                Vector3 eye = actor.GetEyePoint();
-                if (!TargetRoster.Finite(eye)) eye = actor.transform.position + Vector3.up * 1.6f; // Aim-height fallback.
+                // m_eye is a public field with NO null guard inside GetEyePoint
+                // (it NPEs when unset) - guard it here; the fallback is the same
+                // smoothed eye height every framing span derives from.
+                Vector3 eye = actor.m_eye ? actor.GetEyePoint() : actor.transform.position + Vector3.up * playerEyeHeight;
+                if (!TargetRoster.Finite(eye)) eye = actor.transform.position + Vector3.up * playerEyeHeight;
                 Vector3 toTarget = lookTarget - eye;
                 if (TargetRoster.Finite(toTarget) && toTarget.sqrMagnitude > 1e-4f)
                 { rawDir = toTarget.normalized; haveRaw = true; aimLastValidAt = now; }
@@ -338,10 +376,12 @@ internal sealed class SimpleFollowCamera : IDisposable
     // policy releases, this simply stops writing and the native behind-the-
     // player recentering resumes from the same axis value - the orbit solve
     // keeps all motion continuous by construction. No cuts, ever.
-    private void UpdateOcclusionRecovery(Character actor, Vector3 subjectPosition, float aimHeight, float radius, float dt)
+    private void UpdateOcclusionRecovery(Vector3 subjectPosition, float aimHeight, float radius, float dt)
     {
         if (solidMask == 0) solidMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
-        float height = Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y);
+        // Head top from the smoothed eye bone (bone-eyeline doctrine): the body
+        // rays span the REAL posture, so a crouched player's rays stay on the body.
+        float height = HeadAboveEyeFactor * playerEyeHeight;
         lastOcclusion = hasPresented ? BodyOcclusion(presentedPosition, subjectPosition, height) : 0f;
         double now = Time.unscaledTimeAsDouble;
         OcclusionRecoveryDecision decision = recovery.Observe(now, lastOcclusion,
@@ -401,13 +441,13 @@ internal sealed class SimpleFollowCamera : IDisposable
             // bottom edge with the eyeline pinned on the top-third line. SimpleFollowDistance
             // is NOT a floor here (seed/fallback only). The aim-Y is derived from the LIVE
             // eased dolly radius so aim and boom agree.
-            float soloFill = SolvePlayerDolly(actor, soloFov, aimHeight, out float soloAimToEye);
+            float soloFill = SolvePlayerDolly(soloFov, aimHeight, out float soloAimToEye);
             // Tight-space: cap the radius by the physical boom room. The eyeline aim is
             // re-solved at the capped distance so the eye NEVER leaves the top-third line
             // (the crop eats the feet). Thirds/lead X flow is unchanged.
             UpdateBoomRoom(subjectPosition, aimHeight, soloFill, dt);
             desiredDollyRadius = Mathf.Clamp(Mathf.Min(soloFill, availableDistance), TightFloor, DollyMaxMetres);
-            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, aimHeight, actor);
+            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, aimHeight);
             EaseAim(soloAimTarget, soloScreenX + leadOffsetX, dt);
             return;
         }
@@ -490,14 +530,14 @@ internal sealed class SimpleFollowCamera : IDisposable
         // fit (rule 2, sparse-gated), but the eyeline owns the VERTICAL aim, period -
         // no group-span aim blending. The eye NEVER leaves its line, in or out of combat.
         float lensFov = Mathf.Clamp(combatFov, 10f, 100f);
-        float playerNeed = SolvePlayerDolly(actor, lensFov, aimHeight, out float combatAimToEye);
+        float playerNeed = SolvePlayerDolly(lensFov, aimHeight, out float combatAimToEye);
         // Tight-space: probe the physical boom room this frame.
         UpdateBoomRoom(subjectPosition, aimHeight, playerNeed, dt);
         float effectiveNeed = playerNeed;
         dollyHeadBand = false;
         if (combatTargetId != 0)
         {
-            float enemyNeed = SolveEnemyDolly(lensFov, aimHeight, subjectPosition, radius, playerNeed);
+            float enemyNeed = SolveEnemyDolly(lensFov, aimHeight, subjectPosition, radius, playerNeed, dt);
             if (enemyNeed > 0f) effectiveNeed = Mathf.Max(playerNeed, enemyNeed);
         }
         // Physical space wins: the enemy need is also capped by the boom room - min()
@@ -506,7 +546,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         desiredDollyRadius = Mathf.Clamp(effectiveNeed, TightFloor, DollyMaxMetres);
         // The eyeline aim is solved from the LIVE eased dolly radius (capped by the boom
         // room) so the aim and the boom agree; the crop eats the feet in a tight space.
-        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, aimHeight, actor);
+        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, aimHeight);
         // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
         EaseAim(combatAimTarget, combatScreenX, dt);
     }
@@ -607,19 +647,33 @@ internal sealed class SimpleFollowCamera : IDisposable
         }
     }
 
+    // Raw bone eye height: world-space Y delta eye bone -> root, in metres. The
+    // world delta already carries the transform scale, so there is NO lossyScale
+    // multiply on the bone path. Returns -1 when the eye bone is missing or the
+    // measurement is non-finite/degenerate (<= 0.05 m); the caller applies its
+    // capsule fallback. m_eye is a public field assigned in Character.Awake but
+    // null on some creatures - GetEyePoint() has no internal guard, so guard here.
+    private static float BoneEyeHeight(Character actor, float maxMetres)
+    {
+        Transform? eye = actor.m_eye;
+        if (!eye) return -1f;
+        float h = eye!.position.y - actor.transform.position.y;
+        if (float.IsNaN(h) || float.IsInfinity(h) || h <= 0.05f) return -1f;
+        return Mathf.Clamp(h, 0.3f, maxMetres);
+    }
+
     // EYELINE dolly: solve the camera DISTANCE at which the player's feet land on the
     // bottom edge (screenY +0.5) with the EYELINE pinned on the top-third line
-    // (EyelineScreenY). Real size: Character.GetHeight() * lossyScale.y. The eye
-    // height = EyelineFraction * height (same scale clamps as aimHeight); aimToEye =
-    // max(0.01, eyeHeight - aimHeight). No head margin anywhere - only the feet margin
-    // (belowAim = aimHeight + PlayerFeetMargin) survives. Returns the feet-fit distance;
-    // the aim-to-eye is passed out for the caller to re-solve the aim-Y at the LIVE
-    // (eased, boom-capped) radius so aim and boom agree. At 50 mm this lands ~6.25 m.
-    private float SolvePlayerDolly(Character actor, float lensFov, float aimHeight, out float aimToEye)
+    // (EyelineScreenY). The eye height is the smoothed BONE measurement (capsule
+    // fallback already folded in upstream); aimToEye = max(0.01, eyeHeight -
+    // aimHeight). No head margin anywhere - only the feet margin (belowAim =
+    // aimHeight + PlayerFeetMargin) survives. Returns the feet-fit distance; the
+    // aim-to-eye is passed out for the caller to re-solve the aim-Y at the LIVE
+    // (eased, boom-capped) radius so aim and boom agree. At 50 mm a standing player
+    // (eye ~1.767 m) lands ~6.25 m, same as the pre-bone capsule math.
+    private float SolvePlayerDolly(float lensFov, float aimHeight, out float aimToEye)
     {
-        float scaleY = Mathf.Max(0.1f, actor.transform.lossyScale.y);
-        float eyeHeight = Mathf.Clamp(actor.GetHeight() * EyelineFraction, 0.5f, 14f) * scaleY;
-        aimToEye = Mathf.Max(0.01f, eyeHeight - aimHeight);
+        aimToEye = Mathf.Max(0.01f, playerEyeHeight - aimHeight);
         float belowAim = aimHeight + PlayerFeetMargin;
         return EyelineFraming.DistanceForFeetAtEyeline(lensFov, EyelineScreenY, aimToEye, belowAim);
     }
@@ -629,17 +683,17 @@ internal sealed class SimpleFollowCamera : IDisposable
     // outdoors the feet sit on the bottom edge, in a tight space the distance is capped
     // and the feet crop automatically while the eyeline holds. Sets the tight
     // diagnostics (tightActive + visible body fraction) when the room caps the dolly.
-    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float aimHeight, Character actor)
+    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float aimHeight)
     {
         float d = Mathf.Max(0.31f, Mathf.Min(fillDistance, availableDistance));
         tightActive = availableDistance < fillDistance - 0.1f;
         float aimY = EyelineFraming.AimYForEyeline(lensFov, EyelineScreenY, aimToEye, d);
         // Cheap visible-fraction for the "; tight ... frame=<band> NN%" line: the feet
-        // and the head TOP (h - aimHeight above the aim, NO margin) span the full body;
-        // the frame crops the feet first. visibleBelowAim is the metres below the aim
-        // that still sit above the bottom edge at this distance.
+        // and the head TOP (HeadAboveEyeFactor * the smoothed eye, NO margin) span the
+        // full body; the frame crops the feet first. visibleBelowAim is the metres
+        // below the aim that still sit above the bottom edge at this distance.
         float belowAimFull = aimHeight + PlayerFeetMargin;
-        float headTopAboveAim = Mathf.Max(0.01f, Mathf.Clamp(actor.GetHeight(), 0.5f, 16f) * Mathf.Max(0.1f, actor.transform.lossyScale.y) - aimHeight);
+        float headTopAboveAim = Mathf.Max(0.01f, HeadAboveEyeFactor * playerEyeHeight - aimHeight);
         if (tightActive)
         {
             float half = lensFov * 0.5f * Mathf.Deg2Rad;
@@ -658,15 +712,27 @@ internal sealed class SimpleFollowCamera : IDisposable
     // enemy standing on the player ground plane at an axial depth along the current
     // camera forward. When the full body cannot fit within DollyMax the enemy is
     // oversized: retry keeping only the top head band (feet may crop, rule 3).
-    // Returns 0 when there is no live enemy Character to measure.
+    // Returns 0 when there is no live enemy Character to measure. The enemy's
+    // vertical size comes from ITS eye bone (operator: "the eyelines of every
+    // enemy") - head top = HeadAboveEyeFactor * eye - with the capsule demoted to
+    // fallback; GetHeight() returns 2*radius for squat/wide creatures (boar, neck)
+    // and never tracks posture, so the bone is the better proxy everywhere.
     private float SolveEnemyDolly(float lensFov, float aimHeight, Vector3 subjectPosition,
-        float radius, float playerNeed)
+        float radius, float playerNeed, float dt)
     {
         Character? enemy = FindCharacter(combatTargetId);
         if (!enemy) return 0f;
-        float scale = Mathf.Max(0.1f, enemy!.transform.lossyScale.y);
-        float enemyHeight = Mathf.Clamp(enemy.GetHeight(), 0.3f, 24f) * scale;
-        Vector3 enemyPos = enemy.transform.position;
+        float rawEnemyEye = BoneEyeHeight(enemy!, 24f);
+        enemyEyeFromBone = rawEnemyEye > 0f;
+        if (!enemyEyeFromBone)
+            rawEnemyEye = EyelineFraction * Mathf.Clamp(enemy!.GetHeight(), 0.3f, 24f) * Mathf.Max(0.1f, enemy.transform.lossyScale.y);
+        // Per-target low-pass (animation bob must not pump the dolly); a target
+        // change reseeds instantly so the old enemy's size never sweeps in.
+        if (enemyEyeTargetId != combatTargetId || enemyEyeHeight <= 0f)
+        { enemyEyeTargetId = combatTargetId; enemyEyeHeight = rawEnemyEye; }
+        else enemyEyeHeight += (rawEnemyEye - enemyEyeHeight) * (1f - Mathf.Exp(-Mathf.Max(dt, 0f) / EyeHeightSmoothSeconds));
+        float enemyHeight = HeadAboveEyeFactor * enemyEyeHeight; // Head top derived from the eye.
+        Vector3 enemyPos = enemy!.transform.position;
         Vector3 planar = enemyPos - subjectPosition; planar.y = 0f;
         float sep = planar.magnitude;
         if (!TargetRoster.Finite(planar)) return 0f;
@@ -762,6 +828,8 @@ internal sealed class SimpleFollowCamera : IDisposable
         combatBlend = 0f; combatBlendVelocity = 0f; combatFov = 0f; // 0 reseeds to solo fov next solve.
         combatSide = 0; combatTargetId = 0; combatDistance = 0f;
         combatLensMm = CombatLensFarMm; combatLensVelocity = 0f;
+        // Enemy eye smoothing belongs to the engaged target; out of combat it is void.
+        enemyEyeHeight = 0f; enemyEyeTargetId = 0; enemyEyeFromBone = false;
         if (aim != null)
         {
             ScreenComposerSettings composition = aim.Composition;
@@ -840,6 +908,9 @@ internal sealed class SimpleFollowCamera : IDisposable
         // the desired fill distance) so a fresh vantage/warp never starts cramped.
         availableDistance = 0f; availableVelocity = 0f; tightActive = false; tightFrameFraction = 1f;
         aimScreenY = EyelineScreenY; aimScreenYVelocity = 0f; // Reseed the eased aim near the eyeline line.
+        // Bone-eyeline low-pass: 0 => the next solve reseeds instantly to the raw
+        // measurement (fresh binding/warp must never sweep from a stale posture).
+        playerEyeHeight = 0f; playerEyeFromBone = false;
         // Screen-space composition: side back to LEFT, lead 0, velocity sample voided.
         composition.Reset();
         soloScreenX = SoloScreenX; soloScreenXVelocity = 0f;
