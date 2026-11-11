@@ -489,6 +489,57 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
       parity). All three suites green (Core 1521, CM 128, Hooks 45), 0 warn / 0 err.
       Runtime footage verification outstanding.
 
+17. **Bone-eyeline doctrine (2026-11-11) — the character's EYE BONE is the single
+    measured quantity for ALL framing spans; the capsule is demoted to FALLBACK.**
+    Operator order: constrain/weight everything against bones — "that's how we can
+    tell the eyelines of every enemy as well. make sure the eye bones are now used
+    for everything, main character and enemies."
+    - **Why the capsule had to go:** NOTHING in the game assembly ever writes
+      `CapsuleCollider.height` — the capsule never resizes on crouch/sit/sneak, so a
+      crouched player got a full standing-height box and the eyeline pin aimed above
+      the real eyes. `GetHeight()` also returns `2*radius` for squat/wide creatures
+      (boar, neck). `Character.GetEyePoint()` (IL: `return m_eye.position;`, public,
+      remote-safe, the REAL animated eye transform) replaces it. `m_eye` is a public
+      Transform with NO null guard inside GetEyePoint — every call site guards it.
+    - **The measurement:** `eyeHeight = GetEyePoint().y - transform.position.y`
+      (world-space Y delta — carries scale, NO lossyScale multiply on the bone path;
+      clamp [0.3, 14] player / [0.3, 24] enemy; non-finite or <= 0.05 m rejected).
+      Everything derives from it:
+      - `aimHeight = AimFromEyeFraction * eyeHeight`, const `0.8602f` (= 0.8/0.93 —
+        preserves the standing aim point exactly; THE tunable).
+      - `aimToEye = eyeHeight - aimHeight` (= 0.1398 * eyeHeight, ~0.247 m standing).
+      - head top (tight visible-fraction + enemy above-span + occlusion ray spread)
+        = `HeadAboveEyeFactor * eyeHeight`, const `1.0753f` (= 1/0.93, crown ~7.5%
+        above the eyes). The HEAD bone is deliberately NOT used — one bone, fewer
+        reads; m_head sits at neck/skull-base anyway.
+      - Enemy: same measurement from `enemy.GetEyePoint()`; `enemyAbove =
+        HeadAboveEyeFactor*enemyEyeHeight - aimHeight`; the oversized head-band path
+        keeps its 30%-band rule with `height = HeadAboveEyeFactor*enemyEyeHeight`.
+        REAL enemy eyelines, posture-true, every creature.
+    - **FALLBACK (missing/invalid m_eye):** exactly the pre-bone capsule math —
+      `Clamp(GetHeight()*EyelineFraction, ...)*lossyScale.y`; `EyelineFraction`
+      (0.93) survives fallback-only. `AimHeightFraction` (0.8) deleted (subsumed by
+      AimFromEyeFraction applied to the fallback eye).
+    - **Smoothing (critical):** the eye bone bobs with the run cycle; raw per-frame
+      eyeHeight would pump the dolly solve and aim. Exponential low-pass, tau
+      `EyeHeightSmoothSeconds = 0.35f` (lateralScreenVelocity pattern). Player
+      reseeds instantly on rebind/warp/Reset (zeroed in ResetRecovery); enemy
+      smoothed per engaged target, reseeded on combat target change (ResetCombat).
+      CROUCH/SIT is exactly what we want to track: the low-pass passes sustained
+      posture through in ~1 s while killing per-step bob. Zero per-frame allocs.
+    - **Aim-sensing consistency:** UpdateAimSensing's eye read now guards `m_eye`
+      and falls back to the smoothed eye height (was a hardcoded `up*1.6`).
+    - **Standing invariant (eye 1.767 m):** aim 1.52000, aimToEye 0.24703, belowAim
+      1.76997 — at 50 mm **d = 6.2520 m, aimY = -0.0841**, identical to #15's
+      capsule numbers to 4 decimals. Core untouched (EyelineFraming inputs are
+      metre spans; signatures unchanged) — this is a Plugin-only change.
+    - **Diagnostics:** "; eye h=1.77" (" (capsule)" suffix on fallback) + enemy
+      ", eye 2.10" token in the combat segment for footage review of creature bones.
+    - **Tests:** Core 1521 / CM 128 unchanged; Hooks 45 -> 48 (+3 BoneEyelineAudits:
+      GetEyePoint public-instance Vector3 reader; IL reads exactly m_eye
+      Transform.position with no internal guard; m_eye public instance Transform).
+      0 warn / 0 err. Runtime footage verification outstanding.
+
 ## Which editorial rules this serves/touches
 - Serves rule 7 (one proven layer at a time) — this is the state framework Layer 2+
   will hang off.
