@@ -93,7 +93,9 @@ internal sealed class BroadcastSettings
         SimpleFollowDistance = config.Bind("Camera", "SimpleFollowDistance", 6f, Range("Seed/fallback orbit distance in metres: the initial dolly radius on bind/reset and the distance used only when the live body-fill solve is unavailable. The live camera distance is solved each frame from the player's size to FILL the frame at the fixed lens, so the presented distance may be CLOSER than this value.", 2f, 30f));
         CombatFraming = config.Bind("Camera", "CombatFraming", true, "Two-shot thirds framing while the player fights; the enemy rides the opposite thirds from the player.");
         CombatRange = config.Bind("Camera", "CombatRange", 30f, Range("Forward-cone range in metres within which a hostile qualifies for combat two-shot framing.", 5f, 80f));
-        FollowLensMm = config.Bind("Camera", "FollowLensMm", 50f, Range("Full-frame lens focal length in millimetres for the simple-follow camera outside combat (vertical fov = 2*atan(12/mm)). Combat eases to a 75 mm lens.", 12f, 135f));
+        // Key renamed FollowLensMm -> SoloLensMm (2026-11-11, solo 50 -> 45 mm): deployed
+        // cfgs persist saved values, so a default change under the old key never lands.
+        FollowLensMm = config.Bind("Camera", "SoloLensMm", 45f, Range("Full-frame lens focal length in millimetres for the simple-follow camera outside combat (vertical fov = 2*atan(12/mm)). Combat eases to a 50 mm lens.", 12f, 135f));
         ProceduralPlayers = config.Bind("Camera", "ProceduralPlayers", true, "Use the shared Cinemachine pipeline for player, creature and scenic coverage. False selects legacy fixed framing for comparison. This existing config key is retained for compatibility.");
         DynamicShots = config.Bind("Camera", "DynamicShots", true, "Direct shot duration and deliberate motion according to activity, available space and recent camera corrections.");
         PredictiveShots = config.Bind("Camera", "PredictiveShots", true, "Prefer presently readable viewpoints expected to remain useful during observed movement. Prediction is bounded, uncertain evidence stays neutral, and it never requests travel.");

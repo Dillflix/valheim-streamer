@@ -176,10 +176,10 @@ internal static class FinalFrameClampTests
         catch (ArgumentOutOfRangeException) { }
     }
 
-    // Simple-follow combat operating envelope: 75 mm = 18.1805 deg, 65 mm =
-    // 20.9524 deg, solo 50 mm = 26.9915 deg vertical fov; 16:9; standing player
+    // Simple-follow combat operating envelope: combat 50 mm = 26.9915 deg, close-
+    // quarters 43 mm = 31.1856 deg, solo 45 mm = 29.8628 deg vertical fov; 16:9; standing player
     // eye 1.767 m, aimToEye = 0.1398 * eye.
-    private const float CombatFov = 18.1805f, CloseFov = 20.9524f, SoloFov = 26.9915f;
+    private const float CombatFov = 26.9915f, CloseFov = 31.1856f, SoloFov = 29.8628f;
     private const float Eyeline = -1f / 6f, AimBand = 0.11f, AimToEye = 0.1398f * 1.767f;
 
     // Y-down screen fraction of the EYE when the AIM point sits at aimYDown: the
