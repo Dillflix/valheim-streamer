@@ -184,8 +184,13 @@ internal sealed class SimpleFollowCamera : IDisposable
     private const float AimSmoothTimeConstant = 0.25f; // Slerp low-pass tau: 5 Hz updates must not step the camera.
     private const float AimGraceSeconds = 1.0f;        // Brief zero/invalid aim keeps the last smoothed aim this long.
     private const float AimConeDegrees = 15f;          // Aim cone: an enemy within this of the aim is "aimed at".
-    private const float SoloLookSteerMinSpeed = 4f;    // Gentlest azimuth writer: floor deg/s.
-    private const float SoloLookSteerMaxSpeed = 20f;   // Gentlest azimuth writer: cap deg/s.
+    private const float SoloLookResolveSeconds = 0.5f; // Behind-gaze budget: ANY azimuth gap resolves within this.
+    // Critically damped spring time constant sized to the resolve budget: SmoothDamp
+    // remaining fraction is (1+2t/T)e^(-2t/T), so T = 0.4*resolve leaves ~4% of the
+    // gap at t = resolve. Scale-invariant: a 120 deg flick and a 5 deg drift both
+    // settle on the same half-second schedule, speed proportional to the arc.
+    private const float SoloLookSmoothTime = 0.4f * SoloLookResolveSeconds;
+    private float soloLookAzimuthVelocity;              // SmoothDampAngle state for the behind-gaze steer (deg/s).
     private Vector3 aimDirSmoothed;                     // Slerp-smoothed world aim direction (horizontal+pitch).
     private bool hasAimSample;                          // A smoothed aim sample exists (seeds the slerp).
     private float aimAzimuthDegrees;                    // World azimuth of the smoothed aim (atan2(x,z) - matches bearings).
@@ -368,22 +373,24 @@ internal sealed class SimpleFollowCamera : IDisposable
         }
     }
 
-    // Solo behind-gaze steer: gently slew the orbit horizontal axis toward the aim
-    // azimuth so the camera settles BEHIND the player relative to their gaze and the
-    // look target lands center-depth. Writing the axis cancels native recentering
-    // this frame (proven Layer 1/combat pattern). This is the GENTLEST writer in the
-    // stack - speed clamp(|remaining|*1, 4, 20) deg/s. When the aim is invalid it
-    // writes nothing and native stay-behind recentering resumes unchanged. The caller
-    // gates this on (not Layer 1 steering) and (not combat two-shot steering).
+    // Solo behind-gaze steer: settle the orbit horizontal axis onto the aim azimuth
+    // with a critically damped spring (SmoothDampAngle, operator order 2026-11-12:
+    // "only ever take .5 seconds to resolve ... smoothed tangent no matter what").
+    // The spring is scale-invariant - a 120 deg flick and a 5 deg drift both resolve
+    // on the same ~SoloLookResolveSeconds schedule, speed proportional to the arc -
+    // so a fast-turning gaze can never outrun it the way the old fixed 4-20 deg/s
+    // clamp was outrun. Velocity-continuous by construction: no snap on engage,
+    // re-target or release. Writing the axis cancels native recentering this frame
+    // (proven Layer 1/combat pattern). When the aim is invalid it writes nothing
+    // (spring velocity voided so a later re-engage starts from rest) and native
+    // stay-behind recentering resumes. The caller gates this on (not Layer 1
+    // steering) and (not combat two-shot steering).
     private void SoloLookSteer(float dt)
     {
-        if (!aimValid) return;
+        if (!aimValid) { soloLookAzimuthVelocity = 0f; return; }
         float value = orbit!.HorizontalAxis.Value;
-        float remaining = Mathf.DeltaAngle(value, aimAzimuthDegrees);
-        float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1f, SoloLookSteerMinSpeed, SoloLookSteerMaxSpeed);
-        float step = Mathf.Min(speed * Mathf.Max(dt, 0f), Mathf.Abs(remaining));
-        if (step <= 0f) return;
-        float next = Mathf.MoveTowardsAngle(value, aimAzimuthDegrees, step);
+        float next = Mathf.SmoothDampAngle(value, aimAzimuthDegrees, ref soloLookAzimuthVelocity,
+            SoloLookSmoothTime, Mathf.Infinity, Mathf.Max(dt, 0f));
         if (next > 180f) next -= 360f; else if (next < -180f) next += 360f;
         orbit.HorizontalAxis.Value = next;
     }
@@ -446,11 +453,13 @@ internal sealed class SimpleFollowCamera : IDisposable
             // slides slowly through centre on a flip (never a snap). No combat lead
             // room and no group spans in solo (no enemy).
             // Solo look-direction steering: settle the orbit BEHIND the player's
-            // gaze so the look target lands center-depth. This is the gentlest axis
-            // writer in the stack and only runs when Layer 1 is not steering and the
-            // aim is valid; when invalid we write nothing and native recentering
-            // resumes. (Combat's two-shot solve owns the axis when engaged.)
-            SoloLookSteer(dt);
+            // gaze so the look target lands center-depth. Only runs when Layer 1 is
+            // not steering and the aim is valid; when invalid we write nothing and
+            // native recentering resumes. (Combat's two-shot solve owns the axis
+            // when engaged.) The spring resolves any gap in ~0.5 s - fast enough to
+            // out-write Layer 1 recovery, so the gate must be real, not incidental.
+            if (!steering) SoloLookSteer(dt);
+            else soloLookAzimuthVelocity = 0f;
             float soloLook = aimValid ? Mathf.DeltaAngle(orbit!.HorizontalAxis.Value, aimAzimuthDegrees) : 0f;
             ScreenCompositionDecision comp = composition.Observe(compNow, lateralScreenVelocity, soloLook);
             soloReasonRight = comp.Side == SoloCompositionSide.Right ? 1f : 0f;
@@ -503,6 +512,8 @@ internal sealed class SimpleFollowCamera : IDisposable
         // Layer 1 > combat two-shot > solo look steer > native recentering.
         if (!steering && decision.Phase != CombatFramingPhase.Combat)
             SoloLookSteer(dt);
+        else
+            soloLookAzimuthVelocity = 0f; // Another writer owns the axis: a later handoff starts the spring from rest.
         if (!steering && decision.Phase == CombatFramingPhase.Combat)
         {
             float remaining = Mathf.DeltaAngle(cameraAzimuth, decision.TargetAzimuthDegrees);
@@ -953,6 +964,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         // re-fetched on the next sense (Bind also clears it on a subject change).
         subjectView = null; aimDirSmoothed = default; hasAimSample = false;
         aimAzimuthDegrees = 0f; aimValid = false; aimLastValidAt = -1;
+        soloLookAzimuthVelocity = 0f; // The behind-gaze spring restarts from rest on a fresh vantage.
         ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 
