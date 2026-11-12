@@ -197,6 +197,24 @@ internal sealed class SimpleFollowCamera : IDisposable
     // screen guides are Y-down; the live aim-Y is solved each frame by the eyeline
     // doctrine (AimYForEyeline) and eased onto the composer.
     private static readonly Vector2 ScreenPosition = new Vector2(SoloScreenX, EyelineScreenY);
+    // THIRDS CONTAINMENT (operator defect 2026-11-11: "keep the character's eyeline
+    // in the thirds they're currently in ... we're letting them go too much").
+    // The composer's hard-limit rect is CENTERED on ScreenPosition (upstream
+    // HardLimitsRect, Offset 0), so its SIZE is a containment band around the live
+    // composition target - the eased thirds X + lead, eyeline Y. The solo rect
+    // (0.6 x 0.55, half-band 0.30/0.275) let the aim point reach x 0.467 of the
+    // half-frame - the eye essentially AT the edge - before the undamped pass bit.
+    // Combat tightens to 0.22 x 0.22: the aim (and therefore the eye - the solved
+    // aimScreenY is eyeline + the fixed aim->eye angle, so eye excursion == aim
+    // excursion) can breathe +/-0.11 around its third before the hard edge bites.
+    // Sized so a WALK stays damped (2 m/s at 8 m: 14 deg/s * 0.15 s damping lag =
+    // 2.1 deg = 0.065 fraction at 75 mm, inside the band; 0.25 s lookahead lead at
+    // walk = 0.5 m = 0.11, exactly the band) while a RUN is contained (7 m/s
+    // lookahead lead alone = 1.75 m = 0.38 fraction, clamped at 0.11). The lerp by
+    // combatBlend keeps the tighten/release on the same weighted ease as the
+    // thirds slide - no snaps.
+    private static readonly Vector2 SoloHardLimits = new Vector2(0.6f, 0.55f);
+    private static readonly Vector2 CombatHardLimits = new Vector2(0.22f, 0.22f);
 
     internal bool TrySolve(Character actor, BroadcastSettings settings, Camera output, float dt,
         out Vector3 position, out Quaternion rotation, out float fov)
@@ -447,7 +465,7 @@ internal sealed class SimpleFollowCamera : IDisposable
             // (the crop eats the feet). Thirds/lead X flow is unchanged.
             UpdateBoomRoom(subjectPosition, aimHeight, soloFill, dt);
             desiredDollyRadius = Mathf.Clamp(Mathf.Min(soloFill, availableDistance), TightFloor, DollyMaxMetres);
-            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, aimHeight);
+            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, dollyRadius, aimHeight);
             EaseAim(soloAimTarget, soloScreenX + leadOffsetX, dt);
             return;
         }
@@ -489,7 +507,10 @@ internal sealed class SimpleFollowCamera : IDisposable
             float remaining = Mathf.DeltaAngle(cameraAzimuth, decision.TargetAzimuthDegrees);
             // Gentler than Layer 1 recovery (20-90): slow start, brisk middle,
             // soft settle - the user's "nice and smooth and weighted" feel.
-            float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1.5f, 8f, 45f);
+            // Ceiling 60 (was 45): a 4 m/s strafe at 4 m separation swings the
+            // bearing at 57 deg/s - the old cap lagged it and the pair slid off
+            // thirds. Floor and gain unchanged; 60 only engages past a 40 deg arc.
+            float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1.5f, 8f, 60f);
             float step = Mathf.Min(speed * Mathf.Max(dt, 0f), Mathf.Abs(remaining));
             if (step > 0f)
             {
@@ -546,7 +567,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         desiredDollyRadius = Mathf.Clamp(effectiveNeed, TightFloor, DollyMaxMetres);
         // The eyeline aim is solved from the LIVE eased dolly radius (capped by the boom
         // room) so the aim and the boom agree; the crop eats the feet in a tight space.
-        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, aimHeight);
+        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, dollyRadius, aimHeight);
         // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
         EaseAim(combatAimTarget, combatScreenX, dt);
     }
@@ -632,7 +653,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     // Ease the live aim-pin toward the solved (aimY, screenX) and write it to the
     // composer. The aim-Y is SmoothDamp'd ~0.8s so the vertical placement never snaps;
     // the X flow (solo left-thirds <-> combat opposite-thirds) is already blended by
-    // the caller and only written when it actually changes.
+    // the caller and only written when it actually changes. The hard-limit rect
+    // (centered on ScreenPosition upstream) is sized here too: combat rides the
+    // tight thirds-containment band, solo the loose rect, lerped by combatBlend so
+    // the tighten/release shares the engage ease (see SoloHardLimits doctrine).
     private void EaseAim(float targetAimY, float screenX, float dt)
     {
         aimScreenY = Mathf.SmoothDamp(aimScreenY, Mathf.Clamp(targetAimY, -0.45f, 0.45f),
@@ -640,9 +664,11 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (aim == null) return;
         ScreenComposerSettings composition = aim.Composition; // Struct: mutate a copy and reassign.
         Vector2 pos = composition.ScreenPosition;
-        if (pos.x != screenX || pos.y != aimScreenY)
+        Vector2 hardSize = Vector2.Lerp(SoloHardLimits, CombatHardLimits, combatBlend);
+        if (pos.x != screenX || pos.y != aimScreenY || composition.HardLimits.Size != hardSize)
         {
             composition.ScreenPosition = new Vector2(screenX, aimScreenY);
+            composition.HardLimits.Size = hardSize;
             aim.Composition = composition;
         }
     }
@@ -681,11 +707,15 @@ internal sealed class SimpleFollowCamera : IDisposable
     // Resolve this frame's aim-Y target: pin the EYELINE on the top-third line at the
     // LIVE distance (the eased, boom-capped radius) so the eye NEVER leaves its line -
     // outdoors the feet sit on the bottom edge, in a tight space the distance is capped
-    // and the feet crop automatically while the eyeline holds. Sets the tight
+    // and the feet crop automatically while the eyeline holds. solveDistance is the
+    // LIVE eased dolly radius the frame actually presents (operator defect
+    // 2026-11-11: solving at the TARGET radius while presenting the eased one put
+    // the eye ~0.05 fraction off its line through every dolly transition);
+    // fillDistance keeps the tight-space detection semantics. Sets the tight
     // diagnostics (tightActive + visible body fraction) when the room caps the dolly.
-    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float aimHeight)
+    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float solveDistance, float aimHeight)
     {
-        float d = Mathf.Max(0.31f, Mathf.Min(fillDistance, availableDistance));
+        float d = Mathf.Max(0.31f, Mathf.Min(solveDistance, availableDistance));
         tightActive = availableDistance < fillDistance - 0.1f;
         float aimY = EyelineFraming.AimYForEyeline(lensFov, EyelineScreenY, aimToEye, d);
         // Cheap visible-fraction for the "; tight ... frame=<band> NN%" line: the feet
@@ -834,6 +864,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         {
             ScreenComposerSettings composition = aim.Composition;
             composition.ScreenPosition = new Vector2(SoloScreenX, EyelineScreenY);
+            composition.HardLimits.Size = SoloHardLimits; // Containment band back to the solo rect.
             aim.Composition = composition;
         }
     }
@@ -985,7 +1016,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         composition.DeadZone.Enabled = true;
         composition.DeadZone.Size = new Vector2(0.02f, 0.02f);
         composition.HardLimits.Enabled = true;
-        composition.HardLimits.Size = new Vector2(0.6f, 0.55f);
+        composition.HardLimits.Size = SoloHardLimits;
         composition.HardLimits.Offset = Vector2.zero;
         composition.Validate();
         aim.Composition = composition;

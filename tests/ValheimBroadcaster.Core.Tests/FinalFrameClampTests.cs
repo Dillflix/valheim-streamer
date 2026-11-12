@@ -19,6 +19,7 @@ internal static class FinalFrameClampTests
         yield return ("Final clamp yaw respects the aspect ratio while pitch ignores it", AspectVariation);
         yield return ("Final clamp accepts an explicit band", ExplicitBand);
         yield return ("Final clamp rejects out-of-range contracts", Validation);
+        yield return ("Combat composer hard band holds the eye within 0.12 of its eyeline", CombatBandEyeContainment);
     }
 
     private const float Fov = 60f, Aspect = 16f / 9f;
@@ -173,5 +174,40 @@ internal static class FinalFrameClampTests
         catch (ArgumentOutOfRangeException) { }
         try { FinalFrameClamp.Correct(0, 0, true, Fov, Aspect, 0.3f, 0.5f); throw new Exception("A band at the frame edge was accepted."); }
         catch (ArgumentOutOfRangeException) { }
+    }
+
+    // Simple-follow combat operating envelope: 75 mm = 18.1805 deg, 65 mm =
+    // 20.9524 deg, solo 50 mm = 26.9915 deg vertical fov; 16:9; standing player
+    // eye 1.767 m, aimToEye = 0.1398 * eye.
+    private const float CombatFov = 18.1805f, CloseFov = 20.9524f, SoloFov = 26.9915f;
+    private const float Eyeline = -1f / 6f, AimBand = 0.11f, AimToEye = 0.1398f * 1.767f;
+
+    // Y-down screen fraction of the EYE when the AIM point sits at aimYDown: the
+    // eye is aimToEye metres above the aim at distance d, so its angle is the
+    // aim's angle minus atan(aimToEye/d) (same projection model as EyelineFraming).
+    private static double EyeYDown(double aimYDown, double fov, double aimToEye, double d)
+    {
+        double tanHalf = Math.Tan(fov * Math.PI / 360);
+        return Math.Tan(Math.Atan(2 * aimYDown * tanHalf) - Math.Atan(aimToEye / d)) / (2 * tanHalf);
+    }
+
+    private static void CombatBandEyeContainment()
+    {
+        // The composer hard pass clamps the AIM point within +/-0.11 of the solved
+        // aimScreenY. The solved aimScreenY is eyeline + the fixed aim->eye angle
+        // (AimYForEyeline), so wherever the aim rides inside the band the EYE stays
+        // within 0.12 of the top-third line - across the whole combat lens and
+        // distance envelope. This is the projection math behind HardLimits 0.22.
+        foreach (float fov in new[] { CombatFov, CloseFov, SoloFov })
+            for (float d = 4f; d <= 14.01f; d += 2f)
+            {
+                float aimY = EyelineFraming.AimYForEyeline(fov, Eyeline, AimToEye, d);
+                foreach (float edge in new[] { aimY - AimBand, aimY + AimBand })
+                {
+                    double eye = EyeYDown(edge, fov, AimToEye, d);
+                    Check(Math.Abs(eye - Eyeline) <= 0.12,
+                        $"Aim at the band edge put the eye {eye:F3} (fov {fov}, d {d}) - over 0.12 off its eyeline.");
+                }
+            }
     }
 }
