@@ -215,8 +215,6 @@ internal sealed class SimpleFollowCamera : IDisposable
     // thirds slide - no snaps.
     private static readonly Vector2 SoloHardLimits = new Vector2(0.6f, 0.55f);
     private static readonly Vector2 CombatHardLimits = new Vector2(0.22f, 0.22f);
-    // Layer B backstop latch: diagnostics show "; frame clamp" while recent.
-    private float frameClampUntil;
 
     internal bool TrySolve(Character actor, BroadcastSettings settings, Camera output, float dt,
         out Vector3 position, out Quaternion rotation, out float fov)
@@ -294,12 +292,6 @@ internal sealed class SimpleFollowCamera : IDisposable
             subject = null; // Reseed from scratch on the next frame.
             return Fail("Native solve produced a non-finite pose");
         }
-        // LAYER B backstop ("Don't let the player make it out of frame. Ever."):
-        // the LAST pose mutation, every frame, solo and combat. Whatever easing,
-        // slew or deoccluder displacement produced this pose, the player's EYE is
-        // projected through it and the minimal undamped yaw/pitch returns it to
-        // the Core hard band. Zero inside the band - it never fights the composer.
-        ApplyEyeFrameClamp(actor, subjectPosition, position, ref rotation, fov);
         presentedPosition = position; hasPresented = true;
         float now = Time.unscaledTime;
         if (now >= diagnosticsAt)
@@ -319,8 +311,7 @@ internal sealed class SimpleFollowCamera : IDisposable
                     ? $"; tight d={availableDistance:F1}m frame={(tightFrameFraction >= TightBandFull ? "full" : tightFrameFraction >= TightBandMedium ? "medium" : "close-up")} {tightFrameFraction * 100f:F0}%"
                     : "") +
                 (soloReasonRight > 0f ? "; side R" : "") +
-                (Mathf.Abs(leadOffsetX) > 0.01f ? $"; lead {(leadOffsetX >= 0f ? "+" : "")}{leadOffsetX:F2}" : "") +
-                (now < frameClampUntil ? "; frame clamp" : "");
+                (Mathf.Abs(leadOffsetX) > 0.01f ? $"; lead {(leadOffsetX >= 0f ? "+" : "")}{leadOffsetX:F2}" : "");
         }
         LastFailure = "none";
         return true;
@@ -878,72 +869,6 @@ internal sealed class SimpleFollowCamera : IDisposable
         }
     }
 
-    // LAYER B — the absolute backstop. Project the player's EYE (the measured bone,
-    // m_eye-guarded; fallback the smoothed eye height) through the about-to-be-
-    // presented pose and apply the MINIMAL undamped yaw/pitch that returns it to the
-    // Core hard band (0.42/0.38 of the half-frame - well outside the composer's
-    // limits, so this never fights the composer; it only catches poses the composer
-    // pass could not guarantee: deoccluder displacement, warp frames, easing/slew
-    // transients). A rotation, never a cut. Behind-camera demands a full look-at.
-    private void ApplyEyeFrameClamp(Character actor, Vector3 subjectPosition, Vector3 position,
-        ref Quaternion rotation, float fov)
-    {
-        Vector3 eye = actor.m_eye ? actor.GetEyePoint() : subjectPosition + Vector3.up * playerEyeHeight;
-        if (!TargetRoster.Finite(eye)) eye = subjectPosition + Vector3.up * playerEyeHeight;
-        float aspect = Mathf.Clamp(camera!.Lens.Aspect, 0.1f, 9.9f);
-        float nearClip = Mathf.Max(0.01f, camera.Lens.NearClipPlane);
-        Vector3 screen = ProjectEye(eye, position, rotation, fov, aspect, nearClip);
-        FrameClampCorrection correction;
-        try { correction = FinalFrameClamp.Correct(screen.x, screen.y, screen.z > 0f, fov, aspect); }
-        catch (ArgumentOutOfRangeException) { return; }
-        if (!correction.Required) return;
-        Quaternion clamped;
-        if (correction.BehindCamera) clamped = LookAtPoint(position, eye, rotation);
-        else
-        {
-            // Positive Core yaw turns the view toward screen-right (world up axis);
-            // positive Core pitch toward screen-up - a negative rotation about the
-            // camera's right axis in Unity.
-            clamped = Quaternion.AngleAxis(correction.YawDegrees, Vector3.up) * rotation;
-            clamped = Upright(Quaternion.AngleAxis(-correction.PitchDegrees, clamped * Vector3.right) * clamped);
-            // Per-axis corrections couple slightly when both fire. The guarantee is
-            // absolute: re-project and fall back to the full look-at on any residual.
-            Vector3 check = ProjectEye(eye, position, clamped, fov, aspect, nearClip);
-            if (check.z <= 0f || Mathf.Abs(check.x) > FinalFrameClamp.HardBandX + 0.02f ||
-                Mathf.Abs(check.y) > FinalFrameClamp.HardBandY + 0.02f)
-                clamped = LookAtPoint(position, eye, rotation);
-        }
-        if (!TargetRoster.Finite(clamped * Vector3.forward)) return;
-        rotation = clamped;
-        frameClampUntil = Time.unscaledTime + 1f; // Diagnostics latch: "; frame clamp".
-    }
-
-    // Centred viewport fractions (Y-up) of a world point under the presented pose;
-    // z carries the camera-local depth, -1 when behind/inside the near plane. Same
-    // ShotProjection conventions the directed rig feeds FinalFrameClamp with.
-    private static Vector3 ProjectEye(Vector3 point, Vector3 position, Quaternion rotation,
-        float fov, float aspect, float nearClip)
-    {
-        Vector3 local = Quaternion.Inverse(rotation) * (point - position);
-        var projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
-        return projected.InFront ? new Vector3((float)projected.X - 0.5f, (float)projected.Y - 0.5f, local.z)
-            : new Vector3(0f, 0f, -1f);
-    }
-
-    private static Quaternion LookAtPoint(Vector3 position, Vector3 point, Quaternion fallback)
-    {
-        Vector3 direction = point - position;
-        return direction.sqrMagnitude > 0.000001f
-            ? Quaternion.LookRotation(direction, Vector3.up) : fallback;
-    }
-
-    private static Quaternion Upright(Quaternion rotation)
-    {
-        Vector3 forward = rotation * Vector3.forward;
-        return Vector3.ProjectOnPlane(forward, Vector3.up).sqrMagnitude > 0.0001f
-            ? Quaternion.LookRotation(forward, Vector3.up) : rotation;
-    }
-
     // Candidate vantages on the current orbit: ideal orbit points around the
     // player at the configured radius and elevation. A probe embedded in
     // solid geometry sees nothing; otherwise its clearance is the unblocked
@@ -1027,7 +952,6 @@ internal sealed class SimpleFollowCamera : IDisposable
         // re-fetched on the next sense (Bind also clears it on a subject change).
         subjectView = null; aimDirSmoothed = default; hasAimSample = false;
         aimAzimuthDegrees = 0f; aimValid = false; aimLastValidAt = -1;
-        frameClampUntil = 0f; // Stale backstop latch dies with the vantage.
         ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 

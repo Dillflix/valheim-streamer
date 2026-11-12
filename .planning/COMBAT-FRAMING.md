@@ -564,8 +564,12 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
 - All three suites + Core/CM/Plugin builds green before commit.
 - Runtime footage verification outstanding (user reviews live broadcast).
 
-18. **Eyeline containment + absolute frame backstop (2026-11-11) — the player's
-    eye STAYS in its third, and NEVER leaves frame.** Operator defect: "when the
+18. **Eyeline containment (2026-11-11) — ONE system: the composer hard band
+    holds the player's eye in its third.** Operator rule applied here: no
+    backup patch layered on top of the fix — implement the system, then tweak
+    it from footage. (An earlier draft added a FinalFrameClamp backstop as a
+    second layer; REMOVED on operator order before submission.) Operator
+    defect: "when the
     character is walking around and the camera is trying to frame up the character
     and the enemy ... sometimes it's getting way out of frame and we're letting
     them go too much"; standing rule "Don't let the player make it out of frame.
@@ -586,7 +590,7 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
          dolly transition (engage 6.25→10 m).
       5. Azimuth slew cap 45 deg/s lagged close strafes (4 m/s at 4 m = 57 deg/s
          bearing rate) — mostly enemy-side thirds error.
-    - **LAYER A — thirds containment:** upstream HardLimitsRect is CENTERED on
+    - **THE SYSTEM — thirds containment:** upstream HardLimitsRect is CENTERED on
       ScreenPosition (Offset 0), i.e. on the live composition target (eased
       thirds X + lead, eyeline aim Y) — sizing the rect IS the band. Combat
       HardLimits.Size = 0.22 x 0.22 (aim excursion ≤ ±0.11), lerped from the solo
@@ -600,22 +604,13 @@ weighted feeling". No cuts, ever (locked editorial rule 1).
       every frame (LookAtTargetAttachment is reset to 1 by CinemachineCamera;
       nothing in this rig lowers it) and clamps ReferenceLookAt (the REAL target,
       not the lookahead point).
-    - **LAYER B — absolute backstop:** Core FinalFrameClamp applied to the player
-      EYE POINT (GetEyePoint, m_eye-guarded, smoothed-eye fallback) as the LAST
-      pose mutation in TrySolve, every frame, solo + combat, default band
-      0.42/0.38. Mirrors the directed rig byte-for-byte: ShotProjection.Measure
-      projection (centred Y-up fractions), minimal yaw about world up / pitch
-      about camera right, re-project + full look-at fallback on residual or
-      behind-camera. Undamped, fires only outside the band — zero cost when
-      framing is healthy; catches deoccluder displacement and any composer-bypass
-      transient. Rotations only — never a cut. Diagnostics "; frame clamp"
-      (1 s latch).
     - **Cheap confirmed fixes:** combat AND solo aim-Y now solved at the LIVE
       eased dollyRadius (new solveDistance param on ResolveEyelineAim;
       fillDistance keeps tight-space detection semantics). Combat azimuth slew
       ceiling 45 → 60 deg/s (covers the 57 deg/s close-strafe case; floor 8 and
       gain 1.5 unchanged — 60 only engages past a 40 deg arc, feel preserved).
-    - **Tests:** FinalFrameClampTests +3 (backstop zero-cost on the tightened
-      band; eye-within-0.12 containment invariant across 50/65/75 mm and
-      4–14 m; combat-lens band restore). Core 1524, CM 128, Hooks 48; 0 warn /
-      0 err. Runtime footage verification outstanding.
+    - **Tests:** +1 (eye-within-0.12 containment invariant across 50/65/75 mm
+      and 4–14 m — the projection math behind HardLimits 0.22). Core 1522,
+      CM 128, Hooks 48; 0 warn / 0 err. Runtime footage verification
+      outstanding. Tuning knobs if footage disagrees: CombatHardLimits size
+      (0.22), the slew ceiling (60), the lookahead (0.25 s).
