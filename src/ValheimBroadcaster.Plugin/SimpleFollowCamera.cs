@@ -1011,7 +1011,11 @@ internal sealed class SimpleFollowCamera : IDisposable
         aim = child.AddComponent<CinemachineRotationComposer>();
         aim.CenterOnActivate = true;
         aim.Damping = new Vector2(0.15f, 0.15f);
-        aim.Lookahead = new LookaheadSettings { Enabled = true, Time = 0.25f, Smoothing = 10f, IgnoreY = true };
+        // Lookahead OFF (operator order 2026-11-11: "turn it off, i want to see what
+        // it's like without it"). The composer aims at the REAL player, not a point
+        // predicted 0.25 s ahead - removes the ~0.38-fraction trailing displacement
+        // at run speed; remaining trailing error is the 0.15 s damping only.
+        aim.Lookahead = new LookaheadSettings { Enabled = false };
         var composition = ScreenComposerSettings.Default;
         composition.ScreenPosition = ScreenPosition;
         composition.DeadZone.Enabled = true;
