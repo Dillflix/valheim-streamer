@@ -197,6 +197,26 @@ internal sealed class SimpleFollowCamera : IDisposable
     // screen guides are Y-down; the live aim-Y is solved each frame by the eyeline
     // doctrine (AimYForEyeline) and eased onto the composer.
     private static readonly Vector2 ScreenPosition = new Vector2(SoloScreenX, EyelineScreenY);
+    // THIRDS CONTAINMENT (operator defect 2026-11-11: "keep the character's eyeline
+    // in the thirds they're currently in ... we're letting them go too much").
+    // The composer's hard-limit rect is CENTERED on ScreenPosition (upstream
+    // HardLimitsRect, Offset 0), so its SIZE is a containment band around the live
+    // composition target - the eased thirds X + lead, eyeline Y. The solo rect
+    // (0.6 x 0.55, half-band 0.30/0.275) let the aim point reach x 0.467 of the
+    // half-frame - the eye essentially AT the edge - before the undamped pass bit.
+    // Combat tightens to 0.22 x 0.22: the aim (and therefore the eye - the solved
+    // aimScreenY is eyeline + the fixed aim->eye angle, so eye excursion == aim
+    // excursion) can breathe +/-0.11 around its third before the hard edge bites.
+    // Sized so a WALK stays damped (2 m/s at 8 m: 14 deg/s * 0.15 s damping lag =
+    // 2.1 deg = 0.065 fraction at 75 mm, inside the band; 0.25 s lookahead lead at
+    // walk = 0.5 m = 0.11, exactly the band) while a RUN is contained (7 m/s
+    // lookahead lead alone = 1.75 m = 0.38 fraction, clamped at 0.11). The lerp by
+    // combatBlend keeps the tighten/release on the same weighted ease as the
+    // thirds slide - no snaps.
+    private static readonly Vector2 SoloHardLimits = new Vector2(0.6f, 0.55f);
+    private static readonly Vector2 CombatHardLimits = new Vector2(0.22f, 0.22f);
+    // Layer B backstop latch: diagnostics show "; frame clamp" while recent.
+    private float frameClampUntil;
 
     internal bool TrySolve(Character actor, BroadcastSettings settings, Camera output, float dt,
         out Vector3 position, out Quaternion rotation, out float fov)
@@ -274,6 +294,12 @@ internal sealed class SimpleFollowCamera : IDisposable
             subject = null; // Reseed from scratch on the next frame.
             return Fail("Native solve produced a non-finite pose");
         }
+        // LAYER B backstop ("Don't let the player make it out of frame. Ever."):
+        // the LAST pose mutation, every frame, solo and combat. Whatever easing,
+        // slew or deoccluder displacement produced this pose, the player's EYE is
+        // projected through it and the minimal undamped yaw/pitch returns it to
+        // the Core hard band. Zero inside the band - it never fights the composer.
+        ApplyEyeFrameClamp(actor, subjectPosition, position, ref rotation, fov);
         presentedPosition = position; hasPresented = true;
         float now = Time.unscaledTime;
         if (now >= diagnosticsAt)
@@ -293,7 +319,8 @@ internal sealed class SimpleFollowCamera : IDisposable
                     ? $"; tight d={availableDistance:F1}m frame={(tightFrameFraction >= TightBandFull ? "full" : tightFrameFraction >= TightBandMedium ? "medium" : "close-up")} {tightFrameFraction * 100f:F0}%"
                     : "") +
                 (soloReasonRight > 0f ? "; side R" : "") +
-                (Mathf.Abs(leadOffsetX) > 0.01f ? $"; lead {(leadOffsetX >= 0f ? "+" : "")}{leadOffsetX:F2}" : "");
+                (Mathf.Abs(leadOffsetX) > 0.01f ? $"; lead {(leadOffsetX >= 0f ? "+" : "")}{leadOffsetX:F2}" : "") +
+                (now < frameClampUntil ? "; frame clamp" : "");
         }
         LastFailure = "none";
         return true;
@@ -447,7 +474,7 @@ internal sealed class SimpleFollowCamera : IDisposable
             // (the crop eats the feet). Thirds/lead X flow is unchanged.
             UpdateBoomRoom(subjectPosition, aimHeight, soloFill, dt);
             desiredDollyRadius = Mathf.Clamp(Mathf.Min(soloFill, availableDistance), TightFloor, DollyMaxMetres);
-            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, aimHeight);
+            float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, dollyRadius, aimHeight);
             EaseAim(soloAimTarget, soloScreenX + leadOffsetX, dt);
             return;
         }
@@ -489,7 +516,10 @@ internal sealed class SimpleFollowCamera : IDisposable
             float remaining = Mathf.DeltaAngle(cameraAzimuth, decision.TargetAzimuthDegrees);
             // Gentler than Layer 1 recovery (20-90): slow start, brisk middle,
             // soft settle - the user's "nice and smooth and weighted" feel.
-            float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1.5f, 8f, 45f);
+            // Ceiling 60 (was 45): a 4 m/s strafe at 4 m separation swings the
+            // bearing at 57 deg/s - the old cap lagged it and the pair slid off
+            // thirds. Floor and gain unchanged; 60 only engages past a 40 deg arc.
+            float speed = Mathf.Clamp(Mathf.Abs(remaining) * 1.5f, 8f, 60f);
             float step = Mathf.Min(speed * Mathf.Max(dt, 0f), Mathf.Abs(remaining));
             if (step > 0f)
             {
@@ -546,7 +576,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         desiredDollyRadius = Mathf.Clamp(effectiveNeed, TightFloor, DollyMaxMetres);
         // The eyeline aim is solved from the LIVE eased dolly radius (capped by the boom
         // room) so the aim and the boom agree; the crop eats the feet in a tight space.
-        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, aimHeight);
+        float combatAimTarget = ResolveEyelineAim(lensFov, combatAimToEye, desiredDollyRadius, dollyRadius, aimHeight);
         // Ease BOTH the composer X (thirds slide) and the solved aim-Y together.
         EaseAim(combatAimTarget, combatScreenX, dt);
     }
@@ -632,7 +662,10 @@ internal sealed class SimpleFollowCamera : IDisposable
     // Ease the live aim-pin toward the solved (aimY, screenX) and write it to the
     // composer. The aim-Y is SmoothDamp'd ~0.8s so the vertical placement never snaps;
     // the X flow (solo left-thirds <-> combat opposite-thirds) is already blended by
-    // the caller and only written when it actually changes.
+    // the caller and only written when it actually changes. The hard-limit rect
+    // (centered on ScreenPosition upstream) is sized here too: combat rides the
+    // tight thirds-containment band, solo the loose rect, lerped by combatBlend so
+    // the tighten/release shares the engage ease (see SoloHardLimits doctrine).
     private void EaseAim(float targetAimY, float screenX, float dt)
     {
         aimScreenY = Mathf.SmoothDamp(aimScreenY, Mathf.Clamp(targetAimY, -0.45f, 0.45f),
@@ -640,9 +673,11 @@ internal sealed class SimpleFollowCamera : IDisposable
         if (aim == null) return;
         ScreenComposerSettings composition = aim.Composition; // Struct: mutate a copy and reassign.
         Vector2 pos = composition.ScreenPosition;
-        if (pos.x != screenX || pos.y != aimScreenY)
+        Vector2 hardSize = Vector2.Lerp(SoloHardLimits, CombatHardLimits, combatBlend);
+        if (pos.x != screenX || pos.y != aimScreenY || composition.HardLimits.Size != hardSize)
         {
             composition.ScreenPosition = new Vector2(screenX, aimScreenY);
+            composition.HardLimits.Size = hardSize;
             aim.Composition = composition;
         }
     }
@@ -681,11 +716,15 @@ internal sealed class SimpleFollowCamera : IDisposable
     // Resolve this frame's aim-Y target: pin the EYELINE on the top-third line at the
     // LIVE distance (the eased, boom-capped radius) so the eye NEVER leaves its line -
     // outdoors the feet sit on the bottom edge, in a tight space the distance is capped
-    // and the feet crop automatically while the eyeline holds. Sets the tight
+    // and the feet crop automatically while the eyeline holds. solveDistance is the
+    // LIVE eased dolly radius the frame actually presents (operator defect
+    // 2026-11-11: solving at the TARGET radius while presenting the eased one put
+    // the eye ~0.05 fraction off its line through every dolly transition);
+    // fillDistance keeps the tight-space detection semantics. Sets the tight
     // diagnostics (tightActive + visible body fraction) when the room caps the dolly.
-    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float aimHeight)
+    private float ResolveEyelineAim(float lensFov, float aimToEye, float fillDistance, float solveDistance, float aimHeight)
     {
-        float d = Mathf.Max(0.31f, Mathf.Min(fillDistance, availableDistance));
+        float d = Mathf.Max(0.31f, Mathf.Min(solveDistance, availableDistance));
         tightActive = availableDistance < fillDistance - 0.1f;
         float aimY = EyelineFraming.AimYForEyeline(lensFov, EyelineScreenY, aimToEye, d);
         // Cheap visible-fraction for the "; tight ... frame=<band> NN%" line: the feet
@@ -834,8 +873,75 @@ internal sealed class SimpleFollowCamera : IDisposable
         {
             ScreenComposerSettings composition = aim.Composition;
             composition.ScreenPosition = new Vector2(SoloScreenX, EyelineScreenY);
+            composition.HardLimits.Size = SoloHardLimits; // Containment band back to the solo rect.
             aim.Composition = composition;
         }
+    }
+
+    // LAYER B — the absolute backstop. Project the player's EYE (the measured bone,
+    // m_eye-guarded; fallback the smoothed eye height) through the about-to-be-
+    // presented pose and apply the MINIMAL undamped yaw/pitch that returns it to the
+    // Core hard band (0.42/0.38 of the half-frame - well outside the composer's
+    // limits, so this never fights the composer; it only catches poses the composer
+    // pass could not guarantee: deoccluder displacement, warp frames, easing/slew
+    // transients). A rotation, never a cut. Behind-camera demands a full look-at.
+    private void ApplyEyeFrameClamp(Character actor, Vector3 subjectPosition, Vector3 position,
+        ref Quaternion rotation, float fov)
+    {
+        Vector3 eye = actor.m_eye ? actor.GetEyePoint() : subjectPosition + Vector3.up * playerEyeHeight;
+        if (!TargetRoster.Finite(eye)) eye = subjectPosition + Vector3.up * playerEyeHeight;
+        float aspect = Mathf.Clamp(camera!.Lens.Aspect, 0.1f, 9.9f);
+        float nearClip = Mathf.Max(0.01f, camera.Lens.NearClipPlane);
+        Vector3 screen = ProjectEye(eye, position, rotation, fov, aspect, nearClip);
+        FrameClampCorrection correction;
+        try { correction = FinalFrameClamp.Correct(screen.x, screen.y, screen.z > 0f, fov, aspect); }
+        catch (ArgumentOutOfRangeException) { return; }
+        if (!correction.Required) return;
+        Quaternion clamped;
+        if (correction.BehindCamera) clamped = LookAtPoint(position, eye, rotation);
+        else
+        {
+            // Positive Core yaw turns the view toward screen-right (world up axis);
+            // positive Core pitch toward screen-up - a negative rotation about the
+            // camera's right axis in Unity.
+            clamped = Quaternion.AngleAxis(correction.YawDegrees, Vector3.up) * rotation;
+            clamped = Upright(Quaternion.AngleAxis(-correction.PitchDegrees, clamped * Vector3.right) * clamped);
+            // Per-axis corrections couple slightly when both fire. The guarantee is
+            // absolute: re-project and fall back to the full look-at on any residual.
+            Vector3 check = ProjectEye(eye, position, clamped, fov, aspect, nearClip);
+            if (check.z <= 0f || Mathf.Abs(check.x) > FinalFrameClamp.HardBandX + 0.02f ||
+                Mathf.Abs(check.y) > FinalFrameClamp.HardBandY + 0.02f)
+                clamped = LookAtPoint(position, eye, rotation);
+        }
+        if (!TargetRoster.Finite(clamped * Vector3.forward)) return;
+        rotation = clamped;
+        frameClampUntil = Time.unscaledTime + 1f; // Diagnostics latch: "; frame clamp".
+    }
+
+    // Centred viewport fractions (Y-up) of a world point under the presented pose;
+    // z carries the camera-local depth, -1 when behind/inside the near plane. Same
+    // ShotProjection conventions the directed rig feeds FinalFrameClamp with.
+    private static Vector3 ProjectEye(Vector3 point, Vector3 position, Quaternion rotation,
+        float fov, float aspect, float nearClip)
+    {
+        Vector3 local = Quaternion.Inverse(rotation) * (point - position);
+        var projected = ShotProjection.Measure(local.x, local.y, local.z, 0, fov, aspect, nearClip);
+        return projected.InFront ? new Vector3((float)projected.X - 0.5f, (float)projected.Y - 0.5f, local.z)
+            : new Vector3(0f, 0f, -1f);
+    }
+
+    private static Quaternion LookAtPoint(Vector3 position, Vector3 point, Quaternion fallback)
+    {
+        Vector3 direction = point - position;
+        return direction.sqrMagnitude > 0.000001f
+            ? Quaternion.LookRotation(direction, Vector3.up) : fallback;
+    }
+
+    private static Quaternion Upright(Quaternion rotation)
+    {
+        Vector3 forward = rotation * Vector3.forward;
+        return Vector3.ProjectOnPlane(forward, Vector3.up).sqrMagnitude > 0.0001f
+            ? Quaternion.LookRotation(forward, Vector3.up) : rotation;
     }
 
     // Candidate vantages on the current orbit: ideal orbit points around the
@@ -921,6 +1027,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         // re-fetched on the next sense (Bind also clears it on a subject change).
         subjectView = null; aimDirSmoothed = default; hasAimSample = false;
         aimAzimuthDegrees = 0f; aimValid = false; aimLastValidAt = -1;
+        frameClampUntil = 0f; // Stale backstop latch dies with the vantage.
         ResetCombat(); // A fresh vantage, teleport or rebind voids stale combat state too.
     }
 
@@ -985,7 +1092,7 @@ internal sealed class SimpleFollowCamera : IDisposable
         composition.DeadZone.Enabled = true;
         composition.DeadZone.Size = new Vector2(0.02f, 0.02f);
         composition.HardLimits.Enabled = true;
-        composition.HardLimits.Size = new Vector2(0.6f, 0.55f);
+        composition.HardLimits.Size = SoloHardLimits;
         composition.HardLimits.Offset = Vector2.zero;
         composition.Validate();
         aim.Composition = composition;
