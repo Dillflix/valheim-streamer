@@ -472,8 +472,11 @@ internal sealed class SimpleFollowCamera : IDisposable
             float soloFill = SolvePlayerDolly(soloFov, aimHeight, out float soloAimToEye);
             // Tight-space: cap the radius by the physical boom room. The eyeline aim is
             // re-solved at the capped distance so the eye NEVER leaves the top-third line
-            // (the crop eats the feet). Thirds/lead X flow is unchanged.
-            UpdateBoomRoom(subjectPosition, aimHeight, soloFill, dt);
+            // (the crop eats the feet). Thirds/lead X flow is unchanged. The destination
+            // azimuth (gaze-reachable doctrine) is whatever the active writer drives
+            // toward: Layer 1's recovery target, else the behind-gaze aim azimuth.
+            float soloDestination = steering ? steerTarget : aimValid ? aimAzimuthDegrees : float.NaN;
+            UpdateBoomRoom(subjectPosition, aimHeight, soloFill, soloDestination, dt);
             desiredDollyRadius = Mathf.Clamp(Mathf.Min(soloFill, availableDistance), TightFloor, DollyMaxMetres);
             float soloAimTarget = ResolveEyelineAim(soloFov, soloAimToEye, soloFill, dollyRadius, aimHeight);
             EaseAim(soloAimTarget, soloScreenX + leadOffsetX, dt);
@@ -564,8 +567,14 @@ internal sealed class SimpleFollowCamera : IDisposable
         // no group-span aim blending. The eye NEVER leaves its line, in or out of combat.
         float lensFov = Mathf.Clamp(combatFov, 10f, 100f);
         float playerNeed = SolvePlayerDolly(lensFov, aimHeight, out float combatAimToEye);
-        // Tight-space: probe the physical boom room this frame.
-        UpdateBoomRoom(subjectPosition, aimHeight, playerNeed, dt);
+        // Tight-space: probe the physical boom room this frame. The destination
+        // azimuth (gaze-reachable doctrine) follows the axis-writer priority:
+        // Layer 1's recovery target > the combat two-shot solve > the behind-gaze
+        // aim azimuth > none (native recentering, NaN skips the second probe).
+        float combatDestination = steering ? steerTarget
+            : decision.Phase == CombatFramingPhase.Combat ? decision.TargetAzimuthDegrees
+            : aimValid ? aimAzimuthDegrees : float.NaN;
+        UpdateBoomRoom(subjectPosition, aimHeight, playerNeed, combatDestination, dt);
         float effectiveNeed = playerNeed;
         dollyHeadBand = false;
         if (combatTargetId != 0)
@@ -585,28 +594,55 @@ internal sealed class SimpleFollowCamera : IDisposable
     }
 
     // Tight-space boom-room probe (behavior B.1/B.2). Sphere-cast from the player
-    // aim point along the CURRENT ideal boom direction (the unit vector from the aim
-    // toward the ideal orbit position at the live azimuth/elevation - the same
-    // geometry Layer 1 uses) and find the nearest solid. The raw room is that hit
-    // distance minus a small margin, or the desired fill distance when nothing solid
-    // is within reach. A hysteresis field then shrinks FAST and recovers SLOW so a
+    // aim point along the ideal boom direction (the unit vector from the aim toward
+    // the ideal orbit position at a given azimuth/elevation - the same geometry
+    // Layer 1 uses) and find the nearest solid. The raw room is that hit distance
+    // minus a small margin, or the desired fill distance when nothing solid is
+    // within reach. A hysteresis field then shrinks FAST and recovers SLOW so a
     // doorway edge never pumps the shot. Floored at TightFloor. No per-frame alloc.
-    private void UpdateBoomRoom(Vector3 subjectPosition, float aimHeight, float desiredFillDistance, float dt)
+    // GAZE-REACHABLE TIGHT SPACES (operator order 2026-11-12): the camera must
+    // still rotate to the azimuth it is being DRIVEN toward - the look target in
+    // solo, the two-shot solve in combat, a recovery vantage in Layer 1 - even when
+    // that heading has less room than the current one. If the swing needs a shorter
+    // boom, come CLOSER: the room is the MIN of where the boom IS and where it is
+    // HEADED, so the dolly pre-shrinks and the rotation can always complete.
+    // destinationAzimuthDegrees is NaN when no writer is driving the axis; the
+    // destination probe is also skipped for sub-5-degree gaps (same heading).
+    private void UpdateBoomRoom(Vector3 subjectPosition, float aimHeight, float desiredFillDistance,
+        float destinationAzimuthDegrees, float dt)
     {
         if (solidMask == 0) solidMask = LayerMask.GetMask("Default", "static_solid", "piece", "terrain");
         // Re-seed the boom room to the full fill distance after a reset/rebind/warp
         // (availableDistance zeroed there) so a fresh vantage never starts cramped.
         if (availableDistance <= 0f) { availableDistance = Mathf.Max(TightFloor, desiredFillDistance); availableVelocity = 0f; }
         Vector3 aimPoint = subjectPosition + Vector3.up * aimHeight;
-        float azimuth = orbit!.HorizontalAxis.Value;
-        // Ideal orbit position at the current axis/elevation; the boom direction is
-        // from the aim toward that position (same Euler(elev, azimuth, 0)*(0,0,-r) rig).
-        Vector3 idealOffset = Quaternion.Euler(ElevationDegrees, azimuth, 0f) * new Vector3(0f, 0f, -1f);
-        Vector3 boomDir = idealOffset; // Already a unit direction (the -r is just a length).
-        if (!TargetRoster.Finite(boomDir) || boomDir.sqrMagnitude < 0.0001f) { availableDistance = desiredFillDistance; availableVelocity = 0f; return; }
-        boomDir.Normalize();
         float maxDist = desiredFillDistance + TightProbeExtra;
-        float raw = desiredFillDistance;
+        float raw = ProbeBoomRoom(aimPoint, orbit!.HorizontalAxis.Value, maxDist, desiredFillDistance);
+        if (!float.IsNaN(destinationAzimuthDegrees)
+            && Mathf.Abs(Mathf.DeltaAngle(orbit.HorizontalAxis.Value, destinationAzimuthDegrees)) > 5f)
+        {
+            float destinationRaw = ProbeBoomRoom(aimPoint, destinationAzimuthDegrees, maxDist, desiredFillDistance);
+            if (destinationRaw < raw) raw = destinationRaw;
+        }
+        float target = Mathf.Max(TightFloor, raw);
+        // Hysteresis: shrink fast toward a smaller room, recover slow toward a larger.
+        float ease = target < availableDistance ? TightShrinkSeconds : TightRecoverSeconds;
+        availableDistance = Mathf.SmoothDamp(availableDistance, target, ref availableVelocity,
+            ease, Mathf.Infinity, Mathf.Max(dt, 0f));
+        if (availableDistance < TightFloor) availableDistance = TightFloor;
+    }
+
+    // One boom-room sphere-cast at the given azimuth: raw solid-free distance along
+    // the ideal boom direction (Euler(elev, azimuth, 0)*(0,0,-1) rig geometry), hit
+    // distance minus TightProbeMargin, or clearDistance when nothing solid is within
+    // maxDist. Zero-distance hits are ignored (aim point embedded in solid must not
+    // collapse the boom to the floor). Shares the pooled boomHits buffer - callers
+    // consume the result before the next probe. No per-frame alloc.
+    private float ProbeBoomRoom(Vector3 aimPoint, float azimuthDegrees, float maxDist, float clearDistance)
+    {
+        Vector3 boomDir = Quaternion.Euler(ElevationDegrees, azimuthDegrees, 0f) * new Vector3(0f, 0f, -1f);
+        if (!TargetRoster.Finite(boomDir) || boomDir.sqrMagnitude < 0.0001f) return clearDistance;
+        boomDir.Normalize();
         int count = Physics.SphereCastNonAlloc(aimPoint, TightProbeRadius, boomDir, boomHits,
             maxDist, solidMask, QueryTriggerInteraction.Ignore);
         float nearest = float.MaxValue;
@@ -615,18 +651,10 @@ internal sealed class SimpleFollowCamera : IDisposable
         {
             if (!Solid(boomHits[i].collider)) continue;
             float hd = boomHits[i].distance;
-            // A zero-distance hit means the aim point is embedded in solid; ignore it
-            // so an overlap at the origin does not collapse the boom to the floor.
             if (hd <= 0.01f) continue;
             if (hd < nearest) { nearest = hd; hit = true; }
         }
-        if (hit) raw = Mathf.Max(0f, nearest - TightProbeMargin);
-        float target = Mathf.Max(TightFloor, raw);
-        // Hysteresis: shrink fast toward a smaller room, recover slow toward a larger.
-        float ease = target < availableDistance ? TightShrinkSeconds : TightRecoverSeconds;
-        availableDistance = Mathf.SmoothDamp(availableDistance, target, ref availableVelocity,
-            ease, Mathf.Infinity, Mathf.Max(dt, 0f));
-        if (availableDistance < TightFloor) availableDistance = TightFloor;
+        return hit ? Mathf.Max(0f, nearest - TightProbeMargin) : clearDistance;
     }
 
     // Project the player's world velocity onto the PRESENTED camera-right axis and
