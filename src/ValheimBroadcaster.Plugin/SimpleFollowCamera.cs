@@ -91,14 +91,15 @@ internal sealed class SimpleFollowCamera : IDisposable
     // battle look; the thirds solve fits both actors at any fov. A full-frame
     // focal length maps to a vertical fov by 2*atan(12/mm): solo defaults to
     // 50 mm (26.9915 deg), combat to 75 mm (18.1805 deg, tighter).
-    // Combat rides a long 75 mm two-shot; when the enemy presses in close the
-    // lens widens subtly toward 65 mm so the pair still breathes (operator:
-    // "keep it subtle"). Smoothstepped over separation 2-6 m and eased 0.5 s so
-    // measurement noise never pumps the lens.
-    private const float CombatLensFarMm = 75f;        // Full-frame 75 mm: 2*atan(12/75) = 18.1805 deg.
-    private const float CombatLensNearMm = 65f;       // Close-quarters floor: 2*atan(12/65) = 20.9524 deg.
-    private const float CloseEnemyNearMetres = 2f;    // At/below this separation the lens rides 65 mm.
-    private const float CloseEnemyFarMetres = 6f;     // At/above this separation the lens rides 75 mm.
+    // Combat rides a 50 mm two-shot (operator order 2026-11-11: solo 45 / combat
+    // 50, down from 50/75); when the enemy presses in close the lens widens
+    // subtly toward 43 mm (same 65/75 ratio as the original close-quarters ease,
+    // operator: "keep it subtle"). Smoothstepped over separation 2-6 m and eased
+    // 0.5 s so measurement noise never pumps the lens.
+    private const float CombatLensFarMm = 50f;        // Full-frame 50 mm: 2*atan(12/50) = 26.9915 deg.
+    private const float CombatLensNearMm = 43f;       // Close-quarters floor: 2*atan(12/43) = 31.1856 deg.
+    private const float CloseEnemyNearMetres = 2f;    // At/below this separation the lens rides 43 mm.
+    private const float CloseEnemyFarMetres = 6f;     // At/above this separation the lens rides 50 mm.
     private float combatLensMm = CombatLensFarMm;
     private float combatLensVelocity;
     private static float LensFov(float mm) => 2f * Mathf.Atan(12f / Mathf.Max(1f, mm)) * Mathf.Rad2Deg;
